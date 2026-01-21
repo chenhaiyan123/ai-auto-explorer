@@ -1,0 +1,9 @@
+{
+  "name": "ai-proxy-server",
+  "version": "1.0.0",
+  "description": "Proxy server for DashScope with User Stats",
+  "main": "index.js",
+  "dependencies": {
+    "ali-oss": "^6.18.1"
+  }
+}

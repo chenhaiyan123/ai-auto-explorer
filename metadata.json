@@ -1,0 +1,5 @@
+{
+  "name": "AI Auto-Exploration Assistant",
+  "description": "A problem-graph driven exploration system that automatically decomposes tasks, tracks dependencies, and facilitates human-in-the-loop decision making.",
+  "requestFramePermissions": []
+}
