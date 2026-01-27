@@ -72,3 +72,22 @@ export interface UserStats {
   totalCompletionTokens: number;
   lastActiveTimestamp: number;
 }
+export interface Project {
+  id: string;
+  name: string;
+  metaProblem: string;
+  nodes: ProblemNode[];
+  createdAt: number;
+  summaryNote?: string;
+
+  
+  // === 新增字段 ===
+  explorationMode: 'research' | 'build';  // 探索模式
+  intentAnalysis?: IntentAnalysis;        // 保存意图分析结果
+  // 研究模式专属
+  knowledgeCards?: KnowledgeCard[];
+  researchFindings?: ResearchFinding[];
+  researchReport?: any;
+}
+// 从 researchExplorer 导出类型
+export type { KnowledgeCard, ResearchFinding, ResearchProgress } from './services/researchExplorer';

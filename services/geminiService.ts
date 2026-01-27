@@ -43,7 +43,7 @@ export const callGemini = async (messages: any[], model: string = "qwen-plus", r
     
     // 追踪 Token 消耗
     if (data.usage) {
-      monitor.trackTokens(
+      monitor.recordTokenUsage(
         data.usage.prompt_tokens || 0,
         data.usage.completion_tokens || 0
       );

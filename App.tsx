@@ -1,5 +1,7 @@
-
+import { UserStats } from './types';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+// 1. 新增：导入留言板组件（路径和测试页一
+import MessageBoard from './components/MessageBoard';
 import { v4 as uuidv4 } from 'uuid';
 import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage } from './types';
 import GraphVisualization from './components/GraphVisualization';
@@ -9,6 +11,19 @@ import { exploreNode, chatWithNode, generateProjectSummary, callGemini, identify
 import { monitor } from './services/monitoringService';
 import { auth } from './services/authService';
 import { GEMINI_MODEL } from './constants';
+// ========== 新增：意图识别相关导入 ==========
+import { analyzeIntentWithAutoConfirm, IntentAnalysis, ExplorationMode } from './services/intentService';
+import IntentConfirmModal from './components/IntentConfirmModal';
+// 研究模式相关
+import { 
+  exploreResearchNode, 
+  generateResearchReport,
+  KnowledgeCard,
+  ResearchFinding 
+} from './services/researchExplorer';
+import ResearchPanel from './components/ResearchPanel';
+import ResearchReport from './components/ResearchReport';
+// ========== 新增结束 ==========
 
 // --- 新增：外协执行人员专用的 AI 对话页面 ---
 const DelegationView: React.FC<{ nodeId: string, taskTitle: string }> = ({ nodeId, taskTitle }) => {
@@ -16,12 +31,13 @@ const DelegationView: React.FC<{ nodeId: string, taskTitle: string }> = ({ nodeI
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
 
+
   // 初始化 AI：向执行人解释需求
   useEffect(() => {
     const initAI = async () => {
       setIsTyping(true);
-      const systemPrompt = `你是一个专业的“需求对齐与工作监督 AI”。
-任务背景：用户已将节点任务“${taskTitle}”委托给当前这位执行人员。
+      const systemPrompt = `你是一个专业的"需求对齐与工作监督 AI"。
+任务背景：用户已将节点任务"${taskTitle}"委托给当前这位执行人员。
 你的目标：
 1. 以非常专业且清晰的口吻向执行人员解释这项工作的背景与目标。
 2. 确认执行人员是否完全理解需求，并询问其初步计划。
@@ -137,12 +153,43 @@ const App: React.FC = () => {
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [adminTick, setAdminTick] = useState(0); // 强制刷新管理看板
+  const [cloudStats, setCloudStats] = useState<UserStats[]>([]);
+  const [adminActiveTab, setAdminActiveTab] = useState<'stats' | 'messages'>('stats');
+  const [adminMessages, setAdminMessages] = useState<any[]>([]);
+
+  // ========== 新增：意图识别相关状态 ==========
+  const [pendingIntent, setPendingIntent] = useState<{
+    input: string;
+    analysis: IntentAnalysis;
+  } | null>(null);
+  const [isAnalyzingIntent, setIsAnalyzingIntent] = useState(false);
+  // ========== 研究模式状态 ==========
+  const [knowledgeCards, setKnowledgeCards] = useState<KnowledgeCard[]>([]);
+  const [researchFindings, setResearchFindings] = useState<ResearchFinding[]>([]);
+  const [researchReport, setResearchReport] = useState<any>(null);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  // ========== 新增结束 ==========
   
-  useEffect(() => {
-    if (showAdminDashboard) {
-      monitor.fetchCloudStats().then(() => setAdminTick(t => t + 1));
-    }
-  }, [showAdminDashboard]);
+useEffect(() => {
+  if (showAdminDashboard) {
+    const loadData = async () => {
+      const stats = await monitor.fetchCloudStats();
+      setCloudStats(stats);
+      setAdminTick(t => t + 1);
+      
+      // ✅ 从后端 API 加载留言数据
+      try {
+        const { getMessages } = await import('./services/messageService');
+        const messages = await getMessages();
+        setAdminMessages(messages);
+      } catch (e) {
+        console.error('加载留言失败:', e);
+        setAdminMessages([]);
+      }
+    };
+    loadData();
+  }
+}, [showAdminDashboard]);
 
   const [notesPanelMode, setNotesPanelMode] = useState<number>(1);
   const [sidebarActiveTab, setSidebarActiveTab] = useState<'notes' | 'critical' | 'tasks'>('notes');
@@ -228,6 +275,7 @@ const App: React.FC = () => {
     }
   }, [projects, user?.username]);
 
+  // ========== 修改：切换项目时加载研究模式数据 ==========
   useEffect(() => {
     const proj = projects.find(p => p.id === currentProjectId);
     if (proj) {
@@ -236,10 +284,15 @@ const App: React.FC = () => {
       setDecision(null);
       setNodes(proj.nodes || []);
       setIsLooping(false);
+      // 加载研究模式数据
+      setKnowledgeCards((proj as any).knowledgeCards || []);
+      setResearchFindings((proj as any).researchFindings || []);
+      setResearchReport(null);
     } else if (projects.length > 0 && !currentProjectId) {
       setCurrentProjectId(projects[0].id);
     }
   }, [currentProjectId, projects.length]);
+  // ========== 修改结束 ==========
 
   useEffect(() => {
     if (currentProjectId && nodes && nodes.length > 0) {
@@ -254,6 +307,18 @@ const App: React.FC = () => {
     }
   }, [nodes, currentProjectId]);
 
+  // ========== 新增：保存研究模式数据到项目 ==========
+  useEffect(() => {
+    if (currentProjectId && currentProject?.explorationMode === 'research') {
+      setProjects(prev => prev.map(p => 
+        p.id === currentProjectId 
+          ? { ...p, knowledgeCards, researchFindings } as any
+          : p
+      ));
+    }
+  }, [knowledgeCards, researchFindings, currentProjectId]);
+  // ========== 新增结束 ==========
+
   const addNode = useCallback((title: string, dependencies: string[] = [], initialNotes: string = "") => {
     const newNode: ProblemNode = { id: uuidv4(), title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies, notes: initialNotes, chatHistory: [], agentResults: [] };
     setNodes(prev => [...prev, newNode]);
@@ -264,11 +329,84 @@ const App: React.FC = () => {
     setNodes(prev => prev.map(node => node.id === id ? { ...node, ...updates } : node));
   }, []);
 
+  // ========== 新增：创建项目（带探索模式）==========
+  const createProjectWithMode = useCallback((
+    input: string, 
+    mode: ExplorationMode, 
+    analysis?: IntentAnalysis
+  ) => {
+    const newProj: Project = {
+      id: uuidv4(),
+      name: analysis?.suggestedTitle || input.slice(0, 15),
+      metaProblem: input,
+      createdAt: Date.now(),
+      explorationMode: mode,
+      intentAnalysis: analysis,
+      nodes: [{
+        id: uuidv4(),
+        title: input,
+        status: NodeStatus.UNEXPLORED,
+        confidence: 0,
+        dependencies: [],
+        notes: "",
+        chatHistory: [],
+      }],
+    };
+    
+    setProjects(prev => [...prev, newProj]);
+    setCurrentProjectId(newProj.id);
+    setMetaInput('');
+    setShowMetaModal(false);
+    setPendingIntent(null);
+    // 清空研究模式数据
+    setKnowledgeCards([]);
+    setResearchFindings([]);
+    setResearchReport(null);
+  }, []);
+  // ========== 新增结束 ==========
+
+  // ========== 新增：计算节点深度的辅助函数 ==========
+  const getNodeDepth = useCallback((nodeId: string, visited: Set<string> = new Set()): number => {
+    if (visited.has(nodeId)) return 0;
+    visited.add(nodeId);
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node || node.dependencies.length === 0) return 1;
+    return 1 + Math.max(...node.dependencies.map(d => getNodeDepth(d, new Set(visited))));
+  }, [nodes]);
+  // ========== 新增结束 ==========
+
+  // ========== 新增：生成研究报告函数 ==========
+  const handleGenerateResearchReport = useCallback(async () => {
+    if (!currentProject) return;
+    setIsGeneratingReport(true);
+    try {
+      const report = await generateResearchReport(
+        currentProject,
+        knowledgeCards,
+        researchFindings
+      );
+      setResearchReport(report);
+    } catch (e) {
+      console.error('生成报告失败:', e);
+      alert('生成报告失败，请稍后重试');
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  }, [currentProject, knowledgeCards, researchFindings]);
+  // ========== 新增结束 ==========
+
+  // ========== 完全重写：探索循环，支持研究/构建双模式 ==========
   const runExplorationCycle = useCallback(async () => {
     if (decision || isProcessingRef.current) return;
     if (!isLoopingRef.current) return;
     
+    // 判断当前是否为研究模式
+    const isResearchMode = currentProject?.explorationMode === 'research';
+    
+    // 查找待探索节点
     let unexploredNode: ProblemNode | undefined;
+    
+    // 如果有聚焦节点，优先在其后代中查找
     if (focusedNodeId) {
       const descendantIds = new Set<string>();
       const queue = [focusedNodeId];
@@ -286,10 +424,12 @@ const App: React.FC = () => {
       unexploredNode = nodes.find(n => descendantIds.has(n.id) && n.status === NodeStatus.UNEXPLORED);
     }
     
+    // 如果没找到，在全局查找
     if (!unexploredNode) {
       unexploredNode = nodes.find(n => n.status === NodeStatus.UNEXPLORED);
     }
 
+    // 如果没有待探索节点，停止循环
     if (!unexploredNode) { 
       const isAnyExploring = nodes.some(n => n.status === NodeStatus.EXPLORING);
       if (!isAnyExploring) {
@@ -303,59 +443,134 @@ const App: React.FC = () => {
     updateNode(currentNodeId, { status: NodeStatus.EXPLORING });
     
     try {
-      const result = await exploreNode(unexploredNode, nodes);
-      
-      if (!isLoopingRef.current) {
-        updateNode(currentNodeId, { status: NodeStatus.UNEXPLORED });
-        isProcessingRef.current = false;
-        return;
-      }
-
-      let taskType = result.taskType;
-      if (!taskType || taskType === 'none') {
-        taskType = await identifyNodeTask({ ...unexploredNode, notes: result.notes });
-      }
-      
-      if (result.subProblems && result.subProblems.length > 0) {
-        const newSubNodes = result.subProblems.map((sp: any) => ({
-          id: uuidv4(),
-          title: sp.title,
-          status: NodeStatus.UNEXPLORED,
-          confidence: 0,
-          dependencies: [currentNodeId],
-          notes: sp.initialNotes || "",
-          chatHistory: [],
-          agentResults: []
-        }));
-        setNodes(prev => [...prev, ...newSubNodes]);
-      }
-      
-      if (result.triggerDecision) {
-        const newDecision: DecisionPoint = {
-          nodeId: currentNodeId,
-          context: result.decisionContext,
-          options: [
-            { label: '方案 A：按原计划继续探索 (推荐)', action: 'continue' }, 
-            { label: '方案 B：注入新子方向供选择', action: 'add_subproblem' }, 
-            { label: '方案 C：终止当前路径', action: 'terminate' }
-          ]
-        };
-        updateNode(currentNodeId, { 
-          status: NodeStatus.NEEDS_REVIEW, 
-          confidence: result.confidence, 
-          notes: result.notes,
-          taskType,
-          pendingDecision: newDecision
-        });
-        // 关键点：待决策框不再自动弹出，仅停止循环，让用户点击节点手动弹出
-        setIsLooping(false);
+      // ========== 根据模式选择不同的探索逻辑 ==========
+      if (isResearchMode) {
+        // ===== 研究模式探索 =====
+        const currentDepth = getNodeDepth(currentNodeId);
+        const result = await exploreResearchNode(
+          unexploredNode, 
+          nodes,
+          currentDepth,
+          3 // 最大深度
+        );
+        
+        // 检查是否被中断
+        if (!isLoopingRef.current) {
+          updateNode(currentNodeId, { status: NodeStatus.UNEXPLORED });
+          isProcessingRef.current = false;
+          return;
+        }
+        
+        // 收集知识卡片
+        if (result.knowledgeCards && result.knowledgeCards.length > 0) {
+          setKnowledgeCards(prev => [...prev, ...result.knowledgeCards]);
+        }
+        
+        // 收集研究发现
+        if (result.findings && result.findings.length > 0) {
+          setResearchFindings(prev => [...prev, ...result.findings]);
+        }
+        
+        // 生成子问题节点
+        if (result.subProblems && result.subProblems.length > 0) {
+          const newSubNodes = result.subProblems.map((sp: any) => ({
+            id: uuidv4(),
+            title: sp.title,
+            status: NodeStatus.UNEXPLORED,
+            confidence: 0,
+            dependencies: [currentNodeId],
+            notes: sp.initialNotes || "",
+            chatHistory: [],
+            agentResults: []
+          }));
+          setNodes(prev => [...prev, ...newSubNodes]);
+        }
+        
+        // 处理决策点
+        if (result.triggerDecision) {
+          const newDecision: DecisionPoint = {
+            nodeId: currentNodeId,
+            context: result.decisionContext || '研究过程中发现需要人工决策的情况',
+            options: [
+              { label: '继续深入研究当前方向', action: 'continue' },
+              { label: '添加新的研究分支', action: 'add_subproblem' },
+              { label: '结束此方向的探索', action: 'terminate' }
+            ]
+          };
+          updateNode(currentNodeId, { 
+            status: NodeStatus.NEEDS_REVIEW, 
+            confidence: result.confidence || 0.5, 
+            notes: result.notes || '',
+            pendingDecision: newDecision
+          });
+          setIsLooping(false);
+        } else {
+          updateNode(currentNodeId, { 
+            status: NodeStatus.SOLVED, 
+            confidence: result.confidence || 0.8, 
+            notes: result.notes || ''
+          });
+        }
+        
       } else {
-        updateNode(currentNodeId, { 
-          status: NodeStatus.SOLVED, 
-          confidence: result.confidence, 
-          notes: result.notes, 
-          taskType 
-        });
+        // ===== 构建模式探索（原有逻辑）=====
+        const result = await exploreNode(unexploredNode, nodes);
+        
+        // 检查是否被中断
+        if (!isLoopingRef.current) {
+          updateNode(currentNodeId, { status: NodeStatus.UNEXPLORED });
+          isProcessingRef.current = false;
+          return;
+        }
+
+        // 识别任务类型
+        let taskType = result.taskType;
+        if (!taskType || taskType === 'none') {
+          taskType = await identifyNodeTask({ ...unexploredNode, notes: result.notes });
+        }
+        
+        // 生成子问题节点
+        if (result.subProblems && result.subProblems.length > 0) {
+          const newSubNodes = result.subProblems.map((sp: any) => ({
+            id: uuidv4(),
+            title: sp.title,
+            status: NodeStatus.UNEXPLORED,
+            confidence: 0,
+            dependencies: [currentNodeId],
+            notes: sp.initialNotes || "",
+            chatHistory: [],
+            agentResults: []
+          }));
+          setNodes(prev => [...prev, ...newSubNodes]);
+        }
+        
+        // 处理决策点
+        if (result.triggerDecision) {
+          const newDecision: DecisionPoint = {
+            nodeId: currentNodeId,
+            context: result.decisionContext,
+            options: [
+              { label: '方案 A：按原计划继续探索 (推荐)', action: 'continue' }, 
+              { label: '方案 B：注入新子方向供选择', action: 'add_subproblem' }, 
+              { label: '方案 C：终止当前路径', action: 'terminate' }
+            ]
+          };
+          updateNode(currentNodeId, { 
+            status: NodeStatus.NEEDS_REVIEW, 
+            confidence: result.confidence, 
+            notes: result.notes,
+            taskType,
+            pendingDecision: newDecision
+          });
+          setIsLooping(false);
+        } else {
+          updateNode(currentNodeId, { 
+            status: NodeStatus.SOLVED, 
+            confidence: result.confidence, 
+            notes: result.notes, 
+            taskType 
+          });
+        }
       }
     } catch (e) {
       console.error("探索循环异常:", e);
@@ -364,7 +579,8 @@ const App: React.FC = () => {
     } finally {
       isProcessingRef.current = false;
     }
-  }, [nodes, decision, updateNode, focusedNodeId]);
+  }, [nodes, decision, updateNode, focusedNodeId, currentProject?.explorationMode, getNodeDepth]);
+  // ========== 重写结束 ==========
 
   useEffect(() => {
     if (isLooping && !decision) {
@@ -404,6 +620,23 @@ const App: React.FC = () => {
     setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: val } : p));
   };
 
+    // 删除留言
+  const handleDeleteMessage = (id: string) => {
+    if (confirm('确定要删除这条留言吗?')) {
+      const updated = adminMessages.filter(m => m.id !== id);
+      localStorage.setItem('message_board_messages', JSON.stringify(updated));
+      setAdminMessages(updated);
+    }
+  };
+
+  // 标记已读
+  const handleMarkMessageRead = (id: string) => {
+    const updated = adminMessages.map(m => 
+      m.id === id ? { ...m, isRead: true } : m
+    );
+    localStorage.setItem('message_board_messages', JSON.stringify(updated));
+    setAdminMessages(updated);
+  };
   const handleDeleteNode = useCallback((id: string) => {
     setNodes(prev => prev.filter(n => n.id !== id).map(n => ({...n, dependencies: n.dependencies.filter(d => d !== id)})));
     if (selectedNodeId === id) setSelectedNodeId(null);
@@ -476,6 +709,17 @@ const App: React.FC = () => {
           <select className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-xs sm:text-sm outline-none text-white focus:ring-1 focus:ring-blue-500 max-w-[100px] sm:max-w-[200px]" value={currentProjectId || ''} onChange={(e) => setCurrentProjectId(e.target.value)}>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
+          {/* ========== 新增：显示当前项目的探索模式 ========== */}
+          {currentProject?.explorationMode && (
+            <div className={`hidden sm:flex px-2 py-1 rounded-full text-[10px] font-bold items-center gap-1 ${
+              currentProject.explorationMode === 'research'
+                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                : 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
+            }`}>
+              {currentProject.explorationMode === 'research' ? '🔬 研究' : '🔧 构建'}
+            </div>
+          )}
+          {/* ========== 新增结束 ========== */}
           <button onClick={() => setShowMetaModal(true)} className="p-2 text-slate-400 hover:text-blue-400 transition-colors flex-shrink-0">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
           </button>
@@ -521,7 +765,7 @@ const App: React.FC = () => {
                 onClick={() => setSidebarActiveTab('notes')} 
                 className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${sidebarActiveTab === 'notes' ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-800 text-slate-400 hover:text-slate-300'}`}
               >
-                探索笔记
+                {currentProject?.explorationMode === 'research' ? '研究面板' : '探索笔记'}
               </button>
               <button 
                 onClick={() => setSidebarActiveTab('critical')} 
@@ -538,22 +782,44 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="flex-1 overflow-y-auto scroll-hide bg-slate-950/30">
+            {/* ========== 修改：根据模式显示不同的侧边栏内容 ========== */}
             {sidebarActiveTab === 'notes' && (
-              <div className="h-full flex flex-col p-4">
-                <button 
-                  onClick={handleGenerateProjectSummary} 
-                  disabled={isGeneratingSummary || !nodes || nodes.length === 0} 
-                  className={`mb-4 w-full py-2.5 rounded-lg text-[10px] font-bold transition-all border flex items-center justify-center gap-2 ${isGeneratingSummary ? 'bg-slate-800 border-slate-700 text-slate-500' : 'bg-emerald-600/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/20'}`}
-                >
-                  {isGeneratingSummary ? (
-                    <><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></div>编写总结中...</>
-                  ) : (
-                    <>📝 生成全案总结</>
-                  )}
-                </button>
-                <textarea className="flex-1 w-full bg-transparent text-slate-300 text-xs sm:text-sm leading-relaxed outline-none resize-none font-sans" placeholder="AI 探索结论将实时汇总在此..." value={currentProject?.summaryNote || ''} onChange={(e) => handleNoteChange(e.target.value)} />
-              </div>
+              currentProject?.explorationMode === 'research' ? (
+                // 研究模式：显示研究面板
+                <ResearchPanel
+                  nodes={nodes}
+                  knowledgeCards={knowledgeCards}
+                  findings={researchFindings}
+                  onCardClick={(card) => {
+                    // 可以在这里添加点击卡片的逻辑
+                    console.log('Clicked card:', card);
+                  }}
+                  onFindingClick={(finding) => {
+                    // 可以在这里添加点击发现的逻辑
+                    console.log('Clicked finding:', finding);
+                  }}
+                  onGenerateReport={handleGenerateResearchReport}
+                  isGeneratingReport={isGeneratingReport}
+                />
+              ) : (
+                // 构建模式：显示原有的探索笔记
+                <div className="h-full flex flex-col p-4">
+                  <button 
+                    onClick={handleGenerateProjectSummary} 
+                    disabled={isGeneratingSummary || !nodes || nodes.length === 0} 
+                    className={`mb-4 w-full py-2.5 rounded-lg text-[10px] font-bold transition-all border flex items-center justify-center gap-2 ${isGeneratingSummary ? 'bg-slate-800 border-slate-700 text-slate-500' : 'bg-emerald-600/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-600/20'}`}
+                  >
+                    {isGeneratingSummary ? (
+                      <><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></div>编写总结中...</>
+                    ) : (
+                      <>📝 生成全案总结</>
+                    )}
+                  </button>
+                  <textarea className="flex-1 w-full bg-transparent text-slate-300 text-xs sm:text-sm leading-relaxed outline-none resize-none font-sans" placeholder="AI 探索结论将实时汇总在此..." value={currentProject?.summaryNote || ''} onChange={(e) => handleNoteChange(e.target.value)} />
+                </div>
+              )
             )}
+            {/* ========== 修改结束 ========== */}
             {sidebarActiveTab === 'critical' && (
               <div className="p-4 space-y-2">
                 <div className="text-[10px] uppercase font-bold text-slate-500 mb-2">⭐ 重要关注点</div>
@@ -636,72 +902,231 @@ const App: React.FC = () => {
         </div>
       )}
       {showAdminDashboard && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl p-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-5xl w-full p-8 shadow-2xl flex flex-col h-full max-h-[90vh]">
-            <h2 className="text-2xl font-bold mb-6 text-purple-400">📊 监控看板</h2>
-            <div className="grid grid-cols-3 gap-6 mb-6">
-              {Object.entries(monitor.getSystemSummary()).map(([k, v]) => (
-                <div key={k} className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700 text-center">
-                  <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">{k}</div>
-                  <div className="text-2xl font-bold text-white">{v}</div>
-                </div>
-              ))}
-            </div>
-            <div className="flex-1 overflow-auto border border-slate-800 rounded-2xl">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-800 text-slate-400">
+  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl p-6">
+    <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-5xl w-full p-8 shadow-2xl flex flex-col h-full max-h-[90vh]">
+      <h2 className="text-2xl font-bold mb-6 text-purple-400">📊 监控看板</h2>
+      
+      {/* 标签切换 */}
+      <div className="flex gap-2 mb-6">
+        <button
+          onClick={() => setAdminActiveTab('stats')}
+          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            adminActiveTab === 'stats'
+              ? 'bg-purple-600 text-white'
+              : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+          }`}
+        >
+          📈 用户统计
+        </button>
+        <button
+          onClick={() => setAdminActiveTab('messages')}
+          className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            adminActiveTab === 'messages'
+              ? 'bg-blue-600 text-white'
+              : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+          }`}
+        >
+          💬 用户留言
+          {adminMessages.filter(m => !m.isRead).length > 0 && (
+            <span className="ml-2 px-1.5 py-0.5 bg-red-500 text-white text-xs rounded-full">
+              {adminMessages.filter(m => !m.isRead).length}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* 用户统计标签页 */}
+      {adminActiveTab === 'stats' && (
+        <>
+          <div className="grid grid-cols-3 gap-6 mb-6">
+            {Object.entries(monitor.getSystemSummary()).map(([k, v]) => (
+              <div key={k} className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700 text-center">
+                <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">{k}</div>
+                <div className="text-2xl font-bold text-white">{v}</div>
+              </div>
+            ))}
+          </div>
+          <div className="flex-1 overflow-auto border border-slate-800 rounded-2xl">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-800 text-slate-400">
+                <tr>
+                  <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">用户</th>
+                  <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">会话</th>
+                  <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">时长 (m)</th>
+                  <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">Token 消耗</th>
+                  <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">最后活跃</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {cloudStats.length === 0 ? (
                   <tr>
-                    <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">用户</th>
-                    <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">会话</th>
-                    <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">时长 (m)</th>
-                    <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">Token 消耗</th>
-                    <th className="px-4 py-4 font-bold uppercase text-[10px] tracking-wider">最后活跃</th>
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                      暂无用户数据
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {monitor.getAllStats().map((s, i) => (
+                ) : (
+                  cloudStats.map((s, i) => (
                     <tr key={i} className="hover:bg-slate-800/30 transition-colors">
                       <td className="px-4 py-4 text-blue-400 font-medium">{s.username}</td>
                       <td className="px-4 py-4">{s.sessionCount}</td>
                       <td className="px-4 py-4">{(s.totalActiveSeconds/60).toFixed(1)}</td>
-                      <td className="px-4 py-4 text-emerald-400">{(s.totalPromptTokens + s.totalCompletionTokens).toLocaleString()}</td>
-                      <td className="px-4 py-4 text-slate-500 text-xs">{new Date(s.lastActiveTimestamp).toLocaleString()}</td>
+                      <td className="px-4 py-4 text-emerald-400">
+                        {(s.totalPromptTokens + s.totalCompletionTokens).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-4 text-slate-500 text-xs">
+                        {new Date(s.lastActiveTimestamp).toLocaleString('zh-CN')}
+                      </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <button onClick={() => setShowAdminDashboard(false)} className="mt-6 py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-colors">关闭</button>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
+        </>
+      )}
+
+      {/* 用户留言标签页 */}
+      {adminActiveTab === 'messages' && (
+        <div className="flex-1 overflow-auto">
+          <div className="mb-4 flex items-center justify-between">
+            <div className="text-sm text-slate-400">
+              共 {adminMessages.length} 条留言，
+              <span className="text-blue-400">{adminMessages.filter(m => !m.isRead).length} 条未读</span>
+            </div>
+          </div>
+
+          {adminMessages.length === 0 ? (
+            <div className="text-center py-20 text-slate-500">
+              <div className="text-6xl mb-4">📭</div>
+              <p className="text-lg">暂无用户留言</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {adminMessages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`p-6 rounded-xl border transition-all ${
+                    msg.isRead
+                      ? 'bg-slate-800/30 border-slate-700'
+                      : 'bg-blue-900/20 border-blue-700/50 shadow-lg'
+                  }`}
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                        {msg.username.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-bold text-white text-lg">{msg.username}</div>
+                        <div className="text-xs text-slate-500">
+                          {new Date(msg.createdAt).toLocaleString('zh-CN')}
+                        </div>
+                      </div>
+                    </div>
+                    {!msg.isRead && (
+                      <span className="px-3 py-1 bg-blue-600 text-white text-xs font-bold rounded-full">
+                        新留言
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-slate-300 leading-relaxed mb-4 whitespace-pre-wrap text-base">
+                    {msg.content}
+                  </p>
+
+                  <div className="flex gap-3 pt-4 border-t border-slate-700">
+                    {!msg.isRead && (
+                      <button
+                        onClick={() => handleMarkMessageRead(msg.id)}
+                        className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all font-medium"
+                      >
+                        ✓ 标记已读
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteMessage(msg.id)}
+                      className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg transition-all font-medium"
+                    >
+                      🗑️ 删除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
+      
+      <button 
+        onClick={() => setShowAdminDashboard(false)} 
+        className="mt-6 py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-colors"
+      >
+        关闭
+      </button>
+    </div>
+  </div>
+)}
       {showMetaModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-8 shadow-2xl">
             <h2 className="text-2xl font-bold">新探索任务</h2>
             <textarea value={metaInput} onChange={(e) => setMetaInput(e.target.value)} placeholder="请输入元问题" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-5 mt-6 min-h-[80px] outline-none text-slate-200" />
-            <div className="flex gap-4 mt-8"><button onClick={() => setShowMetaModal(false)} className="flex-1 py-4 bg-slate-800 rounded-xl font-bold">取消</button><button onClick={() => { if(!metaInput.trim()) return; const newProj = { id: uuidv4(), name: metaInput.slice(0, 15), metaProblem: metaInput, createdAt: Date.now(), nodes: [{ id: uuidv4(), title: metaInput, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: "", chatHistory: [] }] }; setProjects(prev => [...prev, newProj]); setCurrentProjectId(newProj.id); setMetaInput(''); setShowMetaModal(false); }} className="flex-[2] py-4 bg-blue-600 rounded-xl font-bold">开启探索</button></div>
+            <div className="flex gap-4 mt-8">
+              <button onClick={() => setShowMetaModal(false)} className="flex-1 py-4 bg-slate-800 rounded-xl font-bold">取消</button>
+              {/* ========== 修改：开启探索按钮，集成意图识别 ========== */}
+              <button 
+                disabled={isAnalyzingIntent}
+                onClick={async () => { 
+                  if(!metaInput.trim() || isAnalyzingIntent) return; 
+                  
+                  // 1. 开始意图识别
+                  setIsAnalyzingIntent(true);
+                  try {
+                    const { analysis, needsConfirmation } = await analyzeIntentWithAutoConfirm(metaInput);
+                    
+                    if (needsConfirmation) {
+                      // 2a. 需要确认：显示确认弹窗
+                      setPendingIntent({ input: metaInput, analysis });
+                      setShowMetaModal(false);
+                    } else {
+                      // 2b. 不需要确认：直接创建项目
+                      createProjectWithMode(metaInput, analysis.mode, analysis);
+                    }
+                  } catch (e) {
+                    console.error('意图识别失败:', e);
+                    // 降级：默认研究模式
+                    createProjectWithMode(metaInput, 'research');
+                  } finally {
+                    setIsAnalyzingIntent(false);
+                  }
+                }} 
+                className="flex-[2] py-4 bg-blue-600 rounded-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isAnalyzingIntent ? '分析中...' : '开启探索'}
+              </button>
+              {/* ========== 修改结束 ========== */}
+            </div>
           </div>
         </div>
       )}
       {showHelpModal && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowHelpModal(false)}>
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-sm w-full p-10 shadow-2xl flex flex-col items-center animate-in fade-in zoom-in duration-200 relative" onClick={e => e.stopPropagation()}>
-             <h3 className="text-xl font-bold text-white mb-8">有问题请联系</h3>
-             <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 w-full text-center mb-8 shadow-inner">
-                <p className="text-slate-500 text-xs mb-3 uppercase tracking-widest font-bold">联系微信号</p>
-                <p className="text-2xl font-mono font-bold text-blue-400 select-all tracking-wider">seabird36</p>
-             </div>
-             <div className="text-center mb-8">
-                <p className="text-slate-500 text-xs">如有任何建议、反馈或定制需求，<br/>欢迎通过上述微信号与我取得联系。</p>
-             </div>
-             <button onClick={() => setShowHelpModal(false)} className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-2xl transition-all border border-slate-700">关闭</button>
-             <button onClick={() => setShowHelpModal(false)} className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors p-1">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-             </button>
-          </div>
-        </div>
-      )}
+  <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowHelpModal(false)}>
+    <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-10 shadow-2xl flex flex-col items-center animate-in fade-in zoom-in duration-200 relative overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+       {/* 联系方式 */}
+       <h3 className="text-xl font-bold text-white mb-8">有问题请联系</h3>
+       <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 w-full text-center mb-8 shadow-inner">
+          <p className="text-slate-500 text-xs mb-3 uppercase tracking-widest font-bold">联系微信号</p>
+          <p className="text-2xl font-mono font-bold text-blue-400 select-all tracking-wider">seabird36</p>
+       </div>
+
+       {/* 👇 留言板应该在这里 */}
+       <MessageBoard />
+
+       {/* 关闭按钮 */}
+       <button onClick={() => setShowHelpModal(false)} className="mt-6 w-full py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-2xl transition-all border border-slate-700">关闭</button>
+    </div>
+  </div>
+)}
       {decision && decisionNode && (
         <DecisionModal 
           decision={decision} 
@@ -710,6 +1135,31 @@ const App: React.FC = () => {
           onClose={() => setDecision(null)} 
         />
       )}
+
+      {/* ========== 新增：意图确认弹窗 ========== */}
+      {pendingIntent && (
+        <IntentConfirmModal
+          analysis={pendingIntent.analysis}
+          onConfirm={(mode, analysis) => {
+            createProjectWithMode(pendingIntent.input, mode, analysis);
+          }}
+          onCancel={() => {
+            setPendingIntent(null);
+            setShowMetaModal(true);
+          }}
+        />
+      )}
+      {/* ========== 新增结束 ========== */}
+
+      {/* ========== 新增：研究报告弹窗 ========== */}
+      {researchReport && (
+        <ResearchReport
+          report={researchReport}
+          onClose={() => setResearchReport(null)}
+        />
+      )}
+      {/* ========== 新增结束 ========== */}
+
     </div>
   );
 };
