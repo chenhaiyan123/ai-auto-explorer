@@ -25,19 +25,33 @@ interface Agent {
   specialty: string[];
 }
 
-// ========== AI管家组件 ==========
+// ========== 项目洞察类型 ==========
+interface ProjectInsight {
+  deepMotivation: string;      // 深层动机
+  valueAssessment: string;     // 价值评估
+  expectedOutcome: string;     // 期望产出
+  explorationStrategy: string; // 探索策略建议
+  keyQuestions: string[];      // 关键待解答问题
+  riskPoints: string[];        // 风险点
+  nextActions: string[];       // 建议下一步行动
+}
+
+// ========== AI管家组件（深度优化版）==========
 const AIButler: React.FC<{
   project: Project | null;
   nodes: ProblemNode[];
   onAddNode: (title: string, deps?: string[]) => void;
   onUpdateNode: (id: string, updates: Partial<ProblemNode>) => void;
   onStartExploration: () => void;
-}> = ({ project, nodes, onAddNode, onUpdateNode, onStartExploration }) => {
+  onUpdateProjectInsight?: (insight: ProjectInsight) => void;
+}> = ({ project, nodes, onAddNode, onUpdateNode, onStartExploration, onUpdateProjectInsight }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [activeAgents, setActiveAgents] = useState<Agent[]>([]);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [projectInsight, setProjectInsight] = useState<ProjectInsight | null>(null);
+  const [showInsightPanel, setShowInsightPanel] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const availableAgents: Agent[] = [
@@ -46,13 +60,88 @@ const AIButler: React.FC<{
     { id: 'designer', name: '设计师', role: 'UI/UX设计', avatar: '🎨', status: 'idle', specialty: ['design', 'image'] },
     { id: 'writer', name: '文案', role: '内容创作', avatar: '✍️', status: 'idle', specialty: ['writing', 'content'] },
     { id: 'analyst', name: '分析师', role: '数据分析', avatar: '📊', status: 'idle', specialty: ['data', 'analysis'] },
+    { id: 'strategist', name: '策略师', role: '战略规划', avatar: '🎯', status: 'idle', specialty: ['strategy', 'planning'] },
   ];
 
+  // 初始化：深度分析项目意图
   useEffect(() => {
     if (project && messages.length === 0) {
-      setMessages([{ role: 'model', text: `你好！我是项目管家 🏠\n\n📋 ${project.name}\n📊 进度: ${nodes.filter(n => n.status === NodeStatus.SOLVED).length}/${nodes.length}\n\n有什么可以帮你的？` }]);
+      analyzeProjectIntent();
     }
   }, [project?.id]);
+
+  // 深度分析项目意图
+  const analyzeProjectIntent = async () => {
+    if (!project) return;
+    setIsTyping(true);
+    
+    try {
+      const analysisPrompt = `作为一个深度思考的AI管家，请分析这个探索项目：
+
+**项目目标**: ${project.metaProblem}
+**当前节点数**: ${nodes.length}
+**已完成**: ${nodes.filter(n => n.status === NodeStatus.SOLVED).length}
+**探索模式**: ${project.explorationMode || '研究'}
+
+用户选择使用全自动AI探索引擎来研究这个问题，而不是简单地问AI获得答案。这意味着：
+1. 这个问题可能很复杂，没有标准答案
+2. 用户希望获得深度、系统性的理解
+3. 问题可能涉及多个维度，需要持续探索
+4. 每个阶段的最优解可能不同
+
+请深入分析并返回JSON格式（不要markdown代码块）：
+{
+  "deepMotivation": "用户提出这个问题的深层动机是什么？他们真正想解决什么？",
+  "valueAssessment": "这个问题的价值含量评估（从创新性、实用性、影响力等维度）",
+  "expectedOutcome": "用户期望通过探索获得什么样的答案或成果？",
+  "explorationStrategy": "针对这个问题的最佳探索策略是什么？",
+  "keyQuestions": ["需要回答的3-5个关键子问题"],
+  "riskPoints": ["探索过程中可能遇到的2-3个风险或陷阱"],
+  "nextActions": ["建议用户接下来做的2-3个具体行动"],
+  "greeting": "一段友好的开场白，展示你对项目的理解，并提出一个引导性问题来深入了解用户意图"
+}`;
+
+      const response = await callGemini([
+        { role: "system", content: "你是一个擅长深度分析的AI管家，能够洞察用户的真实需求和深层动机。返回纯JSON，不要markdown。" },
+        { role: "user", content: analysisPrompt }
+      ], GEMINI_MODEL);
+
+      try {
+        const cleanJson = response.replace(/```json\n?|\n?```/g, '').trim();
+        const analysis = JSON.parse(cleanJson);
+        
+        const insight: ProjectInsight = {
+          deepMotivation: analysis.deepMotivation || '',
+          valueAssessment: analysis.valueAssessment || '',
+          expectedOutcome: analysis.expectedOutcome || '',
+          explorationStrategy: analysis.explorationStrategy || '',
+          keyQuestions: analysis.keyQuestions || [],
+          riskPoints: analysis.riskPoints || [],
+          nextActions: analysis.nextActions || []
+        };
+        
+        setProjectInsight(insight);
+        onUpdateProjectInsight?.(insight);
+        
+        setMessages([{ 
+          role: 'model', 
+          text: analysis.greeting || `你好！我是这个项目的AI管家 🏠\n\n我注意到你正在探索「${project.name}」这个很有深度的问题。\n\n能告诉我，是什么契机让你想深入研究这个方向？你期望最终获得什么样的成果？`
+        }]);
+      } catch (parseError) {
+        setMessages([{ 
+          role: 'model', 
+          text: `你好！我是项目管家 🏠\n\n📋 **${project.name}**\n\n我注意到你选择了全自动探索引擎来研究这个问题，而不是简单地寻求答案。这说明这个问题对你很重要。\n\n能和我聊聊，你为什么对这个方向感兴趣？你希望探索能带来什么样的价值？`
+        }]);
+      }
+    } catch (e) {
+      setMessages([{ 
+        role: 'model', 
+        text: `你好！我是项目管家 🏠\n\n📋 ${project.name}\n📊 进度: ${nodes.filter(n => n.status === NodeStatus.SOLVED).length}/${nodes.length}\n\n这个问题很值得深入探索。你最想先解决哪个方面？`
+      }]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -60,7 +149,7 @@ const AIButler: React.FC<{
     if (activeAgents.find(a => a.id === agent.id)) return;
     setActiveAgents(prev => [...prev, { ...agent, status: 'idle' as const }]);
     setShowAgentPicker(false);
-    setMessages(prev => [...prev, { role: 'model', text: `🤝 **${agent.name}** (${agent.role}) 已加入群聊！` }]);
+    setMessages(prev => [...prev, { role: 'model', text: `🤝 **${agent.name}** (${agent.role}) 已加入！\n\n${agent.avatar} 我会从${agent.specialty.join('、')}的角度协助分析这个问题。` }]);
   };
 
   const removeAgent = (agentId: string) => {
@@ -71,6 +160,7 @@ const AIButler: React.FC<{
     }
   };
 
+  // 核心对话处理 - 影响探索方向
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isTyping) return;
@@ -78,20 +168,147 @@ const AIButler: React.FC<{
     setMessages(prev => [...prev, { role: 'user', text: userMessage }]);
     setInput('');
     setIsTyping(true);
+    
     try {
-      const projectContext = project ? `项目:${project.name}, 目标:${project.metaProblem}, 节点:${nodes.length}, 完成:${nodes.filter(n => n.status === NodeStatus.SOLVED).length}, Agent:${activeAgents.map(a => a.name).join(',') || '无'}` : '';
-      const systemPrompt = `你是项目AI管家。${projectContext}\n职责:分析进展、推荐Agent、协调任务。简洁回复，像微信聊天。`;
-      const response = await callGemini([{ role: "system", content: systemPrompt }, ...messages.slice(-10).map(m => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text })), { role: "user", content: userMessage }], GEMINI_MODEL);
-      setMessages(prev => [...prev, { role: 'model', text: response }]);
-    } catch (e) { setMessages(prev => [...prev, { role: 'model', text: '抱歉，稍后再试。' }]); }
+      // 构建丰富的上下文
+      const nodesContext = nodes.slice(0, 10).map(n => ({
+        title: n.title,
+        status: n.status,
+        notes: n.notes?.slice(0, 100)
+      }));
+      
+      const conversationHistory = messages.slice(-8).map(m => ({
+        role: m.role === 'model' ? 'assistant' : 'user',
+        content: m.text
+      }));
+
+      const systemPrompt = `你是一个深度思考的AI项目管家，具备以下能力：
+
+**核心职责**：
+1. 深度挖掘用户的真实意图和深层需求
+2. 评估问题的价值含量和探索优先级
+3. 根据对话内容调整探索方向
+4. 提供战略性建议而非简单回答
+
+**项目背景**：
+- 项目名称：${project?.name || '未命名'}
+- 核心问题：${project?.metaProblem || ''}
+- 探索模式：${project?.explorationMode || 'research'}
+- 节点总数：${nodes.length}，已完成：${nodes.filter(n => n.status === NodeStatus.SOLVED).length}
+- 当前探索的主要节点：${nodesContext.map(n => n.title).join('、')}
+
+**已有洞察**：
+${projectInsight ? `
+- 深层动机：${projectInsight.deepMotivation}
+- 价值评估：${projectInsight.valueAssessment}
+- 期望产出：${projectInsight.expectedOutcome}
+- 关键问题：${projectInsight.keyQuestions.join('、')}
+` : '尚未深度分析'}
+
+**当前群聊中的专家Agent**：${activeAgents.map(a => `${a.name}(${a.role})`).join('、') || '无'}
+
+**回复原则**：
+1. 像朋友聊天一样自然，但要有深度
+2. 主动追问用户的动机和期望
+3. 当用户提出新想法时，评估是否值得加入探索
+4. 如果用户的想法能优化探索方向，明确建议调整
+5. 适时推荐邀请专业Agent
+6. 每次回复最后，如果有重要洞察，用【洞察】标记
+
+**特殊指令识别**：
+- 如果用户说"加入探索"/"新增方向"等，在回复末尾加上：[ACTION:ADD_NODE:节点标题]
+- 如果用户说"调整优先级"/"先做这个"等，在回复末尾加上：[ACTION:PRIORITIZE:节点标题]
+- 如果用户表达了重要的意图变化，在回复末尾加上：[INSIGHT:具体洞察内容]`;
+
+      const response = await callGemini([
+        { role: "system", content: systemPrompt },
+        ...conversationHistory,
+        { role: "user", content: userMessage }
+      ], GEMINI_MODEL);
+
+      // 解析响应中的特殊指令
+      let displayResponse = response;
+      const actionMatch = response.match(/\[ACTION:(\w+):(.+?)\]/);
+      const insightMatch = response.match(/\[INSIGHT:(.+?)\]/);
+      
+      if (actionMatch) {
+        const [, action, target] = actionMatch;
+        displayResponse = response.replace(/\[ACTION:\w+:.+?\]/, '').trim();
+        
+        if (action === 'ADD_NODE') {
+          // 自动添加新节点
+          setTimeout(() => {
+            onAddNode(target, nodes.length > 0 ? [nodes[0].id] : []);
+            setMessages(prev => [...prev, { 
+              role: 'model', 
+              text: `✅ 已将「${target}」加入探索计划！这个方向会在下一轮探索中展开。`
+            }]);
+          }, 500);
+        }
+      }
+      
+      if (insightMatch) {
+        const [, insight] = insightMatch;
+        displayResponse = displayResponse.replace(/\[INSIGHT:.+?\]/, '').trim();
+        
+        // 更新项目洞察
+        if (projectInsight) {
+          const updatedInsight = {
+            ...projectInsight,
+            keyQuestions: [...projectInsight.keyQuestions, insight].slice(-5)
+          };
+          setProjectInsight(updatedInsight);
+          onUpdateProjectInsight?.(updatedInsight);
+        }
+      }
+
+      setMessages(prev => [...prev, { role: 'model', text: displayResponse }]);
+    } catch (e) { 
+      setMessages(prev => [...prev, { role: 'model', text: '抱歉，我需要整理一下思路，请稍后再试。' }]); 
+    }
     finally { setIsTyping(false); }
   };
 
   return (
     <div className="h-full flex flex-col">
+      {/* 项目洞察面板 */}
+      {projectInsight && showInsightPanel && (
+        <div className="p-3 border-b border-slate-800 bg-gradient-to-r from-blue-900/20 to-purple-900/20 max-h-[200px] overflow-y-auto">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] font-bold text-blue-400">💡 项目洞察</div>
+            <button onClick={() => setShowInsightPanel(false)} className="text-slate-500 hover:text-slate-300 text-xs">收起</button>
+          </div>
+          <div className="space-y-2 text-[11px]">
+            <div><span className="text-slate-500">深层动机：</span><span className="text-slate-300">{projectInsight.deepMotivation}</span></div>
+            <div><span className="text-slate-500">价值评估：</span><span className="text-emerald-400">{projectInsight.valueAssessment}</span></div>
+            {projectInsight.keyQuestions.length > 0 && (
+              <div>
+                <span className="text-slate-500">关键问题：</span>
+                <div className="mt-1 space-y-1">
+                  {projectInsight.keyQuestions.slice(0, 3).map((q, i) => (
+                    <div key={i} className="text-slate-400 pl-2 border-l border-slate-700">• {q}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      
+      {/* 洞察按钮 */}
+      {projectInsight && !showInsightPanel && (
+        <button 
+          onClick={() => setShowInsightPanel(true)}
+          className="mx-3 mt-2 px-3 py-1.5 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/20 rounded-lg text-[10px] text-blue-400 flex items-center gap-2 transition-colors"
+        >
+          <span>💡</span> 查看项目洞察
+        </button>
+      )}
+
+      {/* 活跃的Agent */}
       {activeAgents.length > 0 && (
         <div className="p-3 border-b border-slate-800 bg-slate-900/50">
-          <div className="text-[10px] text-slate-500 mb-2">群聊成员</div>
+          <div className="text-[10px] text-slate-500 mb-2">协作专家</div>
           <div className="flex gap-2 flex-wrap">
             {activeAgents.map(agent => (
               <div key={agent.id} className="flex items-center gap-1.5 px-2 py-1 bg-slate-800 rounded-full text-xs group cursor-pointer hover:bg-slate-700" onClick={() => removeAgent(agent.id)}>
@@ -101,18 +318,22 @@ const AIButler: React.FC<{
           </div>
         </div>
       )}
+
+      {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-slate-800 text-slate-300 rounded-bl-sm'}`}>{m.text}</div>
           </div>
         ))}
-        {isTyping && <div className="flex justify-start"><div className="bg-slate-800 text-slate-400 px-3 py-2 rounded-2xl rounded-bl-sm text-xs animate-pulse">正在输入...</div></div>}
+        {isTyping && <div className="flex justify-start"><div className="bg-slate-800 text-slate-400 px-3 py-2 rounded-2xl rounded-bl-sm text-xs animate-pulse">正在深度思考...</div></div>}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Agent选择器 */}
       {showAgentPicker && (
         <div className="p-3 border-t border-slate-800 bg-slate-900">
-          <div className="text-[10px] text-slate-500 mb-2">选择 Agent</div>
+          <div className="text-[10px] text-slate-500 mb-2">邀请专家协助分析</div>
           <div className="grid grid-cols-2 gap-2">
             {availableAgents.filter(a => !activeAgents.find(aa => aa.id === a.id)).map(agent => (
               <button key={agent.id} onClick={() => inviteAgent(agent)} className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-left transition-colors">
@@ -124,12 +345,14 @@ const AIButler: React.FC<{
           <button onClick={() => setShowAgentPicker(false)} className="w-full mt-2 py-1.5 text-[10px] text-slate-500 hover:text-slate-300">取消</button>
         </div>
       )}
+
+      {/* 输入区域 */}
       <form onSubmit={handleSend} className="p-3 border-t border-slate-800 bg-slate-900/80">
         <div className="flex gap-2 items-end">
-          <button type="button" onClick={() => setShowAgentPicker(!showAgentPicker)} className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-lg transition-colors" title="邀请Agent">
+          <button type="button" onClick={() => setShowAgentPicker(!showAgentPicker)} className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-lg transition-colors" title="邀请专家">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
           </button>
-          <input value={input} onChange={e => setInput(e.target.value)} placeholder="输入消息..." className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" />
+          <input value={input} onChange={e => setInput(e.target.value)} placeholder="聊聊你的想法..." className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" />
           <button type="submit" disabled={isTyping || !input.trim()} className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white rounded-xl transition-colors">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
           </button>
