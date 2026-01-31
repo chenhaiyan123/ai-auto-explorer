@@ -44,7 +44,9 @@ const AIButler: React.FC<{
   onUpdateNode: (id: string, updates: Partial<ProblemNode>) => void;
   onStartExploration: () => void;
   onUpdateProjectInsight?: (insight: ProjectInsight) => void;
-}> = ({ project, nodes, onAddNode, onUpdateNode, onStartExploration, onUpdateProjectInsight }) => {
+  quotedNode?: ProblemNode | null;
+  onClearQuotedNode?: () => void;
+}> = ({ project, nodes, onAddNode, onUpdateNode, onStartExploration, onUpdateProjectInsight, quotedNode, onClearQuotedNode }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
@@ -52,7 +54,16 @@ const AIButler: React.FC<{
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [projectInsight, setProjectInsight] = useState<ProjectInsight | null>(null);
   const [showInsightPanel, setShowInsightPanel] = useState(false);
+  const [currentQuotedNode, setCurrentQuotedNode] = useState<ProblemNode | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // 处理引用节点
+  useEffect(() => {
+    if (quotedNode) {
+      setCurrentQuotedNode(quotedNode);
+      onClearQuotedNode?.();
+    }
+  }, [quotedNode, onClearQuotedNode]);
 
   const availableAgents: Agent[] = [
     { id: 'researcher', name: '研究员', role: '深度调研', avatar: '🔬', status: 'idle', specialty: ['research', 'analysis'] },
@@ -321,11 +332,31 @@ ${projectInsight ? `
 
       {/* 消息列表 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-slate-800 text-slate-300 rounded-bl-sm'}`}>{m.text}</div>
-          </div>
-        ))}
+        {messages.map((m, i) => {
+          // 解析消息中的引用内容
+          const quoteMatch = m.text.match(/^\[关于节点「(.+?)」\]\s*([\s\S]*)/);
+          const hasQuote = m.role === 'user' && quoteMatch;
+          const quotedTitle = hasQuote ? quoteMatch[1] : '';
+          const actualMessage = hasQuote ? quoteMatch[2] : m.text;
+          
+          return (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-2xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-slate-800 text-slate-300 rounded-bl-sm'}`}>
+                {/* 引用部分 - 微信风格小字显示 */}
+                {hasQuote && (
+                  <div className={`px-3 pt-2 pb-1 border-b ${m.role === 'user' ? 'border-blue-500/30' : 'border-slate-700'}`}>
+                    <div className={`text-[10px] ${m.role === 'user' ? 'text-blue-200/70' : 'text-slate-500'} flex items-center gap-1`}>
+                      <span className="opacity-60">┃</span>
+                      <span>引用：{quotedTitle}</span>
+                    </div>
+                  </div>
+                )}
+                {/* 正文内容 */}
+                <div className="px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap">{actualMessage || (hasQuote ? '👆' : m.text)}</div>
+              </div>
+            </div>
+          );
+        })}
         {isTyping && <div className="flex justify-start"><div className="bg-slate-800 text-slate-400 px-3 py-2 rounded-2xl rounded-bl-sm text-xs animate-pulse">正在深度思考...</div></div>}
         <div ref={messagesEndRef} />
       </div>
@@ -333,27 +364,64 @@ ${projectInsight ? `
       {/* Agent选择器 */}
       {showAgentPicker && (
         <div className="p-3 border-t border-slate-800 bg-slate-900">
-          <div className="text-[10px] text-slate-500 mb-2">邀请专家协助分析</div>
+          <div className="text-[10px] text-slate-500 mb-2 opacity-60">邀请专家协助分析</div>
           <div className="grid grid-cols-2 gap-2">
             {availableAgents.filter(a => !activeAgents.find(aa => aa.id === a.id)).map(agent => (
-              <button key={agent.id} onClick={() => inviteAgent(agent)} className="flex items-center gap-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-left transition-colors">
-                <span className="text-lg">{agent.avatar}</span>
-                <div><div className="text-xs font-medium text-slate-200">{agent.name}</div><div className="text-[10px] text-slate-500">{agent.role}</div></div>
+              <button key={agent.id} onClick={() => inviteAgent(agent)} className="flex items-center gap-2 p-2 bg-slate-800/60 hover:bg-slate-700 rounded-lg text-left transition-colors">
+                <span className="text-lg opacity-80">{agent.avatar}</span>
+                <div><div className="text-xs font-medium text-slate-300">{agent.name}</div><div className="text-[10px] text-slate-500">{agent.role}</div></div>
               </button>
             ))}
           </div>
-          <button onClick={() => setShowAgentPicker(false)} className="w-full mt-2 py-1.5 text-[10px] text-slate-500 hover:text-slate-300">取消</button>
+          <button onClick={() => setShowAgentPicker(false)} className="w-full mt-2 py-1.5 text-[10px] text-slate-600 hover:text-slate-400">取消</button>
+        </div>
+      )}
+
+      {/* 引用的节点显示 */}
+      {currentQuotedNode && (
+        <div className="mx-3 mb-2 p-2.5 bg-blue-600/10 border border-blue-500/30 rounded-xl">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] text-blue-400 mb-1">📌 引用节点讨论</div>
+              <div className="text-xs text-slate-200 font-medium truncate">{currentQuotedNode.title}</div>
+              {currentQuotedNode.notes && (
+                <div className="text-[10px] text-slate-400 mt-1 line-clamp-2">{currentQuotedNode.notes}</div>
+              )}
+            </div>
+            <button 
+              onClick={() => setCurrentQuotedNode(null)} 
+              className="p-1 hover:bg-slate-700 rounded text-slate-500 hover:text-slate-300"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
         </div>
       )}
 
       {/* 输入区域 */}
-      <form onSubmit={handleSend} className="p-3 border-t border-slate-800 bg-slate-900/80">
+      <form onSubmit={(e) => {
+        e.preventDefault();
+        if (!input.trim() && !currentQuotedNode) return;
+        // 如果有引用节点，自动添加到消息中
+        let messageToSend = input.trim();
+        if (currentQuotedNode) {
+          const quotePrefix = `[关于节点「${currentQuotedNode.title}」] `;
+          messageToSend = quotePrefix + messageToSend;
+          setCurrentQuotedNode(null);
+        }
+        if (messageToSend) {
+          // 调用原有的发送逻辑
+          const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+          setInput(messageToSend);
+          setTimeout(() => handleSend(fakeEvent), 0);
+        }
+      }} className="p-3 border-t border-slate-800 bg-slate-900/80">
         <div className="flex gap-2 items-end">
           <button type="button" onClick={() => setShowAgentPicker(!showAgentPicker)} className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-lg transition-colors" title="邀请专家">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
           </button>
-          <input value={input} onChange={e => setInput(e.target.value)} placeholder="聊聊你的想法..." className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" />
-          <button type="submit" disabled={isTyping || !input.trim()} className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white rounded-xl transition-colors">
+          <input value={input} onChange={e => setInput(e.target.value)} placeholder={currentQuotedNode ? "针对这个节点说点什么..." : "聊聊你的想法..."} className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" />
+          <button type="submit" disabled={isTyping || (!input.trim() && !currentQuotedNode)} className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white rounded-xl transition-colors">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
           </button>
         </div>
@@ -443,13 +511,31 @@ const SimpleResearchPanel: React.FC<{
       <div className="flex-1 overflow-y-auto px-4 space-y-2 pb-2">
         {activeSection === 'overview' && (
           <>
-            {/* 项目总体目标 */}
+            {/* 项目介绍 */}
             {project && (
               <div className="bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-lg p-3 border border-blue-500/20">
-                <div className="text-[10px] font-medium text-blue-400 mb-1.5">🎯 项目总体目标</div>
-                <div className="text-[12px] text-slate-200 leading-relaxed">{project.metaProblem}</div>
+                <div className="text-[10px] font-medium text-blue-400 mb-1.5">📋 项目介绍</div>
+                <div className="text-[11px] text-slate-300 mb-2">{project.name}</div>
+                <div className="text-[10px] font-medium text-purple-400 mb-1">🎯 核心目标</div>
+                <div className="text-[11px] text-slate-200 leading-relaxed">{project.metaProblem}</div>
               </div>
             )}
+
+            {/* 探索思路 */}
+            <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
+              <div className="text-[10px] font-medium text-cyan-400 mb-1.5">🧭 探索思路</div>
+              <div className="text-[11px] text-slate-400 leading-relaxed">
+                {project?.explorationMode === 'research' 
+                  ? '采用研究模式：系统性地分解问题，深度调研每个子方向，收集知识卡片，验证假设，最终形成完整的研究报告。'
+                  : '采用构建模式：以实践为导向，逐步实现目标，在过程中迭代优化方案。'
+                }
+              </div>
+              {stats.total > 1 && (
+                <div className="mt-2 pt-2 border-t border-slate-700/50 text-[10px] text-slate-500">
+                  当前已展开 {stats.total} 个探索方向，{stats.solved > 0 ? `其中 ${stats.solved} 个已完成` : '正在探索中'}
+                </div>
+              )}
+            </div>
 
             {/* 当前阶段目标 */}
             <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
@@ -550,9 +636,29 @@ const SimpleResearchPanel: React.FC<{
         <button onClick={isLooping ? onStopExploration : onStartExploration} className={`w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${isLooping ? 'bg-red-600/20 text-red-400 border border-red-500/30' : 'bg-blue-600/20 text-blue-400 border border-blue-500/30'}`}>
           {isLooping ? <><div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />停止探索</> : <>▶ 开始长期探索</>}
         </button>
-        <button onClick={onGenerateReport} disabled={isGeneratingReport || stats.solved === 0} className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 disabled:from-slate-700 disabled:to-slate-700 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-lg">
-          {isGeneratingReport ? <><div className="w-2 h-2 bg-white rounded-full animate-ping" />生成中...</> : <>📄 生成研究报告</>}
-        </button>
+        {/* 生成报告按钮：探索未完成时变暗 */}
+        {(() => {
+          const isExplorationComplete = stats.unexplored === 0 && stats.exploring === 0 && stats.solved > 0;
+          const canGenerate = isExplorationComplete && !isGeneratingReport;
+          return (
+            <button 
+              onClick={onGenerateReport} 
+              disabled={!canGenerate}
+              className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                canGenerate 
+                  ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg hover:shadow-xl' 
+                  : 'bg-slate-800/50 text-slate-500 border border-slate-700/50 cursor-not-allowed'
+              }`}
+              title={!isExplorationComplete ? '请先完成所有探索' : ''}
+            >
+              {isGeneratingReport ? (
+                <><div className="w-2 h-2 bg-white rounded-full animate-ping" />生成中...</>
+              ) : (
+                <>📄 生成研究报告 {!isExplorationComplete && <span className="text-[9px] opacity-60">({stats.unexplored + stats.exploring}个待完成)</span>}</>
+              )}
+            </button>
+          );
+        })()}
       </div>
     </div>
   );
@@ -612,11 +718,13 @@ const App: React.FC = () => {
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [loginEmail, setLoginEmail] = useState('');
+  const [loginPhone, setLoginPhone] = useState('');
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [adminUsername, setAdminUsername] = useState('');
   const [adminPass, setAdminPass] = useState('');
   const [isLoginAsAdmin, setIsLoginAsAdmin] = useState(false);
+  const [loginMethod, setLoginMethod] = useState<'wechat' | 'phone' | 'email'>('email'); // 登录方式
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [showMetaModal, setShowMetaModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
@@ -652,17 +760,62 @@ const App: React.FC = () => {
   }, [projects, currentProjectId]);
 
   const [notesPanelMode, setNotesPanelMode] = useState<number>(1);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(320); // 可调节的侧边栏宽度
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [sidebarActiveTab, setSidebarActiveTab] = useState<'butler' | 'research'>('butler');
   const [nodes, setNodes] = useState<ProblemNode[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [isLooping, setIsLooping] = useState(false);
   const [isDetailsWide, setIsDetailsWide] = useState(false);
+  // 引用节点到AI管家讨论
+  const [quotedNodeForButler, setQuotedNodeForButler] = useState<ProblemNode | null>(null);
+  // 项目重命名
+  const [editingProjectName, setEditingProjectName] = useState(false);
+  const [tempProjectName, setTempProjectName] = useState('');
   const [decision, setDecision] = useState<DecisionPoint | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId: string } | null>(null);
   const isLoopingRef = useRef(false);
   const isProcessingRef = useRef(false);
   useEffect(() => { isLoopingRef.current = isLooping; }, [isLooping]);
+
+  // 侧边栏拖拽调整大小
+  const handleSidebarMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingSidebar(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizingSidebar) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const newWidth = Math.min(Math.max(e.clientX, 280), 600);
+      setSidebarWidth(newWidth);
+    };
+    const handleMouseUp = () => setIsResizingSidebar(false);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingSidebar]);
+
+  // 项目重命名
+  const handleRenameProject = useCallback((newName: string) => {
+    if (!currentProjectId || !newName.trim()) return;
+    setProjects(prev => prev.map(p => 
+      p.id === currentProjectId ? { ...p, name: newName.trim() } : p
+    ));
+    setEditingProjectName(false);
+    setTempProjectName('');
+  }, [currentProjectId]);
+
+  // 引用节点到AI管家
+  const handleQuoteNodeToButler = useCallback((node: ProblemNode) => {
+    setQuotedNodeForButler(node);
+    setSidebarActiveTab('butler');
+    if (notesPanelMode === 0) setNotesPanelMode(1);
+  }, [notesPanelMode]);
 
   useEffect(() => { if (user) { const k = `exploration_projects_${user.username}`; try { const s = localStorage.getItem(k); const p = s ? JSON.parse(s) : []; setProjects(p); setCurrentProjectId(null); if (p.length === 0) setShowMetaModal(true); } catch { setProjects([]); setShowMetaModal(true); } } else { setProjects([]); setCurrentProjectId(null); } }, [user?.username]);
   useEffect(() => { if (user) { monitor.incrementSession(); const i = setInterval(() => monitor.updateHeartbeat(), 10000); return () => clearInterval(i); } }, [user]);
@@ -715,9 +868,103 @@ const App: React.FC = () => {
     <div className="h-screen w-screen flex items-center justify-center bg-slate-950 p-4">
       <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-emerald-600"></div>
-        <div className="text-center mb-8"><div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">A</div><h2 className="text-xl sm:text-2xl font-bold">AI 自动探索助手</h2><p className="text-slate-500 text-xs sm:text-sm mt-2">{isLoginAsAdmin ? '管理员验证' : '邮箱快速登录'}</p></div>
-        {!isLoginAsAdmin ? (<div className="space-y-4">{!isOtpSent ? (<><input type="email" placeholder="电子邮箱" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" /><button onClick={() => { if (loginEmail.includes('@')) { setIsOtpSent(true); setOtpCode('123456'); } }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">获取验证码</button></>) : (<><input type="text" placeholder="验证码" value={otpCode} onChange={e => setOtpCode(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-4 text-center text-xl tracking-[0.5em] font-mono text-white outline-none" /><button onClick={() => setUser(auth.loginWithEmail(loginEmail))} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl">确认登录</button></>)}</div>) : (<div className="space-y-4"><input type="text" placeholder="管理账号" value={adminUsername} onChange={e => setAdminUsername(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white outline-none" /><input type="password" placeholder="管理密码" value={adminPass} onChange={e => setAdminPass(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white outline-none" /><button onClick={() => { if (auth.loginAsAdmin(adminUsername, adminPass)) setUser(auth.getUser()); else alert('账号或密码错误'); }} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 rounded-xl">管理员登录</button></div>)}
-        <div className="mt-8 pt-6 border-t border-slate-800 text-center"><button onClick={() => { setIsLoginAsAdmin(!isLoginAsAdmin); setOtpCode(''); setIsOtpSent(false); }} className="text-slate-500 hover:text-white text-sm font-medium">{isLoginAsAdmin ? '返回普通登录' : '管理员入口'}</button></div>
+        <div className="text-center mb-6">
+          <div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">A</div>
+          <h2 className="text-xl sm:text-2xl font-bold">AI 自动探索助手</h2>
+          <p className="text-slate-500 text-xs sm:text-sm mt-2">{isLoginAsAdmin ? '管理员验证' : '选择登录方式'}</p>
+        </div>
+        
+        {!isLoginAsAdmin ? (
+          <div className="space-y-4">
+            {/* 登录方式切换 */}
+            {!isOtpSent && (
+              <div className="flex gap-2 p-1 bg-slate-800 rounded-xl">
+                <button 
+                  onClick={() => setLoginMethod('wechat')} 
+                  className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'wechat' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-6.656-6.088V8.89c-.135-.01-.27-.027-.407-.03zm-2.53 3.274c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z"/></svg>
+                  微信
+                </button>
+                <button 
+                  onClick={() => setLoginMethod('phone')} 
+                  className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'phone' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+                  短信
+                </button>
+                <button 
+                  onClick={() => setLoginMethod('email')} 
+                  className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'email' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                  邮箱
+                </button>
+              </div>
+            )}
+            
+            {/* 微信扫码登录 */}
+            {loginMethod === 'wechat' && !isOtpSent && (
+              <div className="text-center py-6">
+                <div className="w-48 h-48 mx-auto bg-white rounded-2xl p-3 mb-4">
+                  <div className="w-full h-full bg-slate-100 rounded-xl flex items-center justify-center">
+                    <div className="text-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.5" className="mx-auto mb-2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h.01M7 12h.01M12 7h.01M17 7h.01M12 12h.01M17 12h.01M7 17h.01M12 17h.01M17 17h.01"/></svg>
+                      <p className="text-xs text-slate-500">微信扫码区域</p>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500">请使用微信扫一扫登录</p>
+                <button onClick={() => setUser(auth.loginWithEmail('wechat_user@demo.com'))} className="mt-4 text-xs text-blue-400 hover:text-blue-300">模拟扫码成功</button>
+              </div>
+            )}
+            
+            {/* 短信验证码登录 */}
+            {loginMethod === 'phone' && !isOtpSent && (
+              <>
+                <div className="flex gap-2">
+                  <select className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-3.5 text-sm text-white outline-none">
+                    <option>+86</option>
+                    <option>+1</option>
+                    <option>+852</option>
+                  </select>
+                  <input type="tel" placeholder="手机号码" value={loginPhone} onChange={e => setLoginPhone(e.target.value)} className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
+                </div>
+                <button onClick={() => { if (loginPhone.length >= 11) { setIsOtpSent(true); setOtpCode('123456'); } }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">获取短信验证码</button>
+              </>
+            )}
+            
+            {/* 邮箱验证码登录 */}
+            {loginMethod === 'email' && !isOtpSent && (
+              <>
+                <input type="email" placeholder="电子邮箱" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
+                <button onClick={() => { if (loginEmail.includes('@')) { setIsOtpSent(true); setOtpCode('123456'); } }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">获取邮箱验证码</button>
+              </>
+            )}
+            
+            {/* 验证码输入 */}
+            {isOtpSent && (
+              <>
+                <div className="text-center text-xs text-slate-500 mb-2">
+                  验证码已发送至 {loginMethod === 'phone' ? loginPhone : loginEmail}
+                </div>
+                <input type="text" placeholder="输入验证码" value={otpCode} onChange={e => setOtpCode(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-4 text-center text-xl tracking-[0.5em] font-mono text-white outline-none" />
+                <button onClick={() => setUser(auth.loginWithEmail(loginMethod === 'phone' ? loginPhone : loginEmail))} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl">确认登录</button>
+                <button onClick={() => { setIsOtpSent(false); setOtpCode(''); }} className="w-full text-xs text-slate-500 hover:text-slate-300 py-2">返回重新获取</button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <input type="text" placeholder="管理账号" value={adminUsername} onChange={e => setAdminUsername(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white outline-none" />
+            <input type="password" placeholder="管理密码" value={adminPass} onChange={e => setAdminPass(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white outline-none" />
+            <button onClick={() => { if (auth.loginAsAdmin(adminUsername, adminPass)) setUser(auth.getUser()); else alert('账号或密码错误'); }} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 rounded-xl">管理员登录</button>
+          </div>
+        )}
+        
+        <div className="mt-6 pt-4 border-t border-slate-800 text-center">
+          <button onClick={() => { setIsLoginAsAdmin(!isLoginAsAdmin); setOtpCode(''); setIsOtpSent(false); }} className="text-slate-500 hover:text-white text-sm font-medium">{isLoginAsAdmin ? '返回普通登录' : '管理员入口'}</button>
+        </div>
       </div>
     </div>
   );
@@ -727,7 +974,34 @@ const App: React.FC = () => {
       <header className="relative h-14 border-b border-slate-800 flex items-center justify-between px-3 sm:px-6 bg-slate-900/50 backdrop-blur-md z-50">
         <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-fit"><div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white shadow-lg">A</div><h1 className="text-lg font-semibold hidden lg:block">Explorer</h1></div>
-          <select className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-xs outline-none text-white max-w-[120px] sm:max-w-[200px]" value={currentProjectId || ''} onChange={e => setCurrentProjectId(e.target.value)}>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+          
+          {/* 项目选择器 + 重命名 */}
+          <div className="flex items-center gap-1">
+            {editingProjectName ? (
+              <input
+                type="text"
+                value={tempProjectName}
+                onChange={e => setTempProjectName(e.target.value)}
+                onBlur={() => { handleRenameProject(tempProjectName); }}
+                onKeyDown={e => { if (e.key === 'Enter') handleRenameProject(tempProjectName); if (e.key === 'Escape') { setEditingProjectName(false); setTempProjectName(''); } }}
+                className="bg-slate-800 border border-blue-500 rounded-md px-2 py-1 text-xs outline-none text-white max-w-[120px] sm:max-w-[200px]"
+                autoFocus
+              />
+            ) : (
+              <select className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-xs outline-none text-white max-w-[120px] sm:max-w-[200px]" value={currentProjectId || ''} onChange={e => setCurrentProjectId(e.target.value)}>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+            )}
+            {/* 重命名按钮 */}
+            {currentProject && !editingProjectName && (
+              <button 
+                onClick={() => { setTempProjectName(currentProject.name); setEditingProjectName(true); }}
+                className="p-1.5 text-slate-500 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
+                title="重命名项目"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+              </button>
+            )}
+          </div>
+          
           {currentProject?.explorationMode && <div className={`hidden sm:flex px-2 py-1 rounded-full text-[10px] font-bold items-center gap-1 ${currentProject.explorationMode === 'research' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'}`}>{currentProject.explorationMode === 'research' ? '🔬研究' : '🔧构建'}</div>}
           <button onClick={() => setShowMetaModal(true)} className="p-2 text-slate-400 hover:text-blue-400"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg></button>
         </div>
@@ -750,8 +1024,8 @@ const App: React.FC = () => {
             {/* 下拉菜单 */}
             {showUserMenu && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
-                <div className="absolute right-0 top-full mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setShowUserMenu(false); }} />
+                <div className="absolute right-0 top-full mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 z-50" onClick={e => e.stopPropagation()}>
                   {/* 用户信息 */}
                   <div className="px-4 py-2 border-b border-slate-700">
                     <div className="text-sm font-medium text-white">{user.username || '用户'}</div>
@@ -791,11 +1065,17 @@ const App: React.FC = () => {
       </header>
 
       <main className="flex-1 flex overflow-hidden relative">
-        <aside className={`h-full bg-slate-900 border-r border-slate-800 transition-all duration-300 flex flex-col z-20 overflow-hidden ${notesPanelMode === 0 ? 'w-0 border-none' : notesPanelMode === 2 ? 'w-full sm:w-[380px]' : 'w-[300px]'}`}>
+        {/* 可调整大小的侧边栏 */}
+        <aside 
+          className={`h-full bg-slate-900 border-r border-slate-800 flex flex-col z-20 overflow-hidden ${notesPanelMode === 0 ? 'w-0 border-none' : ''}`}
+          style={{ width: notesPanelMode === 0 ? 0 : sidebarWidth }}
+        >
           <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
             <h3 className="text-xs font-bold text-slate-400">EXPLORER</h3>
             <div className="flex gap-1">
-              <button onClick={() => setNotesPanelMode(notesPanelMode === 2 ? 1 : 2)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400">{notesPanelMode === 2 ? <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/></svg> : <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>}</button>
+              <button onClick={() => setSidebarWidth(sidebarWidth === 320 ? 480 : 320)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title="切换宽度">
+                {sidebarWidth > 400 ? <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/></svg> : <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>}
+              </button>
               <button onClick={() => setNotesPanelMode(0)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button>
             </div>
           </div>
@@ -804,10 +1084,19 @@ const App: React.FC = () => {
             <button onClick={() => setSidebarActiveTab('research')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${sidebarActiveTab === 'research' ? 'bg-emerald-600/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}><span>📊</span> 研究面板</button>
           </div>
           <div className="flex-1 overflow-hidden">
-            {sidebarActiveTab === 'butler' && <AIButler project={currentProject} nodes={nodes} onAddNode={addNode} onUpdateNode={updateNode} onStartExploration={() => setIsLooping(true)} />}
+            {sidebarActiveTab === 'butler' && <AIButler project={currentProject} nodes={nodes} onAddNode={addNode} onUpdateNode={updateNode} onStartExploration={() => setIsLooping(true)} quotedNode={quotedNodeForButler} onClearQuotedNode={() => setQuotedNodeForButler(null)} />}
             {sidebarActiveTab === 'research' && <SimpleResearchPanel project={currentProject} nodes={nodes} knowledgeCards={knowledgeCards} findings={researchFindings} criticalNodes={criticalNodes} isLooping={isLooping} isGeneratingReport={isGeneratingReport} onNodeSelect={setSelectedNodeId} onStartExploration={() => setIsLooping(true)} onStopExploration={() => setIsLooping(false)} onGenerateReport={handleGenerateReport} />}
           </div>
         </aside>
+        
+        {/* 拖拽调整宽度的把手 */}
+        {notesPanelMode !== 0 && (
+          <div 
+            className={`w-1 h-full cursor-col-resize hover:bg-blue-500/50 transition-colors z-30 ${isResizingSidebar ? 'bg-blue-500' : 'bg-transparent'}`}
+            onMouseDown={handleSidebarMouseDown}
+          />
+        )}
+        
         {notesPanelMode === 0 && <div className="w-8 h-full bg-slate-900 border-r border-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNotesPanelMode(1)}><div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">展开面板</div></div>}
         <div className="flex-1 relative z-0"><GraphVisualization nodes={filteredNodes} onNodeClick={handleNodeClick} onNodeContextMenu={(node, x, y) => setContextMenu({ x, y, nodeId: node.id })} /></div>
         <div className={`fixed inset-0 z-40 md:relative md:inset-auto md:z-20 transition-all duration-300 ${selectedNodeId ? 'translate-x-0 opacity-100 md:w-96' : 'translate-x-full opacity-0 md:w-0 overflow-hidden'}`} style={{ width: selectedNodeId && window.innerWidth >= 768 ? (isDetailsWide ? '600px' : '384px') : undefined }}>
@@ -816,10 +1105,14 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {contextMenu && <div className="fixed z-[100] bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 w-44" style={{ top: Math.min(contextMenu.y, window.innerHeight - 300), left: Math.min(contextMenu.x, window.innerWidth - 180) }} onClick={e => e.stopPropagation()}>
+      {contextMenu && <div className="fixed z-[100] bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 w-48" style={{ top: Math.min(contextMenu.y, window.innerHeight - 350), left: Math.min(contextMenu.x, window.innerWidth - 200) }} onClick={e => e.stopPropagation()}>
+        {/* 引用到AI管家 - 放在最上面 */}
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2 text-blue-400" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) handleQuoteNodeToButler(n); setContextMenu(null); }}>💬 引用到AI管家讨论</button>
+        <div className="h-px bg-slate-700 my-1"></div>
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { setFocusedNodeId(focusedNodeId === contextMenu.nodeId ? null : contextMenu.nodeId); setContextMenu(null); }}>🎯 {focusedNodeId === contextMenu.nodeId ? '取消聚焦' : '聚焦节点'}</button>
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isCritical: !n.isCritical }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isCritical ? '⭐ 取消关键' : '⭐ 设为关键'}</button>
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isPinned: !n.isPinned }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isPinned ? '📍 取消固定' : '📌 固定节点'}</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isCollapsed: !n.isCollapsed }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isCollapsed ? '📂 展开节点' : '📁 折叠节点'}</button>
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const title = prompt('标题:'); if (title) addNode(title, [contextMenu.nodeId]); setContextMenu(null); }}>➕ 增加子节点</button>
         <div className="h-px bg-slate-700 my-1"></div>
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-red-600 text-red-400 hover:text-white flex items-center gap-2" onClick={() => { updateNode(contextMenu.nodeId, { status: NodeStatus.INVALID }); setContextMenu(null); }}>🚫 设为无效</button>
