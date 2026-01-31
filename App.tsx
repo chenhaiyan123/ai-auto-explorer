@@ -141,6 +141,7 @@ const AIButler: React.FC<{
 
 // ========== 简化版研究面板 ==========
 const SimpleResearchPanel: React.FC<{
+  project: Project | null;
   nodes: ProblemNode[];
   knowledgeCards: KnowledgeCard[];
   findings: ResearchFinding[];
@@ -151,7 +152,7 @@ const SimpleResearchPanel: React.FC<{
   onStartExploration: () => void;
   onStopExploration: () => void;
   onGenerateReport: () => void;
-}> = ({ nodes, knowledgeCards, findings, criticalNodes, isLooping, isGeneratingReport, onNodeSelect, onStartExploration, onStopExploration, onGenerateReport }) => {
+}> = ({ project, nodes, knowledgeCards, findings, criticalNodes, isLooping, isGeneratingReport, onNodeSelect, onStartExploration, onStopExploration, onGenerateReport }) => {
   const [activeSection, setActiveSection] = useState<'overview' | 'nodes' | 'findings'>('overview');
 
   const stats = useMemo(() => {
@@ -163,6 +164,33 @@ const SimpleResearchPanel: React.FC<{
     const coverage = total > 0 ? Math.round((solved / total) * 100) : 0;
     return { total, solved, exploring, unexplored, needsReview, coverage };
   }, [nodes]);
+
+  // 计算阶段目标和问题
+  const projectAnalysis = useMemo(() => {
+    const solvedNodes = nodes.filter(n => n.status === NodeStatus.SOLVED);
+    const problemNodes = nodes.filter(n => n.status === NodeStatus.NEEDS_REVIEW || n.status === NodeStatus.INVALID);
+    const exploringNodes = nodes.filter(n => n.status === NodeStatus.EXPLORING);
+    
+    // 当前阶段目标：正在探索的节点或下一个待探索的节点
+    const currentPhase = exploringNodes.length > 0 
+      ? exploringNodes[0].title 
+      : nodes.find(n => n.status === NodeStatus.UNEXPLORED)?.title || '所有目标已完成';
+    
+    // 遇到的问题：待决策的节点
+    const problems = problemNodes.map(n => n.title);
+    
+    // 验证：已完成的关键发现
+    const validations = findings.slice(0, 3).map(f => f.insight);
+    
+    // 改进建议：基于当前状态
+    const suggestions: string[] = [];
+    if (stats.needsReview > 0) suggestions.push(`有 ${stats.needsReview} 个节点需要决策`);
+    if (stats.unexplored > stats.solved) suggestions.push('建议继续深入探索未知领域');
+    if (criticalNodes.length === 0 && stats.solved > 2) suggestions.push('可标记关键节点以聚焦重点');
+    if (knowledgeCards.length < stats.solved) suggestions.push('整理已有发现形成知识卡片');
+    
+    return { currentPhase, problems, validations, suggestions };
+  }, [nodes, findings, stats, criticalNodes, knowledgeCards]);
 
   return (
     <div className="h-full flex flex-col">
@@ -176,28 +204,8 @@ const SimpleResearchPanel: React.FC<{
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <span className="text-xl font-bold text-white">{stats.coverage}%</span>
-            <span className="text-[9px] text-slate-500">研究覆盖</span>
+            <span className="text-[9px] text-slate-500">探索进度</span>
           </div>
-        </div>
-      </div>
-
-      {/* 快捷统计 */}
-      <div className="grid grid-cols-2 gap-2 px-4 mb-3">
-        <div className="bg-slate-800/50 rounded-lg p-2.5 border border-slate-700/50">
-          <div className="text-base font-bold text-white">{stats.solved}/{stats.total}</div>
-          <div className="text-[9px] text-slate-500">问题进度</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-lg p-2.5 border border-slate-700/50">
-          <div className="text-base font-bold text-emerald-400">{knowledgeCards.length}</div>
-          <div className="text-[9px] text-slate-500">知识卡片</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-lg p-2.5 border border-slate-700/50">
-          <div className="text-base font-bold text-blue-400">{findings.length}</div>
-          <div className="text-[9px] text-slate-500">研究发现</div>
-        </div>
-        <div className="bg-slate-800/50 rounded-lg p-2.5 border border-slate-700/50">
-          <div className="text-base font-bold text-yellow-400">{criticalNodes.length}</div>
-          <div className="text-[9px] text-slate-500">关键节点</div>
         </div>
       </div>
 
@@ -209,25 +217,83 @@ const SimpleResearchPanel: React.FC<{
       </div>
 
       {/* 内容区 */}
-      <div className="flex-1 overflow-y-auto px-4 space-y-2">
+      <div className="flex-1 overflow-y-auto px-4 space-y-2 pb-2">
         {activeSection === 'overview' && (
           <>
+            {/* 项目总体目标 */}
+            {project && (
+              <div className="bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-lg p-3 border border-blue-500/20">
+                <div className="text-[10px] font-medium text-blue-400 mb-1.5">🎯 项目总体目标</div>
+                <div className="text-[12px] text-slate-200 leading-relaxed">{project.metaProblem}</div>
+              </div>
+            )}
+
+            {/* 当前阶段目标 */}
             <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
-              <div className="text-[10px] font-medium text-slate-400 mb-2">节点状态</div>
-              {[{ label: '已完成', count: stats.solved, color: 'bg-emerald-500' }, { label: '探索中', count: stats.exploring, color: 'bg-yellow-500' }, { label: '待探索', count: stats.unexplored, color: 'bg-blue-500' }, { label: '待决策', count: stats.needsReview, color: 'bg-orange-500' }].map(item => (
-                <div key={item.label} className="flex items-center gap-2 py-1">
-                  <div className={`w-2 h-2 rounded-full ${item.color}`} />
-                  <span className="text-[10px] text-slate-400 flex-1">{item.label}</span>
-                  <span className="text-[10px] text-slate-300">{item.count}</span>
-                  <div className="w-16 h-1 bg-slate-700 rounded-full overflow-hidden">
-                    <div className={`h-full ${item.color}`} style={{ width: `${stats.total > 0 ? (item.count / stats.total) * 100 : 0}%` }} />
-                  </div>
-                </div>
-              ))}
+              <div className="text-[10px] font-medium text-emerald-400 mb-1.5">📍 当前阶段</div>
+              <div className="text-[11px] text-slate-300">{projectAnalysis.currentPhase}</div>
             </div>
+
+            {/* 探索进度 */}
+            <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
+              <div className="text-[10px] font-medium text-slate-400 mb-2">📊 探索进度</div>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div><div className="text-sm font-bold text-emerald-400">{stats.solved}</div><div className="text-[8px] text-slate-500">已完成</div></div>
+                <div><div className="text-sm font-bold text-yellow-400">{stats.exploring}</div><div className="text-[8px] text-slate-500">进行中</div></div>
+                <div><div className="text-sm font-bold text-blue-400">{stats.unexplored}</div><div className="text-[8px] text-slate-500">待探索</div></div>
+                <div><div className="text-sm font-bold text-orange-400">{stats.needsReview}</div><div className="text-[8px] text-slate-500">待决策</div></div>
+              </div>
+            </div>
+
+            {/* 遇到的问题 */}
+            {projectAnalysis.problems.length > 0 && (
+              <div className="bg-orange-500/5 rounded-lg p-3 border border-orange-500/20">
+                <div className="text-[10px] font-medium text-orange-400 mb-1.5">⚠️ 遇到的问题</div>
+                <div className="space-y-1">
+                  {projectAnalysis.problems.slice(0, 3).map((p, i) => (
+                    <div key={i} className="text-[11px] text-slate-400 flex items-start gap-1.5">
+                      <span className="text-orange-400">•</span>
+                      <span className="truncate">{p}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 验证/发现 */}
+            {projectAnalysis.validations.length > 0 && (
+              <div className="bg-emerald-500/5 rounded-lg p-3 border border-emerald-500/20">
+                <div className="text-[10px] font-medium text-emerald-400 mb-1.5">✅ 已验证发现</div>
+                <div className="space-y-1">
+                  {projectAnalysis.validations.map((v, i) => (
+                    <div key={i} className="text-[11px] text-slate-400 flex items-start gap-1.5">
+                      <span className="text-emerald-400">•</span>
+                      <span className="line-clamp-2">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 改进建议 */}
+            {projectAnalysis.suggestions.length > 0 && (
+              <div className="bg-blue-500/5 rounded-lg p-3 border border-blue-500/20">
+                <div className="text-[10px] font-medium text-blue-400 mb-1.5">💡 改进建议</div>
+                <div className="space-y-1">
+                  {projectAnalysis.suggestions.map((s, i) => (
+                    <div key={i} className="text-[11px] text-slate-400 flex items-start gap-1.5">
+                      <span className="text-blue-400">•</span>
+                      <span>{s}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 关键节点 */}
             {criticalNodes.length > 0 && (
               <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
-                <div className="text-[10px] font-medium text-slate-400 mb-2">⭐ 关键节点</div>
+                <div className="text-[10px] font-medium text-yellow-400 mb-2">⭐ 关键节点</div>
                 {criticalNodes.slice(0, 3).map(node => (
                   <button key={node.id} onClick={() => onNodeSelect(node.id)} className="w-full text-left p-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg mb-1 transition-colors">
                     <div className="text-[11px] text-slate-200 truncate">{node.title}</div>
@@ -342,8 +408,25 @@ const App: React.FC = () => {
   const [researchFindings, setResearchFindings] = useState<ResearchFinding[]>([]);
   const [researchReport, setResearchReport] = useState<any>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  // 个人中心相关状态
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showProjectManager, setShowProjectManager] = useState(false);
   
   useEffect(() => { if (showAdminDashboard) { (async () => { setCloudStats(await monitor.fetchCloudStats()); try { const { getMessages } = await import('./services/messageService'); setAdminMessages(await getMessages()); } catch { setAdminMessages([]); } })(); } }, [showAdminDashboard]);
+
+  // 删除项目
+  const handleDeleteProject = useCallback((projectId: string) => {
+    if (projects.length <= 1) {
+      alert('至少保留一个项目');
+      return;
+    }
+    if (!confirm('确定要删除这个项目吗？此操作不可恢复。')) return;
+    setProjects(prev => prev.filter(p => p.id !== projectId));
+    if (currentProjectId === projectId) {
+      const remaining = projects.filter(p => p.id !== projectId);
+      setCurrentProjectId(remaining.length > 0 ? remaining[0].id : null);
+    }
+  }, [projects, currentProjectId]);
 
   const [notesPanelMode, setNotesPanelMode] = useState<number>(1);
   const [sidebarActiveTab, setSidebarActiveTab] = useState<'butler' | 'research'>('butler');
@@ -427,8 +510,60 @@ const App: React.FC = () => {
         </div>
         <div className="flex items-center gap-1.5 sm:gap-3">
           {user.role === 'admin' && <button onClick={() => setShowAdminDashboard(true)} className="p-2 sm:px-3 sm:py-1.5 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-full text-[10px] font-bold hover:bg-purple-600/30"><span className="sm:inline hidden">管理看板</span><span className="sm:hidden">📊</span></button>}
-          <button onClick={() => setShowHelpModal(true)} className="p-2 bg-slate-800 text-slate-400 border border-slate-700 rounded-full text-[10px] font-bold hover:bg-blue-600/20 hover:text-blue-400">？</button>
-          <button onClick={() => { auth.logout(); setUser(null); }} className="p-2 bg-slate-800 text-slate-500 border border-slate-700 rounded-full text-[10px] font-bold hover:bg-red-600/20 hover:text-red-400"><span className="sm:inline hidden">退出</span><span className="sm:hidden">🚪</span></button>
+          
+          {/* 个人中心 */}
+          <div className="relative">
+            <button 
+              onClick={() => setShowUserMenu(!showUserMenu)} 
+              className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
+            >
+              <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-[10px] font-bold text-white">
+                {user.username?.charAt(0).toUpperCase() || 'U'}
+              </div>
+              <span className="text-xs text-slate-300 hidden sm:inline max-w-[80px] truncate">{user.username || user.email?.split('@')[0]}</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`text-slate-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`}><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            
+            {/* 下拉菜单 */}
+            {showUserMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                <div className="absolute right-0 top-full mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                  {/* 用户信息 */}
+                  <div className="px-4 py-2 border-b border-slate-700">
+                    <div className="text-sm font-medium text-white">{user.username || '用户'}</div>
+                    <div className="text-[10px] text-slate-500">{user.email || ''}</div>
+                  </div>
+                  
+                  {/* 菜单项 */}
+                  <button 
+                    onClick={() => { setShowProjectManager(true); setShowUserMenu(false); }} 
+                    className="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-3 transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+                    项目管理
+                  </button>
+                  <button 
+                    onClick={() => { setShowHelpModal(true); setShowUserMenu(false); }} 
+                    className="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-3 transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+                    帮助与反馈
+                  </button>
+                  
+                  <div className="h-px bg-slate-700 my-1" />
+                  
+                  <button 
+                    onClick={() => { auth.logout(); setUser(null); setShowUserMenu(false); }} 
+                    className="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-red-600/10 flex items-center gap-3 transition-colors"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+                    退出登录
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -447,7 +582,7 @@ const App: React.FC = () => {
           </div>
           <div className="flex-1 overflow-hidden">
             {sidebarActiveTab === 'butler' && <AIButler project={currentProject} nodes={nodes} onAddNode={addNode} onUpdateNode={updateNode} onStartExploration={() => setIsLooping(true)} />}
-            {sidebarActiveTab === 'research' && <SimpleResearchPanel nodes={nodes} knowledgeCards={knowledgeCards} findings={researchFindings} criticalNodes={criticalNodes} isLooping={isLooping} isGeneratingReport={isGeneratingReport} onNodeSelect={setSelectedNodeId} onStartExploration={() => setIsLooping(true)} onStopExploration={() => setIsLooping(false)} onGenerateReport={handleGenerateReport} />}
+            {sidebarActiveTab === 'research' && <SimpleResearchPanel project={currentProject} nodes={nodes} knowledgeCards={knowledgeCards} findings={researchFindings} criticalNodes={criticalNodes} isLooping={isLooping} isGeneratingReport={isGeneratingReport} onNodeSelect={setSelectedNodeId} onStartExploration={() => setIsLooping(true)} onStopExploration={() => setIsLooping(false)} onGenerateReport={handleGenerateReport} />}
           </div>
         </aside>
         {notesPanelMode === 0 && <div className="w-8 h-full bg-slate-900 border-r border-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNotesPanelMode(1)}><div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">展开面板</div></div>}
@@ -479,6 +614,95 @@ const App: React.FC = () => {
       {showMetaModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"><div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-8 shadow-2xl"><h2 className="text-2xl font-bold">新探索任务</h2><textarea value={metaInput} onChange={e => setMetaInput(e.target.value)} placeholder="描述你想探索的问题..." className="w-full bg-slate-800 border border-slate-700 rounded-xl p-5 mt-6 min-h-[100px] outline-none text-slate-200 resize-none" /><div className="flex gap-4 mt-8"><button onClick={() => setShowMetaModal(false)} className="flex-1 py-4 bg-slate-800 rounded-xl font-bold">取消</button><button disabled={isAnalyzingIntent || !metaInput.trim()} onClick={async () => { if (!metaInput.trim()) return; setIsAnalyzingIntent(true); try { const { analysis, needsConfirmation } = await analyzeIntentWithAutoConfirm(metaInput); if (needsConfirmation) { setPendingIntent({ input: metaInput, analysis }); setShowMetaModal(false); } else createProjectWithMode(metaInput, analysis.mode, analysis); } catch { createProjectWithMode(metaInput, 'research'); } finally { setIsAnalyzingIntent(false); } }} className="flex-[2] py-4 bg-blue-600 rounded-xl font-bold disabled:opacity-50">{isAnalyzingIntent ? '分析中...' : '开启探索'}</button></div></div></div>}
 
       {showHelpModal && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowHelpModal(false)}><div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-10 shadow-2xl flex flex-col items-center max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}><h3 className="text-xl font-bold text-white mb-8">有问题请联系</h3><div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 w-full text-center mb-8"><p className="text-slate-500 text-xs mb-3 uppercase tracking-widest font-bold">联系微信号</p><p className="text-2xl font-mono font-bold text-blue-400 select-all tracking-wider">seabird36</p></div><MessageBoard /><button onClick={() => setShowHelpModal(false)} className="mt-6 w-full py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-2xl border border-slate-700">关闭</button></div></div>}
+
+      {/* 项目管理弹窗 */}
+      {showProjectManager && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowProjectManager(false)}>
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-8 shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-white">📁 项目管理</h3>
+              <button onClick={() => setShowProjectManager(false)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+            
+            <div className="text-xs text-slate-500 mb-4">共 {projects.length} 个项目</div>
+            
+            <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+              {projects.length === 0 ? (
+                <div className="text-center py-12 text-slate-500">
+                  <div className="text-4xl mb-4">📭</div>
+                  <p>暂无项目</p>
+                </div>
+              ) : (
+                projects.map(p => (
+                  <div 
+                    key={p.id} 
+                    className={`p-4 rounded-xl border transition-all ${
+                      p.id === currentProjectId 
+                        ? 'bg-blue-600/10 border-blue-500/30' 
+                        : 'bg-slate-800/50 border-slate-700/50 hover:border-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h4 className="text-sm font-bold text-white truncate">{p.name}</h4>
+                          {p.id === currentProjectId && (
+                            <span className="px-1.5 py-0.5 bg-blue-600/20 text-blue-400 text-[9px] font-bold rounded">当前</span>
+                          )}
+                          {p.explorationMode && (
+                            <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
+                              p.explorationMode === 'research' 
+                                ? 'bg-purple-600/20 text-purple-400' 
+                                : 'bg-emerald-600/20 text-emerald-400'
+                            }`}>
+                              {p.explorationMode === 'research' ? '研究' : '构建'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 line-clamp-2 mb-2">{p.metaProblem}</p>
+                        <div className="flex items-center gap-3 text-[10px] text-slate-500">
+                          <span>📊 {p.nodes?.length || 0} 节点</span>
+                          <span>✅ {p.nodes?.filter(n => n.status === NodeStatus.SOLVED).length || 0} 完成</span>
+                          <span>📅 {new Date(p.createdAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {p.id !== currentProjectId && (
+                          <button 
+                            onClick={() => { setCurrentProjectId(p.id); setShowProjectManager(false); }}
+                            className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 text-[10px] font-bold rounded-lg transition-colors"
+                          >
+                            切换
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => handleDeleteProject(p.id)}
+                          className="p-1.5 hover:bg-red-600/20 text-slate-500 hover:text-red-400 rounded-lg transition-colors"
+                          title="删除项目"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            
+            <div className="mt-6 pt-4 border-t border-slate-800">
+              <button 
+                onClick={() => { setShowProjectManager(false); setShowMetaModal(true); }}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg>
+                创建新项目
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {decision && decisionNode && <DecisionModal decision={decision} node={decisionNode} onChoice={handleDecisionChoice} onClose={() => setDecision(null)} />}
       {pendingIntent && <IntentConfirmModal analysis={pendingIntent.analysis} onConfirm={(mode, analysis) => createProjectWithMode(pendingIntent.input, mode, analysis)} onCancel={() => { setPendingIntent(null); setShowMetaModal(true); }} />}
