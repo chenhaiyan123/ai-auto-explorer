@@ -46,8 +46,10 @@ const AIButler: React.FC<{
   onUpdateProjectInsight?: (insight: ProjectInsight) => void;
   quotedNode?: ProblemNode | null;
   onClearQuotedNode?: () => void;
-}> = ({ project, nodes, onAddNode, onUpdateNode, onStartExploration, onUpdateProjectInsight, quotedNode, onClearQuotedNode }) => {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  chatHistory?: ChatMessage[];
+  onUpdateChatHistory?: (messages: ChatMessage[]) => void;
+}> = ({ project, nodes, onAddNode, onUpdateNode, onStartExploration, onUpdateProjectInsight, quotedNode, onClearQuotedNode, chatHistory, onUpdateChatHistory }) => {
+  const [messages, setMessages] = useState<ChatMessage[]>(chatHistory || []);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [activeAgents, setActiveAgents] = useState<Agent[]>([]);
@@ -56,6 +58,20 @@ const AIButler: React.FC<{
   const [showInsightPanel, setShowInsightPanel] = useState(false);
   const [currentQuotedNode, setCurrentQuotedNode] = useState<ProblemNode | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // 同步外部聊天记录
+  useEffect(() => {
+    if (chatHistory && chatHistory.length > 0 && messages.length === 0) {
+      setMessages(chatHistory);
+    }
+  }, [chatHistory]);
+
+  // 保存聊天记录到父组件
+  useEffect(() => {
+    if (messages.length > 0 && onUpdateChatHistory) {
+      onUpdateChatHistory(messages);
+    }
+  }, [messages, onUpdateChatHistory]);
 
   // 处理引用节点
   useEffect(() => {
@@ -775,9 +791,76 @@ const App: React.FC = () => {
   const [tempProjectName, setTempProjectName] = useState('');
   const [decision, setDecision] = useState<DecisionPoint | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId: string } | null>(null);
+  
+  // 通知系统
+  const [notifications, setNotifications] = useState<Array<{id: string, type: 'discovery' | 'warning' | 'info', title: string, message: string, time: number}>>([]);
+  const [showNotificationPanel, setShowNotificationPanel] = useState(false);
+  
+  // 会员与7x24探索
+  const [isPremiumUser, setIsPremiumUser] = useState(false);
+  const [is24x7ExplorationEnabled, setIs24x7ExplorationEnabled] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  
+  // AI管家聊天记录（持久化到项目中）
+  const [butlerChatHistory, setButlerChatHistory] = useState<ChatMessage[]>([]);
+  
   const isLoopingRef = useRef(false);
   const isProcessingRef = useRef(false);
   useEffect(() => { isLoopingRef.current = isLooping; }, [isLooping]);
+
+  // 加载会员状态
+  useEffect(() => {
+    if (user) {
+      const premiumKey = `premium_${user.username}`;
+      const premium = localStorage.getItem(premiumKey);
+      if (premium) {
+        const data = JSON.parse(premium);
+        if (data.expireAt > Date.now()) {
+          setIsPremiumUser(true);
+          setIs24x7ExplorationEnabled(data.is24x7Enabled || false);
+        }
+      }
+    }
+  }, [user]);
+
+  // 页面关闭时停止探索（非会员）
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (isLooping && !is24x7ExplorationEnabled) {
+        setIsLooping(false);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isLooping, is24x7ExplorationEnabled]);
+
+  // 添加通知的函数
+  const addNotification = useCallback((type: 'discovery' | 'warning' | 'info', title: string, message: string) => {
+    const notification = { id: uuidv4(), type, title, message, time: Date.now() };
+    setNotifications(prev => [notification, ...prev].slice(0, 20));
+  }, []);
+
+  // 清除单个通知
+  const clearNotification = useCallback((id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  }, []);
+
+  // 更新AI管家聊天记录到项目
+  const handleUpdateButlerChat = useCallback((messages: ChatMessage[]) => {
+    setButlerChatHistory(messages);
+    if (currentProjectId) {
+      setProjects(prev => prev.map(p => 
+        p.id === currentProjectId ? { ...p, butlerChatHistory: messages } as any : p
+      ));
+    }
+  }, [currentProjectId]);
+
+  // 从项目加载AI管家聊天记录
+  useEffect(() => {
+    if (currentProject) {
+      setButlerChatHistory((currentProject as any).butlerChatHistory || []);
+    }
+  }, [currentProjectId]);
 
   // 侧边栏拖拽调整大小
   const handleSidebarMouseDown = useCallback((e: React.MouseEvent) => {
@@ -839,21 +922,48 @@ const App: React.FC = () => {
     if (decision || isProcessingRef.current || !isLoopingRef.current) return;
     let unexplored = focusedNodeId ? (() => { const desc = new Set<string>([focusedNodeId]); const q = [focusedNodeId]; let i = 0; while (i < q.length) { const c = q[i++]; nodes.forEach(n => { if (n.dependencies.includes(c) && !desc.has(n.id)) { desc.add(n.id); q.push(n.id); } }); } return nodes.find(n => desc.has(n.id) && n.status === NodeStatus.UNEXPLORED); })() : undefined;
     if (!unexplored) unexplored = nodes.find(n => n.status === NodeStatus.UNEXPLORED);
-    if (!unexplored) { if (!nodes.some(n => n.status === NodeStatus.EXPLORING)) setIsLooping(false); return; }
+    if (!unexplored) { 
+      if (!nodes.some(n => n.status === NodeStatus.EXPLORING)) {
+        setIsLooping(false);
+        // 探索完成通知
+        addNotification('info', '🎉 探索完成', '所有节点已探索完毕，可以生成研究报告了！');
+      }
+      return; 
+    }
     isProcessingRef.current = true;
     const cid = unexplored.id;
+    const nodeTitle = unexplored.title;
     updateNode(cid, { status: NodeStatus.EXPLORING });
     try {
       const isResearch = currentProject?.explorationMode === 'research';
-      const result = isResearch ? await exploreResearchNode(unexplored, nodes, c => setKnowledgeCards(p => [...p, c]), f => setResearchFindings(p => [...p, f])) : await exploreNode(unexplored, nodes);
+      const result = isResearch ? await exploreResearchNode(unexplored, nodes, c => {
+        setKnowledgeCards(p => [...p, c]);
+        // 重要发现通知
+        addNotification('discovery', '💡 新知识卡片', `在「${nodeTitle}」中发现：${c.title}`);
+      }, f => {
+        setResearchFindings(p => [...p, f]);
+        // 重要发现通知
+        if (f.importance === 'high') {
+          addNotification('discovery', '🔥 重要发现', f.insight.slice(0, 50) + '...');
+        }
+      }) : await exploreNode(unexplored, nodes);
       if (!isLoopingRef.current) { updateNode(cid, { status: NodeStatus.UNEXPLORED }); isProcessingRef.current = false; return; }
       let taskType = result.taskType; if (!taskType || taskType === 'none') taskType = await identifyNodeTask({ ...unexplored, notes: result.notes });
-      if (result.subProblems?.length) setNodes(prev => [...prev, ...result.subProblems.map((sp: any) => ({ id: uuidv4(), title: sp.title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [cid], notes: sp.initialNotes || "", chatHistory: [], agentResults: [] }))]);
-      if (result.triggerDecision) { updateNode(cid, { status: NodeStatus.NEEDS_REVIEW, confidence: result.confidence, notes: result.notes, taskType, pendingDecision: { nodeId: cid, context: result.decisionContext, options: [{ label: '方案A：继续', action: 'continue' }, { label: '方案B：新子方向', action: 'add_subproblem' }, { label: '方案C：终止', action: 'terminate' }] } }); setIsLooping(false); }
+      if (result.subProblems?.length) {
+        setNodes(prev => [...prev, ...result.subProblems.map((sp: any) => ({ id: uuidv4(), title: sp.title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [cid], notes: sp.initialNotes || "", chatHistory: [], agentResults: [] }))]);
+        // 新方向通知
+        addNotification('info', '🌿 发现新方向', `从「${nodeTitle}」衍生出 ${result.subProblems.length} 个新探索方向`);
+      }
+      if (result.triggerDecision) { 
+        updateNode(cid, { status: NodeStatus.NEEDS_REVIEW, confidence: result.confidence, notes: result.notes, taskType, pendingDecision: { nodeId: cid, context: result.decisionContext, options: [{ label: '方案A：继续', action: 'continue' }, { label: '方案B：新子方向', action: 'add_subproblem' }, { label: '方案C：终止', action: 'terminate' }] } }); 
+        setIsLooping(false);
+        // 需要决策通知
+        addNotification('warning', '⚠️ 需要您的决策', `「${nodeTitle}」遇到了分支点，请做出选择`);
+      }
       else updateNode(cid, { status: NodeStatus.SOLVED, confidence: result.confidence, notes: result.notes, taskType });
     } catch (e) { console.error(e); updateNode(cid, { status: NodeStatus.UNEXPLORED }); setIsLooping(false); }
     finally { isProcessingRef.current = false; }
-  }, [nodes, decision, updateNode, focusedNodeId, currentProject?.explorationMode]);
+  }, [nodes, decision, updateNode, focusedNodeId, currentProject?.explorationMode, addNotification]);
 
   useEffect(() => { if (isLooping && !decision) { const t = setTimeout(() => runExplorationCycle(), 1000); return () => clearTimeout(t); } }, [isLooping, decision, runExplorationCycle]);
 
@@ -1006,6 +1116,69 @@ const App: React.FC = () => {
           <button onClick={() => setShowMetaModal(true)} className="p-2 text-slate-400 hover:text-blue-400"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg></button>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-3">
+          {/* 7x24会员按钮 */}
+          {!isPremiumUser && (
+            <button 
+              onClick={() => setShowPremiumModal(true)} 
+              className="hidden sm:flex px-2.5 py-1.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-400 border border-amber-500/30 rounded-full text-[10px] font-bold hover:from-amber-500/30 hover:to-orange-500/30 items-center gap-1.5 transition-all"
+            >
+              <span>👑</span> 7×24探索
+            </button>
+          )}
+          {isPremiumUser && (
+            <div className="hidden sm:flex px-2.5 py-1.5 bg-gradient-to-r from-amber-600/20 to-orange-600/20 text-amber-400 border border-amber-500/30 rounded-full text-[10px] font-bold items-center gap-1.5">
+              <span>👑</span> 会员
+            </div>
+          )}
+
+          {/* 通知按钮 */}
+          <div className="relative">
+            <button 
+              onClick={() => setShowNotificationPanel(!showNotificationPanel)} 
+              className="relative p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              {notifications.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                  {notifications.length > 9 ? '9+' : notifications.length}
+                </span>
+              )}
+            </button>
+            
+            {/* 通知面板 */}
+            {showNotificationPanel && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowNotificationPanel(false)} />
+                <div className="absolute right-0 top-full mt-2 w-80 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 max-h-[400px] overflow-hidden flex flex-col">
+                  <div className="p-3 border-b border-slate-700 flex items-center justify-between">
+                    <span className="text-sm font-bold text-white">通知</span>
+                    {notifications.length > 0 && (
+                      <button onClick={() => setNotifications([])} className="text-[10px] text-slate-500 hover:text-slate-300">全部清除</button>
+                    )}
+                  </div>
+                  <div className="flex-1 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="p-8 text-center text-slate-500 text-xs">暂无通知</div>
+                    ) : (
+                      notifications.map(n => (
+                        <div key={n.id} className={`p-3 border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer ${n.type === 'discovery' ? 'bg-emerald-500/5' : n.type === 'warning' ? 'bg-orange-500/5' : ''}`} onClick={() => clearNotification(n.id)}>
+                          <div className="flex items-start gap-2">
+                            <span className="text-sm">{n.type === 'discovery' ? '💡' : n.type === 'warning' ? '⚠️' : 'ℹ️'}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-medium text-slate-200">{n.title}</div>
+                              <div className="text-[10px] text-slate-400 mt-0.5 line-clamp-2">{n.message}</div>
+                              <div className="text-[9px] text-slate-600 mt-1">{new Date(n.time).toLocaleTimeString()}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
           {user.role === 'admin' && <button onClick={() => setShowAdminDashboard(true)} className="p-2 sm:px-3 sm:py-1.5 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-full text-[10px] font-bold hover:bg-purple-600/30"><span className="sm:inline hidden">管理看板</span><span className="sm:hidden">📊</span></button>}
           
           {/* 个人中心 */}
@@ -1084,7 +1257,7 @@ const App: React.FC = () => {
             <button onClick={() => setSidebarActiveTab('research')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${sidebarActiveTab === 'research' ? 'bg-emerald-600/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}><span>📊</span> 研究面板</button>
           </div>
           <div className="flex-1 overflow-hidden">
-            {sidebarActiveTab === 'butler' && <AIButler project={currentProject} nodes={nodes} onAddNode={addNode} onUpdateNode={updateNode} onStartExploration={() => setIsLooping(true)} quotedNode={quotedNodeForButler} onClearQuotedNode={() => setQuotedNodeForButler(null)} />}
+            {sidebarActiveTab === 'butler' && <AIButler project={currentProject} nodes={nodes} onAddNode={addNode} onUpdateNode={updateNode} onStartExploration={() => setIsLooping(true)} quotedNode={quotedNodeForButler} onClearQuotedNode={() => setQuotedNodeForButler(null)} chatHistory={butlerChatHistory} onUpdateChatHistory={handleUpdateButlerChat} />}
             {sidebarActiveTab === 'research' && <SimpleResearchPanel project={currentProject} nodes={nodes} knowledgeCards={knowledgeCards} findings={researchFindings} criticalNodes={criticalNodes} isLooping={isLooping} isGeneratingReport={isGeneratingReport} onNodeSelect={setSelectedNodeId} onStartExploration={() => setIsLooping(true)} onStopExploration={() => setIsLooping(false)} onGenerateReport={handleGenerateReport} />}
           </div>
         </aside>
@@ -1223,6 +1396,85 @@ const App: React.FC = () => {
       {decision && decisionNode && <DecisionModal decision={decision} node={decisionNode} onChoice={handleDecisionChoice} onClose={() => setDecision(null)} />}
       {pendingIntent && <IntentConfirmModal analysis={pendingIntent.analysis} onConfirm={(mode, analysis) => createProjectWithMode(pendingIntent.input, mode, analysis)} onCancel={() => { setPendingIntent(null); setShowMetaModal(true); }} />}
       {researchReport && <ResearchReport report={researchReport} onClose={() => setResearchReport(null)} />}
+
+      {/* 会员购买弹窗 */}
+      {showPremiumModal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowPremiumModal(false)}>
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl mx-auto flex items-center justify-center text-3xl mb-4 shadow-xl">👑</div>
+              <h3 className="text-xl font-bold text-white">7×24 长期探索会员</h3>
+              <p className="text-slate-400 text-sm mt-2">解锁后台持续探索能力</p>
+            </div>
+            
+            <div className="bg-slate-800/50 rounded-2xl p-5 mb-6 border border-slate-700">
+              <div className="flex items-baseline justify-center gap-1 mb-4">
+                <span className="text-4xl font-bold text-amber-400">¥19.9</span>
+                <span className="text-slate-500">/月</span>
+              </div>
+              
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="text-emerald-400">✓</span>
+                  <span className="text-slate-300">关闭网页后继续探索</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="text-emerald-400">✓</span>
+                  <span className="text-slate-300">7×24小时后台自动运行</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="text-emerald-400">✓</span>
+                  <span className="text-slate-300">重要发现微信/邮件提醒</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="text-emerald-400">✓</span>
+                  <span className="text-slate-300">无限探索项目数量</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="text-emerald-400">✓</span>
+                  <span className="text-slate-300">优先使用新功能</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-3 mb-6">
+              <div className="text-[11px] text-orange-400 text-center">
+                💡 普通用户每天可探索1个项目，关闭网页即停止
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <button 
+                onClick={() => {
+                  // 模拟购买成功
+                  const premiumKey = `premium_${user?.username}`;
+                  localStorage.setItem(premiumKey, JSON.stringify({
+                    expireAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+                    is24x7Enabled: true
+                  }));
+                  setIsPremiumUser(true);
+                  setIs24x7ExplorationEnabled(true);
+                  setShowPremiumModal(false);
+                  addNotification('info', '🎉 开通成功', '您已成为7×24探索会员！');
+                }}
+                className="w-full py-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold rounded-xl transition-all shadow-lg"
+              >
+                立即开通
+              </button>
+              <button 
+                onClick={() => setShowPremiumModal(false)}
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-400 font-medium rounded-xl transition-colors"
+              >
+                稍后再说
+              </button>
+            </div>
+            
+            <p className="text-[10px] text-slate-600 text-center mt-4">
+              开通即表示同意《会员服务协议》
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
