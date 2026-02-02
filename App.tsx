@@ -1,4 +1,4 @@
-import { UserStats } from './types';
+import { UserStats, KnowledgeCard, ResearchFinding } from './types';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import MessageBoard from './components/MessageBoard';
 import { v4 as uuidv4 } from 'uuid';
@@ -12,7 +12,7 @@ import { auth } from './services/authService';
 import { GEMINI_MODEL } from './constants';
 import { analyzeIntentWithAutoConfirm, IntentAnalysis, ExplorationMode } from './services/intentService';
 import IntentConfirmModal from './components/IntentConfirmModal';
-import { exploreResearchNode, generateResearchReport, KnowledgeCard, ResearchFinding } from './services/researchExplorer';
+import { exploreResearchNode, generateResearchReport } from './services/researchExplorer';
 import ResearchReport from './components/ResearchReport';
 
 // ========== Agent 类型 ==========
@@ -936,11 +936,11 @@ const App: React.FC = () => {
     updateNode(cid, { status: NodeStatus.EXPLORING });
     try {
       const isResearch = currentProject?.explorationMode === 'research';
-      const result = isResearch ? await exploreResearchNode(unexplored, nodes, c => {
+      const result = isResearch ? await exploreResearchNode(unexplored, nodes, (c: KnowledgeCard) => {
         setKnowledgeCards(p => [...p, c]);
         // 重要发现通知
         addNotification('discovery', '💡 新知识卡片', `在「${nodeTitle}」中发现：${c.title}`);
-      }, f => {
+      }, (f: ResearchFinding) => {
         setResearchFindings(p => [...p, f]);
         // 重要发现通知
         if (f.importance === 'high') {
@@ -970,7 +970,7 @@ const App: React.FC = () => {
   const handleDecisionChoice = (action: 'continue' | 'add_subproblem' | 'terminate', subTitle?: string) => { if (!decision) return; if (action === 'terminate') updateNode(decision.nodeId, { status: NodeStatus.INVALID, pendingDecision: undefined }); else if (action === 'add_subproblem' && subTitle) addNode(subTitle, [decision.nodeId]); else if (action === 'continue') updateNode(decision.nodeId, { status: NodeStatus.SOLVED, pendingDecision: undefined }); setDecision(null); setIsLooping(true); };
   const handleNodeClick = (node: ProblemNode) => { setSelectedNodeId(node.id); if (node.status === NodeStatus.NEEDS_REVIEW && node.pendingDecision) setDecision(node.pendingDecision); };
   const handleDeleteNode = useCallback((id: string) => { setNodes(prev => prev.filter(n => n.id !== id).map(n => ({ ...n, dependencies: n.dependencies.filter(d => d !== id) }))); if (selectedNodeId === id) setSelectedNodeId(null); if (focusedNodeId === id) setFocusedNodeId(null); if (decision?.nodeId === id) setDecision(null); }, [selectedNodeId, focusedNodeId, decision]);
-  const handleGenerateReport = async () => { if (!currentProject || isGeneratingReport) return; setIsGeneratingReport(true); try { setResearchReport(await generateResearchReport(currentProject.metaProblem, nodes, knowledgeCards, researchFindings)); } finally { setIsGeneratingReport(false); } };
+  const handleGenerateReport = async () => { if (!currentProject || isGeneratingReport) return; setIsGeneratingReport(true); try { setResearchReport(await generateResearchReport(currentProject.metaProblem, nodes, knowledgeCards)); } finally { setIsGeneratingReport(false); } };
 
   if (routeInfo.type === 'delegate' && routeInfo.nodeId) return <DelegationView nodeId={routeInfo.nodeId} taskTitle={routeInfo.taskTitle} />;
 

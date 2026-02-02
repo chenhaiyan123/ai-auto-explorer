@@ -27,30 +27,21 @@ export interface ProblemNode {
   dependencies: string[];
   notes: string;
   isCollapsed?: boolean;
-  isCritical?: boolean; // 新增：关键节点标记
-  isPinned?: boolean;   // 新增：固定节点标记
+  isCritical?: boolean;
+  isPinned?: boolean;
   chatHistory?: ChatMessage[];
   agentResults?: AgentResult[];
   manualResults?: string;
   fullNote?: string;
-  taskType?: 'image' | 'code' | 'web' | 'research' | 'none'; // 识别出的任务类型
-  pendingDecision?: DecisionPoint; // 存储待处理的决策
+  taskType?: 'image' | 'code' | 'web' | 'research' | 'none';
+  pendingDecision?: DecisionPoint;
   x?: number;
   y?: number;
 }
 
-export interface Project {
-  id: string;
-  name: string;
-  metaProblem: string;
-  nodes: ProblemNode[];
-  createdAt: number;
-  summaryNote?: string; // 全局生成的项目总览笔记
-}
-
 export interface DecisionPoint {
   nodeId: string;
-  context?: string; // AI 提供的决策背景，例如“方向 A 与方向 B 的取舍”
+  context?: string;
   options: {
     label: string;
     action: 'continue' | 'add_subproblem' | 'terminate';
@@ -72,6 +63,63 @@ export interface UserStats {
   totalCompletionTokens: number;
   lastActiveTimestamp: number;
 }
+
+// ========== 研究相关类型 ==========
+export interface KnowledgeCard {
+  id: string;
+  title: string;
+  content: string;
+  sourceNodeId: string;
+  sourceNodeTitle: string;
+  tags: string[];
+  createdAt: number;
+  importance: 'high' | 'medium' | 'low';
+  category?: 'fact' | 'theory' | 'insight' | 'question' | 'method';
+  confidence?: number;
+}
+
+export interface ResearchFinding {
+  id: string;
+  insight: string;
+  sourceNodeId: string;
+  sourceNodeTitle: string;
+  evidence: string[];
+  importance: 'high' | 'medium' | 'low';
+  createdAt: number;
+  title?: string;
+  description?: string;
+  type?: 'discovery' | 'contradiction' | 'gap' | 'connection';
+  significance?: 'high' | 'medium' | 'low';
+}
+
+export interface ResearchProgress {
+  totalNodes: number;
+  exploredNodes: number;
+  knowledgeCardsCount: number;
+  findingsCount: number;
+  coveragePercent: number;
+  // 扩展属性 - ResearchPanel组件需要
+  coverageScore: number;
+  answeredQuestions: number;
+  totalQuestions: number;
+  knowledgeCards: number;
+  findings: number;
+  explorationDepth: number;
+}
+
+// ========== 意图分析类型 ==========
+export type ExplorationMode = 'research' | 'build';
+
+export interface IntentAnalysis {
+  mode: ExplorationMode;
+  confidence: number;
+  suggestedTitle: string;
+  reasoning: string;
+  subTasks?: string[];
+  keyQuestions?: string[];
+}
+
+// ========== 项目类型（扩展版）==========
 export interface Project {
   id: string;
   name: string;
@@ -79,15 +127,80 @@ export interface Project {
   nodes: ProblemNode[];
   createdAt: number;
   summaryNote?: string;
-
-  
-  // === 新增字段 ===
-  explorationMode: 'research' | 'build';  // 探索模式
-  intentAnalysis?: IntentAnalysis;        // 保存意图分析结果
-  // 研究模式专属
+  explorationMode?: ExplorationMode;
+  intentAnalysis?: IntentAnalysis;
   knowledgeCards?: KnowledgeCard[];
   researchFindings?: ResearchFinding[];
-  researchReport?: any;
+  butlerChatHistory?: ChatMessage[];
 }
-// 从 researchExplorer 导出类型
-export type { KnowledgeCard, ResearchFinding, ResearchProgress } from './services/researchExplorer';
+
+// ========== Artifact 类型 ==========
+export interface Artifact {
+  id: string;
+  type: 'code' | 'image' | 'document' | 'chart' | 'other' | 'component' | 'style';
+  title: string;
+  content: string;
+  language?: string;
+  createdAt: number;
+  nodeId?: string;
+  version?: number;
+  description?: string;
+}
+
+// ========== 用户反馈类型 ==========
+export interface UserFeedback {
+  id: string;
+  artifactId?: string;
+  rating?: number;
+  comment?: string;
+  createdAt: number;
+  type?: 'bug' | 'feature' | 'improvement';
+  content?: string;
+  status?: 'pending' | 'in-progress' | 'resolved';
+}
+
+// ========== 消息类型 ==========
+export interface Message {
+  id: string;
+  content: string;
+  username: string;
+  author?: string;
+  createdAt: number;
+}
+
+// ========== Discovery 类型（用于长期探索）==========
+export interface Discovery {
+  id: string;
+  type: 'breakthrough' | 'significant' | 'minor' | 'pending';
+  title: string;
+  description: string;
+  evidence: string[];
+  nodeId: string;
+  timestamp: number;
+  importance: number;
+  summary?: string;
+  content?: string;
+  relatedNodeIds?: string[];
+  confidence?: number;
+  verifiedAt?: number;
+}
+
+export interface ExplorationConfig {
+  intensity: ExplorationIntensity;
+  maxConcurrent?: number;
+  autoSave?: boolean;
+}
+
+export interface ExplorationSession {
+  id: string;
+  projectId: string;
+  startTime: number;
+  endTime?: number;
+  status: 'running' | 'paused' | 'completed' | 'error';
+  discoveries: Discovery[];
+  nodesExplored: number;
+  totalNodes: number;
+  config?: ExplorationConfig;
+}
+
+export type ExplorationIntensity = 'low' | 'medium' | 'high' | 'light' | 'moderate' | 'intensive';

@@ -7,7 +7,10 @@
     <!-- 自动跳转 HTTPS 脚本：如果不是本地环境且是 http 协议，则跳转 -->
     <script>
         if (window.location.protocol === 'http:' && !window.location.hostname.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+$/.test(window.location.hostname)) {
-            window.location.replace(window.location.href.replace('http:', 'https:'));
+            // 本地开发环境不强制 HTTPS
+            if (window.location.port !== '3000') {
+                 window.location.replace(window.location.href.replace('http:', 'https:'));
+            }
         }
     </script>
     <!-- 自动将页面上的所有不安全请求升级为安全请求 -->
@@ -36,7 +39,7 @@
   }
 }
 </script>
-  <script type="module" crossorigin src="./assets/main-D5PDzNRO.js"></script>
+  <script type="module" crossorigin src="./assets/main-CCzFkGrk.js"></script>
 </head>
 <body>
     <div id="root"></div>
