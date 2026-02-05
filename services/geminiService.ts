@@ -1,159 +1,178 @@
-import { ProblemNode, ChatMessage, AgentResult, Project } from "../types";
+import { ProblemNode, ChatMessage, Project } from "../types";
 import { monitor } from "./monitoringService";
 
 /**
- * 通义千问 API 代理地址（阿里云函数计算 FC）
- * 已更新为用户提供的真实触发地址
+ * 通义千问 API 代理地址
  */
 const API_PROXY_URL = 'https://aliyun-ai-proxy-mvyxjrfpcu.cn-hangzhou.fcapp.run';
 
-export const callGemini = async (messages: any[], model: string = "qwen-plus", responseMimeType?: string, responseSchema?: any) => {
-  // 模型名称映射：确保调用的是通义千问模型
-  let targetModel = model;
-  if (model.includes('gemini')) {
-    targetModel = model.includes('pro') ? 'qwen-max' : 'qwen-plus';
-  }
+// 配置
+const API_TIMEOUT = 120000; // 120秒超时
+const MAX_RETRIES = 2;
 
-  // 格式化消息为 OpenAI/DashScope 兼容格式
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * 调用AI API（带超时和重试）
+ */
+export const callGemini = async (
+  messages: any[], 
+  model: string = "qwen-turbo",  // 默认使用最快的模型
+  responseMimeType?: string
+): Promise<string> => {
+  // 统一使用 qwen-turbo（最快）
+  const targetModel = 'qwen-turbo';
+
+  // 格式化消息并限制长度
   const formattedMessages = messages.map(m => ({
     role: m.role === 'system' ? 'system' : (m.role === 'model' || m.role === 'assistant' ? 'assistant' : 'user'),
-    content: m.content || m.text
+    content: ((m.content || m.text) || '').slice(0, 1500)
   }));
 
-  try {
-    const response = await fetch(API_PROXY_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: targetModel,
-        messages: formattedMessages,
-        // 如果需要 JSON 格式输出，透传给云函数
-        response_format: responseMimeType === 'application/json' ? { type: "json_object" } : undefined
-      })
-    });
+  let lastError: Error | null = null;
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`AI 服务异常: ${errorData.error?.message || response.statusText}`);
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT);
+
+    try {
+      console.log(`[AI] 调用中... (尝试${attempt})`);
+      const startTime = Date.now();
+
+      const response = await fetch(API_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: targetModel,
+          messages: formattedMessages,
+          max_tokens: 1000,
+          temperature: 0.7,
+          response_format: responseMimeType === 'application/json' ? { type: "json_object" } : undefined
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(`HTTP ${response.status}: ${err.error?.message || response.statusText}`);
+      }
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content || data.content || "";
+      
+      console.log(`[AI] 成功 (${Date.now() - startTime}ms)`);
+      
+      if (data.usage) {
+        monitor.recordTokenUsage(data.usage.prompt_tokens || 0, data.usage.completion_tokens || 0);
+      }
+
+      return content;
+
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      lastError = error;
+      
+      if (error.name === 'AbortError') {
+        console.error(`[AI] 超时 (尝试${attempt})`);
+      } else {
+        console.error(`[AI] 错误 (尝试${attempt}):`, error.message);
+      }
+
+      if (attempt < MAX_RETRIES) {
+        await delay(3000);
+      }
     }
-
-    const data = await response.json();
-    
-    // 追踪 Token 消耗
-    if (data.usage) {
-      monitor.recordTokenUsage(
-        data.usage.prompt_tokens || 0,
-        data.usage.completion_tokens || 0
-      );
-    }
-
-    // 处理通义千问/OpenAI 兼容的返回结构
-    const content = data.choices?.[0]?.message?.content || data.content || "";
-    return content;
-  } catch (error) {
-    console.error("AI 接口调用失败:", error);
-    throw error;
   }
+
+  throw lastError || new Error('AI调用失败');
 };
 
 /**
- * 识别节点任务类型
+ * 任务类型识别（本地关键词，不调API）
  */
 export const identifyNodeTask = async (node: ProblemNode): Promise<'image' | 'code' | 'web' | 'research' | 'none'> => {
-  const prompt = `分析以下问题节点，判断它是否包含具体的执行任务。
-  节点标题: "${node.title}"
-  笔记内容: "${node.notes}"
-  
-  请分类为：
-  - image: 需要生成图片、视觉设计
-  - code: 需要编程、开发、算法实现
-  - web: 需要建立网站、生成图表、UI展示
-  - research: 需要大量资料调研、深度分析
-  - none: 纯逻辑拆解，无具体执行工具需求
-  
-  仅返回分类词（英文）。`;
-
-  const result = await callGemini([{ role: "user", content: prompt }], "qwen-plus");
-  const text = result.toLowerCase().trim();
-  if (text.includes('image')) return 'image';
-  if (text.includes('code')) return 'code';
-  if (text.includes('web')) return 'web';
-  if (text.includes('research')) return 'research';
-  return 'none';
+  const text = `${node.title} ${node.notes || ''}`.toLowerCase();
+  if (/图片|图像|设计|视觉|ui|logo|icon|插画|海报|banner/.test(text)) return 'image';
+  if (/代码|编程|开发|算法|函数|api|程序|脚本|python|java/.test(text)) return 'code';
+  if (/网站|网页|前端|界面|图表|dashboard|h5|app/.test(text)) return 'web';
+  return 'research';
 };
 
 /**
- * 拆解探索节点
+ * 探索节点（简化prompt）
  */
 export const exploreNode = async (node: ProblemNode, contextNodes: ProblemNode[]) => {
-  const prompt = `你是一个深度拆解问题的专家。
-  请分析并拆解问题： "${node.title}"。背景：${node.notes}。
-  请必须以 JSON 格式输出，结构如下：
-  {
-    "notes": "详细分析内容",
-    "confidence": 0.9,
-    "triggerDecision": boolean, 
-    "decisionContext": "如果 triggerDecision 为 true，请在此处详细说明为什么需要用户决策（例如：方向 A 偏向效率，方向 B 偏向质量，请用户二选一；或者当前信息不足以支持后续拆解，需要人工介入确定方向）",
-    "subProblems": [
-      { "title": "子问题标题", "initialNotes": "初始背景" }
-    ]
-  }
-  
-  重要指示：
-  - 当出现多条可选路径、执行风险、或需要用户偏好（如 A 方案或 B 方案）时，务必设 "triggerDecision": true。
-  - 在 "decisionContext" 中清晰描述待决策的具体冲突点。`;
+  const deps = node.dependencies || [];
+  const context = contextNodes
+    .filter(n => deps.includes(n.id) && n.notes)
+    .slice(0, 2)
+    .map(n => `${n.title}:${(n.notes||'').slice(0,50)}`)
+    .join(';');
 
-  const result = await callGemini(
-    [{ role: "user", content: prompt }], 
-    "qwen-max", 
-    "application/json"
-  );
+  const prompt = `分析问题："${node.title}"
+${node.notes ? `背景：${node.notes.slice(0,150)}` : ''}
+${context ? `相关：${context}` : ''}
+
+请返回JSON格式：
+{
+  "notes": "分析内容（100-150字）",
+  "confidence": 0.8,
+  "subProblems": [
+    {"title": "具体的子问题标题1"},
+    {"title": "具体的子问题标题2"}
+  ],
+  "taskType": "research"
+}
+
+要求：
+1. notes要有实质内容
+2. subProblems的title必须是具体的问题，不能为空
+3. subProblems最多2个`;
 
   try {
-    return JSON.parse(result || "{}");
-  } catch (e) {
-    console.error("JSON 解析失败:", result);
-    return { 
-      notes: result || "分析完成，格式解析异常。", 
-      confidence: 0.5, 
-      triggerDecision: true, 
-      decisionContext: "分析结果格式异常，需要人工检查。",
-      subProblems: [] 
+    const result = await callGemini([{ role: "user", content: prompt }], "qwen-turbo", "application/json");
+    const clean = result.replace(/```json\n?|\n?```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    
+    // 过滤掉没有有效title的子问题
+    const validSubProblems = (parsed.subProblems || [])
+      .filter((sp: any) => sp && sp.title && sp.title.trim())
+      .slice(0, 2)
+      .map((sp: any) => ({
+        title: sp.title.trim(),
+        initialNotes: sp.initialNotes || ''
+      }));
+    
+    return {
+      notes: parsed.notes || '分析完成',
+      confidence: parsed.confidence || 0.7,
+      triggerDecision: false,
+      decisionContext: '',
+      subProblems: validSubProblems,
+      taskType: parsed.taskType || 'research'
     };
+  } catch (e: any) {
+    console.error("解析失败:", e.message);
+    return { notes: `待分析: ${node.title}`, confidence: 0.3, triggerDecision: false, decisionContext: "", subProblems: [], taskType: 'research' };
   }
 };
 
-/**
- * 执行 Agent 任务
- */
 export const runAgentTask = async (node: ProblemNode, agentType: string): Promise<string> => {
-  const systemInstruction = `你是一名专业的${agentType}。请基于你的专业知识协助用户完成节点任务。`;
-  const messages = [
-    { role: "system", content: systemInstruction },
-    { role: "user", content: `任务：执行节点任务。当前节点：${node.title}。背景：${node.notes}。` }
-  ];
-  return await callGemini(messages, "qwen-plus");
+  return await callGemini([{ role: "user", content: `作为${agentType}，简要分析:${node.title}` }]);
 };
 
-/**
- * 生成项目总结
- */
 export const generateProjectSummary = async (project: Project): Promise<string> => {
-  const nodesContent = project.nodes.map(n => `节点: ${n.title}\n结论: ${n.notes}`).join('\n---\n');
-  const prompt = `请为项目生成全案探索笔记：\n项目元问题: ${project.metaProblem}\n\n节点数据：\n${nodesContent}`;
-  return await callGemini([{ role: "user", content: prompt }], "qwen-max");
+  const nodes = project.nodes.filter((n: ProblemNode) => n.notes).slice(0,5).map((n: ProblemNode) => `${n.title}:${(n.notes||'').slice(0,40)}`).join('\n');
+  return await callGemini([{ role: "user", content: `总结(80字):\n目标:${project.metaProblem}\n${nodes}` }]);
 };
 
-/**
- * 节点咨询对话
- */
 export const chatWithNode = async (node: ProblemNode, message: string, history: ChatMessage[]): Promise<string> => {
-  const messages = [
-    { role: "system", content: `当前背景：${node.title}。笔记：${node.notes}。` },
-    ...history.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.text })),
-    { role: "user", content: message }
-  ];
-  return await callGemini(messages, "qwen-plus");
+  const recent = history.slice(-3);
+  return await callGemini([
+    { role: "system", content: `背景:${node.title}` },
+    ...recent.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.text.slice(0,300) })),
+    { role: "user", content: message.slice(0,500) }
+  ]);
 };

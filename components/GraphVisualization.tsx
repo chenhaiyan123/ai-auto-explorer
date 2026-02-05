@@ -24,7 +24,7 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({ nodes, onNodeCl
       const node = list.find(n => n.id === nodeId);
       if (!node) return false;
       
-      for (const depId of node.dependencies) {
+      for (const depId of node.dependencies || []) {
         const parent = list.find(n => n.id === depId);
         if (parent && (parent.isCollapsed || checkHidden(depId))) {
           hiddenNodeIds.add(nodeId);
@@ -35,6 +35,7 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({ nodes, onNodeCl
     };
 
     list.forEach(n => checkHidden(n.id));
+    // 不过滤没有title的节点，让它们显示为"未命名"
     return list.filter(n => !hiddenNodeIds.has(n.id));
   }, [nodes]);
 
@@ -56,13 +57,19 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({ nodes, onNodeCl
     svg.call(zoom);
 
     const links: { source: string; target: string }[] = [];
+    const nodeIdSet = new Set(visibleNodes.map(n => n.id));
+    
     visibleNodes.forEach(node => {
-      node.dependencies.forEach(depId => {
-        if (visibleNodes.some(n => n.id === depId)) {
+      const deps = node.dependencies || [];
+      deps.forEach(depId => {
+        // 确保源节点和目标节点都存在
+        if (depId && nodeIdSet.has(depId)) {
           links.push({ source: depId, target: node.id });
         }
       });
     });
+    
+    console.log('[Graph] 节点数:', visibleNodes.length, '连线数:', links.length);
 
     // 预处理固定坐标：如果 node.isPinned 为真，锁定 fx 和 fy
     visibleNodes.forEach((n: any) => {
@@ -164,8 +171,12 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({ nodes, onNodeCl
       }
     });
 
+    // 修复：添加空值保护
     nodeGroup.append("text")
-      .text((d) => d.title.length > 20 ? d.title.slice(0, 17) + "..." : d.title)
+      .text((d) => {
+        const title = d.title || '未命名节点';
+        return title.length > 20 ? title.slice(0, 17) + "..." : title;
+      })
       .attr("dy", 40)
       .attr("text-anchor", "middle")
       .attr("fill", "#f8fafc")

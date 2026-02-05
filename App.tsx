@@ -918,54 +918,161 @@ const App: React.FC = () => {
   const updateNode = useCallback((id: string, u: Partial<ProblemNode>) => setNodes(prev => prev.map(n => n.id === id ? { ...n, ...u } : n)), []);
   const createProjectWithMode = useCallback((input: string, mode: ExplorationMode, analysis?: IntentAnalysis) => { const p: Project = { id: uuidv4(), name: analysis?.suggestedTitle || input.slice(0, 15), metaProblem: input, createdAt: Date.now(), explorationMode: mode, intentAnalysis: analysis, nodes: [{ id: uuidv4(), title: input, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: "", chatHistory: [], agentResults: [] }] }; setProjects(prev => [...prev, p]); setCurrentProjectId(p.id); setPendingIntent(null); setMetaInput(''); setShowMetaModal(false); }, []);
 
+  // 探索重试计数
+  const retryCountRef = useRef<Record<string, number>>({});
+  const MAX_RETRIES = 3;
+
   const runExplorationCycle = useCallback(async () => {
     if (decision || isProcessingRef.current || !isLoopingRef.current) return;
-    let unexplored = focusedNodeId ? (() => { const desc = new Set<string>([focusedNodeId]); const q = [focusedNodeId]; let i = 0; while (i < q.length) { const c = q[i++]; nodes.forEach(n => { if (n.dependencies.includes(c) && !desc.has(n.id)) { desc.add(n.id); q.push(n.id); } }); } return nodes.find(n => desc.has(n.id) && n.status === NodeStatus.UNEXPLORED); })() : undefined;
+    
+    // 查找待探索节点
+    let unexplored = focusedNodeId ? (() => { 
+      const desc = new Set<string>([focusedNodeId]); 
+      const q = [focusedNodeId]; 
+      let i = 0; 
+      while (i < q.length) { 
+        const c = q[i++]; 
+        nodes.forEach(n => { 
+          if (n.dependencies.includes(c) && !desc.has(n.id)) { 
+            desc.add(n.id); 
+            q.push(n.id); 
+          } 
+        }); 
+      } 
+      return nodes.find(n => desc.has(n.id) && n.status === NodeStatus.UNEXPLORED); 
+    })() : undefined;
+    
     if (!unexplored) unexplored = nodes.find(n => n.status === NodeStatus.UNEXPLORED);
+    
     if (!unexplored) { 
       if (!nodes.some(n => n.status === NodeStatus.EXPLORING)) {
         setIsLooping(false);
-        // 探索完成通知
         addNotification('info', '🎉 探索完成', '所有节点已探索完毕，可以生成研究报告了！');
       }
       return; 
     }
+    
     isProcessingRef.current = true;
     const cid = unexplored.id;
     const nodeTitle = unexplored.title;
     updateNode(cid, { status: NodeStatus.EXPLORING });
+    
     try {
       const isResearch = currentProject?.explorationMode === 'research';
-      const result = isResearch ? await exploreResearchNode(unexplored, nodes, (c: KnowledgeCard) => {
-        setKnowledgeCards(p => [...p, c]);
-        // 重要发现通知
-        addNotification('discovery', '💡 新知识卡片', `在「${nodeTitle}」中发现：${c.title}`);
-      }, (f: ResearchFinding) => {
-        setResearchFindings(p => [...p, f]);
-        // 重要发现通知
-        if (f.importance === 'high') {
-          addNotification('discovery', '🔥 重要发现', f.insight.slice(0, 50) + '...');
-        }
-      }) : await exploreNode(unexplored, nodes);
-      if (!isLoopingRef.current) { updateNode(cid, { status: NodeStatus.UNEXPLORED }); isProcessingRef.current = false; return; }
-      let taskType = result.taskType; if (!taskType || taskType === 'none') taskType = await identifyNodeTask({ ...unexplored, notes: result.notes });
+      
+      // 添加超时控制
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('API调用超时')), 60000)
+      );
+      
+      const explorationPromise = isResearch 
+        ? exploreResearchNode(unexplored, nodes, (c: KnowledgeCard) => {
+            setKnowledgeCards(p => [...p, c]);
+            addNotification('discovery', '💡 新知识卡片', `在「${nodeTitle}」中发现：${c.title}`);
+          }, (f: ResearchFinding) => {
+            setResearchFindings(p => [...p, f]);
+            if (f.importance === 'high') {
+              addNotification('discovery', '🔥 重要发现', f.insight.slice(0, 50) + '...');
+            }
+          }) 
+        : exploreNode(unexplored, nodes);
+      
+      const result = await Promise.race([explorationPromise, timeoutPromise]) as any;
+      
+      if (!isLoopingRef.current) { 
+        updateNode(cid, { status: NodeStatus.UNEXPLORED }); 
+        isProcessingRef.current = false; 
+        return; 
+      }
+      
+      // 简化：不再单独调用 identifyNodeTask，直接使用结果中的 taskType
+      const taskType = result.taskType || 'research';
+      
       if (result.subProblems?.length) {
-        setNodes(prev => [...prev, ...result.subProblems.map((sp: any) => ({ id: uuidv4(), title: sp.title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [cid], notes: sp.initialNotes || "", chatHistory: [], agentResults: [] }))]);
-        // 新方向通知
+        console.log('[探索] 创建子节点, 父节点ID:', cid, '子问题数:', result.subProblems.length);
+        setNodes(prev => [...prev, ...result.subProblems.map((sp: any) => {
+          const newNode = { 
+            id: uuidv4(), 
+            title: sp.title || '未命名子问题', 
+            status: NodeStatus.UNEXPLORED, 
+            confidence: 0, 
+            dependencies: [cid], 
+            notes: sp.initialNotes || "", 
+            chatHistory: [], 
+            agentResults: [] 
+          };
+          console.log('[探索] 新节点:', newNode.title, '依赖:', newNode.dependencies);
+          return newNode;
+        })]);
         addNotification('info', '🌿 发现新方向', `从「${nodeTitle}」衍生出 ${result.subProblems.length} 个新探索方向`);
       }
+      
       if (result.triggerDecision) { 
-        updateNode(cid, { status: NodeStatus.NEEDS_REVIEW, confidence: result.confidence, notes: result.notes, taskType, pendingDecision: { nodeId: cid, context: result.decisionContext, options: [{ label: '方案A：继续', action: 'continue' }, { label: '方案B：新子方向', action: 'add_subproblem' }, { label: '方案C：终止', action: 'terminate' }] } }); 
+        updateNode(cid, { 
+          status: NodeStatus.NEEDS_REVIEW, 
+          confidence: result.confidence, 
+          notes: result.notes, 
+          taskType, 
+          pendingDecision: { 
+            nodeId: cid, 
+            context: result.decisionContext, 
+            options: [
+              { label: '方案A：继续', action: 'continue' }, 
+              { label: '方案B：新子方向', action: 'add_subproblem' }, 
+              { label: '方案C：终止', action: 'terminate' }
+            ] 
+          } 
+        }); 
         setIsLooping(false);
-        // 需要决策通知
         addNotification('warning', '⚠️ 需要您的决策', `「${nodeTitle}」遇到了分支点，请做出选择`);
+      } else {
+        updateNode(cid, { status: NodeStatus.SOLVED, confidence: result.confidence, notes: result.notes, taskType });
       }
-      else updateNode(cid, { status: NodeStatus.SOLVED, confidence: result.confidence, notes: result.notes, taskType });
-    } catch (e) { console.error(e); updateNode(cid, { status: NodeStatus.UNEXPLORED }); setIsLooping(false); }
-    finally { isProcessingRef.current = false; }
+      
+      // 成功后重置重试计数
+      retryCountRef.current[cid] = 0;
+      
+    } catch (e) { 
+      console.error('探索出错:', e);
+      
+      // 重试机制
+      const retryCount = (retryCountRef.current[cid] || 0) + 1;
+      retryCountRef.current[cid] = retryCount;
+      
+      if (retryCount < MAX_RETRIES) {
+        // 还可以重试，保持UNEXPLORED状态，继续探索
+        updateNode(cid, { status: NodeStatus.UNEXPLORED });
+        addNotification('warning', '⚠️ 探索遇到问题', `「${nodeTitle}」将自动重试 (${retryCount}/${MAX_RETRIES})`);
+        // 不停止循环，让它继续
+      } else {
+        // 超过重试次数，标记为需要人工处理
+        updateNode(cid, { 
+          status: NodeStatus.NEEDS_REVIEW, 
+          notes: `自动探索失败，请手动处理。错误: ${(e as Error).message}`,
+          pendingDecision: {
+            nodeId: cid,
+            context: '自动探索多次失败，需要人工干预',
+            options: [
+              { label: '重新探索', action: 'continue' },
+              { label: '跳过此节点', action: 'terminate' }
+            ]
+          }
+        });
+        addNotification('warning', '⚠️ 需要人工处理', `「${nodeTitle}」探索失败，请手动处理`);
+        // 继续探索其他节点，不停止
+      }
+    } finally { 
+      isProcessingRef.current = false; 
+    }
   }, [nodes, decision, updateNode, focusedNodeId, currentProject?.explorationMode, addNotification]);
 
-  useEffect(() => { if (isLooping && !decision) { const t = setTimeout(() => runExplorationCycle(), 1000); return () => clearTimeout(t); } }, [isLooping, decision, runExplorationCycle]);
+  // 优化探索间隔：成功后500ms，避免太快触发API限流
+  useEffect(() => { 
+    if (isLooping && !decision) { 
+      const t = setTimeout(() => runExplorationCycle(), 500); 
+      return () => clearTimeout(t); 
+    } 
+  }, [isLooping, decision, runExplorationCycle]);
 
   const handleDecisionChoice = (action: 'continue' | 'add_subproblem' | 'terminate', subTitle?: string) => { if (!decision) return; if (action === 'terminate') updateNode(decision.nodeId, { status: NodeStatus.INVALID, pendingDecision: undefined }); else if (action === 'add_subproblem' && subTitle) addNode(subTitle, [decision.nodeId]); else if (action === 'continue') updateNode(decision.nodeId, { status: NodeStatus.SOLVED, pendingDecision: undefined }); setDecision(null); setIsLooping(true); };
   const handleNodeClick = (node: ProblemNode) => { setSelectedNodeId(node.id); if (node.status === NodeStatus.NEEDS_REVIEW && node.pendingDecision) setDecision(node.pendingDecision); };
