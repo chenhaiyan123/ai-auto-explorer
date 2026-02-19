@@ -990,20 +990,47 @@ const App: React.FC = () => {
       
       if (result.subProblems?.length) {
         console.log('[探索] 创建子节点, 父节点ID:', cid, '子问题数:', result.subProblems.length);
-        setNodes(prev => [...prev, ...result.subProblems.map((sp: any) => {
-          const newNode = { 
-            id: uuidv4(), 
-            title: sp.title || '未命名子问题', 
-            status: NodeStatus.UNEXPLORED, 
-            confidence: 0, 
-            dependencies: [cid], 
-            notes: sp.initialNotes || "", 
-            chatHistory: [], 
-            agentResults: [] 
-          };
-          console.log('[探索] 新节点:', newNode.title, '依赖:', newNode.dependencies);
-          return newNode;
-        })]);
+        
+        // 计算父节点层级
+        const getNodeLevel = (nodeId: string, visited = new Set<string>()): number => {
+          if (visited.has(nodeId)) return 0;
+          visited.add(nodeId);
+          const node = nodes.find(n => n.id === nodeId);
+          if (!node || !node.dependencies?.length) return 0;
+          const parentId = node.dependencies[0];
+          return 1 + getNodeLevel(parentId, visited);
+        };
+        const parentLevel = getNodeLevel(cid);
+        const childLevel = parentLevel + 1;
+        
+        setNodes(prev => {
+          const newNodes = result.subProblems.map((sp: any) => {
+            const newNode = { 
+              id: uuidv4(), 
+              title: sp.title || '未命名子问题', 
+              status: NodeStatus.UNEXPLORED, 
+              confidence: 0, 
+              dependencies: [cid], 
+              notes: sp.initialNotes || "", 
+              chatHistory: [], 
+              agentResults: [],
+              // 第2层及以上节点默认折叠
+              isCollapsed: childLevel >= 2
+            };
+            console.log('[探索] 新节点:', newNode.title, '层级:', childLevel, '依赖:', newNode.dependencies);
+            return newNode;
+          });
+          
+          // 如果父节点是第1层，自动设置为折叠状态（这样子节点默认不显示）
+          const updatedPrev = prev.map(n => {
+            if (n.id === cid && parentLevel >= 1) {
+              return { ...n, isCollapsed: true };
+            }
+            return n;
+          });
+          
+          return [...updatedPrev, ...newNodes];
+        });
         addNotification('info', '🌿 发现新方向', `从「${nodeTitle}」衍生出 ${result.subProblems.length} 个新探索方向`);
       }
       
@@ -1378,7 +1405,7 @@ const App: React.FC = () => {
         )}
         
         {notesPanelMode === 0 && <div className="w-8 h-full bg-slate-900 border-r border-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNotesPanelMode(1)}><div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">展开面板</div></div>}
-        <div className="flex-1 relative z-0"><GraphVisualization nodes={filteredNodes} onNodeClick={handleNodeClick} onNodeContextMenu={(node, x, y) => setContextMenu({ x, y, nodeId: node.id })} /></div>
+        <div className="flex-1 relative z-0"><GraphVisualization nodes={filteredNodes} onNodeClick={handleNodeClick} onNodeContextMenu={(node, x, y) => setContextMenu({ x, y, nodeId: node.id })} onToggleCollapse={(nodeId) => { const n = nodes.find(x => x.id === nodeId); if (n) updateNode(n.id, { isCollapsed: !n.isCollapsed }); }} onBatchUpdateNodes={(updates) => { setNodes(prev => prev.map(n => { const u = updates.find(x => x.id === n.id); return u ? { ...n, ...u.changes } : n; })); }} /></div>
         <div className={`fixed inset-0 z-40 md:relative md:inset-auto md:z-20 transition-all duration-300 ${selectedNodeId ? 'translate-x-0 opacity-100 md:w-96' : 'translate-x-full opacity-0 md:w-0 overflow-hidden'}`} style={{ width: selectedNodeId && window.innerWidth >= 768 ? (isDetailsWide ? '600px' : '384px') : undefined }}>
           <div className="absolute inset-0 bg-black/60 md:hidden" onClick={() => setSelectedNodeId(null)}></div>
           <div className="relative h-full ml-auto"><NodeDetails node={selectedNode} isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} /></div>
