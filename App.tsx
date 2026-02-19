@@ -14,6 +14,7 @@ import { analyzeIntentWithAutoConfirm, IntentAnalysis, ExplorationMode } from '.
 import IntentConfirmModal from './components/IntentConfirmModal';
 import { exploreResearchNode, generateResearchReport } from './services/researchExplorer';
 import ResearchReport from './components/ResearchReport';
+import AgentTeamPanel, { AgentTeamState, initialAgentTeamState } from './components/AgentTeamPanel';
 
 // ========== Agent 类型 ==========
 interface Agent {
@@ -778,7 +779,7 @@ const App: React.FC = () => {
   const [notesPanelMode, setNotesPanelMode] = useState<number>(1);
   const [sidebarWidth, setSidebarWidth] = useState<number>(320); // 可调节的侧边栏宽度
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [sidebarActiveTab, setSidebarActiveTab] = useState<'butler' | 'research'>('butler');
+  const [sidebarActiveTab, setSidebarActiveTab] = useState<'butler' | 'agents' | 'research'>('butler');
   const [nodes, setNodes] = useState<ProblemNode[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
@@ -803,6 +804,9 @@ const App: React.FC = () => {
   
   // AI管家聊天记录（持久化到项目中）
   const [butlerChatHistory, setButlerChatHistory] = useState<ChatMessage[]>([]);
+  
+  // Agent团队状态（持久化）
+  const [agentTeamState, setAgentTeamState] = useState<AgentTeamState>(initialAgentTeamState);
   
   const isLoopingRef = useRef(false);
   const isProcessingRef = useRef(false);
@@ -910,9 +914,12 @@ const App: React.FC = () => {
   const criticalNodes = useMemo(() => nodes.filter(n => n.isCritical), [nodes]);
 
   useEffect(() => { if (user && projects.length > 0) localStorage.setItem(`exploration_projects_${user.username}`, JSON.stringify(projects)); }, [projects, user?.username]);
-  useEffect(() => { const p = projects.find(x => x.id === currentProjectId); if (p) { setSelectedNodeId(null); setFocusedNodeId(null); setDecision(null); setNodes(p.nodes || []); setIsLooping(false); setKnowledgeCards((p as any).knowledgeCards || []); setResearchFindings((p as any).researchFindings || []); setResearchReport(null); } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id); }, [currentProjectId, projects.length]);
+  useEffect(() => { const p = projects.find(x => x.id === currentProjectId); if (p) { setSelectedNodeId(null); setFocusedNodeId(null); setDecision(null); setNodes(p.nodes || []); setIsLooping(false); setKnowledgeCards((p as any).knowledgeCards || []); setResearchFindings((p as any).researchFindings || []); setResearchReport(null); setAgentTeamState((p as any).agentTeamState || initialAgentTeamState); } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id); }, [currentProjectId, projects.length]);
   useEffect(() => { if (currentProjectId && nodes.length > 0) setProjects(prev => { const i = prev.findIndex(p => p.id === currentProjectId); if (i === -1 || prev[i].nodes === nodes) return prev; const n = [...prev]; n[i] = { ...n[i], nodes }; return n; }); }, [nodes, currentProjectId]);
   useEffect(() => { if (currentProjectId && currentProject?.explorationMode === 'research') setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, knowledgeCards, researchFindings } as any : p)); }, [knowledgeCards, researchFindings, currentProjectId]);
+  
+  // 保存Agent团队状态到项目
+  useEffect(() => { if (currentProjectId && agentTeamState) setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, agentTeamState } as any : p)); }, [agentTeamState, currentProjectId]);
 
   const addNode = useCallback((title: string, deps: string[] = [], notes = "") => { const n: ProblemNode = { id: uuidv4(), title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: deps, notes, chatHistory: [], agentResults: [] }; setNodes(prev => [...prev, n]); return n; }, []);
   const updateNode = useCallback((id: string, u: Partial<ProblemNode>) => setNodes(prev => prev.map(n => n.id === id ? { ...n, ...u } : n)), []);
@@ -1388,10 +1395,12 @@ const App: React.FC = () => {
           </div>
           <div className="flex border-b border-slate-800">
             <button onClick={() => setSidebarActiveTab('butler')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${sidebarActiveTab === 'butler' ? 'bg-blue-600/10 text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}><span>🏠</span> AI管家</button>
-            <button onClick={() => setSidebarActiveTab('research')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${sidebarActiveTab === 'research' ? 'bg-emerald-600/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}><span>📊</span> 研究面板</button>
+            <button onClick={() => setSidebarActiveTab('agents')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${sidebarActiveTab === 'agents' ? 'bg-violet-600/10 text-violet-400 border-b-2 border-violet-500' : 'text-slate-500 hover:text-slate-300'}`}><span>🤖</span> Agent团队</button>
+            <button onClick={() => setSidebarActiveTab('research')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${sidebarActiveTab === 'research' ? 'bg-emerald-600/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}><span>📊</span> 研究</button>
           </div>
           <div className="flex-1 overflow-hidden">
             {sidebarActiveTab === 'butler' && <AIButler project={currentProject} nodes={nodes} onAddNode={addNode} onUpdateNode={updateNode} onStartExploration={() => setIsLooping(true)} quotedNode={quotedNodeForButler} onClearQuotedNode={() => setQuotedNodeForButler(null)} chatHistory={butlerChatHistory} onUpdateChatHistory={handleUpdateButlerChat} />}
+            {sidebarActiveTab === 'agents' && <AgentTeamPanel projectId={currentProjectId || ''} projectGoal={currentProject?.metaProblem || ''} nodes={nodes} state={agentTeamState} onStateChange={setAgentTeamState} onTeamOutput={(output) => { if (currentProjectId) setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, agentOutput: output } : p)); }} />}
             {sidebarActiveTab === 'research' && <SimpleResearchPanel project={currentProject} nodes={nodes} knowledgeCards={knowledgeCards} findings={researchFindings} criticalNodes={criticalNodes} isLooping={isLooping} isGeneratingReport={isGeneratingReport} onNodeSelect={setSelectedNodeId} onStartExploration={() => setIsLooping(true)} onStopExploration={() => setIsLooping(false)} onGenerateReport={handleGenerateReport} />}
           </div>
         </aside>
