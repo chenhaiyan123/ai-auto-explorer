@@ -1,7 +1,9 @@
 import { UserStats } from '../types';
 
 // 云端 API 地址 - 阿里云函数
-const STATS_API_URL = 'https://aliyun-ai-proxy-mvyxjrfpcu.cn-hangzhou.fcapp.run/stats';
+// 云端统计接口（可选）：由部署者通过环境变量提供，开源默认关闭
+const PROXY_BASE = (import.meta as any).env?.VITE_API_PROXY_URL || '';
+const STATS_API_URL = PROXY_BASE ? `${PROXY_BASE.replace(/\/+$/, '')}/stats` : '';
 
 class MonitoringService {
   private currentUser: string | null = null;
@@ -66,6 +68,8 @@ class MonitoringService {
     
     stats.lastActiveTimestamp = Date.now();
 
+    if (!STATS_API_URL) { this.saveToLocalBackup(stats); return; } // 未配置云端时仅存本地
+
     try {
       const response = await fetch(STATS_API_URL, {
         method: 'POST',
@@ -90,6 +94,7 @@ class MonitoringService {
 
   // 从云端获取所有统计数据
   async fetchCloudStats(): Promise<UserStats[]> {
+    if (!STATS_API_URL) return [];
     try {
       const response = await fetch(STATS_API_URL, {
         method: 'GET',

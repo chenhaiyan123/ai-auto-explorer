@@ -1,79 +1,52 @@
 import { ProblemNode, ChatMessage, Project } from "../types";
 import { monitor } from "./monitoringService";
-
-/**
- * 通义千问 API 代理地址
- */
-const API_PROXY_URL = 'https://aliyun-ai-proxy-mvyxjrfpcu.cn-hangzhou.fcapp.run';
+import { callLLM } from "./llmProvider";
+import { buildIoTSystemPrompt, executeIoTCommandsInText, formatIoTResults } from "./iotService";
 
 // 配置
-const API_TIMEOUT = 120000; // 120秒超时
 const MAX_RETRIES = 2;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * 调用AI API（带超时和重试）
+ * 调用AI API（带重试）
+ *
+ * 注：函数名 callGemini 为历史遗留，实际后端由「设置 → 模型接入」决定，
+ * 可以是云端代理，也可以是本地 Ollama / LM Studio / vLLM 等 OpenAI 兼容 API。
  */
 export const callGemini = async (
-  messages: any[], 
-  model: string = "qwen-turbo",  // 默认使用最快的模型
+  messages: any[],
+  model?: string,          // 可选覆盖模型名；默认使用设置中的模型
   responseMimeType?: string
 ): Promise<string> => {
-  // 统一使用 qwen-turbo（最快）
-  const targetModel = 'qwen-turbo';
-
   // 格式化消息并限制长度
   const formattedMessages = messages.map(m => ({
     role: m.role === 'system' ? 'system' : (m.role === 'model' || m.role === 'assistant' ? 'assistant' : 'user'),
-    content: ((m.content || m.text) || '').slice(0, 1500)
+    content: ((m.content || m.text) || '').slice(0, m.role === 'system' ? 4000 : 1500)
   }));
 
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT);
-
     try {
       console.log(`[AI] 调用中... (尝试${attempt})`);
       const startTime = Date.now();
 
-      const response = await fetch(API_PROXY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: targetModel,
-          messages: formattedMessages,
-          max_tokens: 1000,
-          temperature: 0.7,
-          response_format: responseMimeType === 'application/json' ? { type: "json_object" } : undefined
-        }),
-        signal: controller.signal
+      const result = await callLLM(formattedMessages, {
+        jsonMode: responseMimeType === 'application/json',
       });
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(`HTTP ${response.status}: ${err.error?.message || response.statusText}`);
-      }
-
-      const data = await response.json();
-      const content = data.choices?.[0]?.message?.content || data.content || "";
-      
       console.log(`[AI] 成功 (${Date.now() - startTime}ms)`);
-      
-      if (data.usage) {
-        monitor.recordTokenUsage(data.usage.prompt_tokens || 0, data.usage.completion_tokens || 0);
+
+      if (result.usage) {
+        monitor.recordTokenUsage(result.usage.prompt_tokens || 0, result.usage.completion_tokens || 0);
       }
 
-      return content;
+      return result.content;
 
     } catch (error: any) {
-      clearTimeout(timeoutId);
       lastError = error;
-      
+
       if (error.name === 'AbortError') {
         console.error(`[AI] 超时 (尝试${attempt})`);
       } else {
@@ -170,9 +143,19 @@ export const generateProjectSummary = async (project: Project): Promise<string> 
 
 export const chatWithNode = async (node: ProblemNode, message: string, history: ChatMessage[]): Promise<string> => {
   const recent = history.slice(-3);
-  return await callGemini([
-    { role: "system", content: `背景:${node.title}` },
+  const iotPrompt = buildIoTSystemPrompt(); // 已注册 IoT 设备时，告知 AI 可调用
+  let reply = await callGemini([
+    { role: "system", content: `背景:${node.title}${iotPrompt}` },
     ...recent.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.text.slice(0,300) })),
     { role: "user", content: message.slice(0,500) }
   ]);
+
+  // 执行 AI 输出中的 IoT 指令块，并把结果附加到回复
+  try {
+    const results = await executeIoTCommandsInText(reply);
+    if (results.length > 0) reply += `\n\n${formatIoTResults(results)}`;
+  } catch (e) {
+    console.warn('[IoT] 指令执行异常', e);
+  }
+  return reply;
 };

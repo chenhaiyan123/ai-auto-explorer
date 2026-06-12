@@ -345,7 +345,7 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
         nodeGroup.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
       });
 
-      return () => simulation.stop();
+      return () => { simulation.stop(); };
     }
 
     // 小地图更新函数

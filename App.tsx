@@ -15,6 +15,9 @@ import IntentConfirmModal from './components/IntentConfirmModal';
 import { exploreResearchNode, generateResearchReport } from './services/researchExplorer';
 import ResearchReport from './components/ResearchReport';
 import AgentTeamPanel, { AgentTeamState, initialAgentTeamState } from './components/AgentTeamPanel';
+import QuestionEvaluator from './components/QuestionEvaluator';
+import SettingsModal from './components/SettingsModal';
+import { QVSReport } from './services/qvsService';
 
 // ========== Agent 类型 ==========
 interface Agent {
@@ -752,6 +755,8 @@ const App: React.FC = () => {
   const [adminMessages, setAdminMessages] = useState<any[]>([]);
   const [pendingIntent, setPendingIntent] = useState<{ input: string; analysis: IntentAnalysis; } | null>(null);
   const [isAnalyzingIntent, setIsAnalyzingIntent] = useState(false);
+  const [showQVSModal, setShowQVSModal] = useState(false);           // 问题价值评估
+  const [showSettingsModal, setShowSettingsModal] = useState(false); // 设置（模型接入 / IoT 设备）
   const [knowledgeCards, setKnowledgeCards] = useState<KnowledgeCard[]>([]);
   const [researchFindings, setResearchFindings] = useState<ResearchFinding[]>([]);
   const [researchReport, setResearchReport] = useState<any>(null);
@@ -1272,6 +1277,15 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {/* 设置：模型接入 / IoT 设备 */}
+          <button
+            onClick={() => setShowSettingsModal(true)}
+            className="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
+            title="设置：模型接入 / IoT 设备"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+
           {/* 通知按钮 */}
           <div className="relative">
             <button 
@@ -1443,7 +1457,29 @@ const App: React.FC = () => {
         <button onClick={() => setShowAdminDashboard(false)} className="mt-6 py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl">关闭</button>
       </div></div>}
 
-      {showMetaModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"><div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-8 shadow-2xl"><h2 className="text-2xl font-bold">新探索任务</h2><textarea value={metaInput} onChange={e => setMetaInput(e.target.value)} placeholder="描述你想探索的问题..." className="w-full bg-slate-800 border border-slate-700 rounded-xl p-5 mt-6 min-h-[100px] outline-none text-slate-200 resize-none" /><div className="flex gap-4 mt-8"><button onClick={() => setShowMetaModal(false)} className="flex-1 py-4 bg-slate-800 rounded-xl font-bold">取消</button><button disabled={isAnalyzingIntent || !metaInput.trim()} onClick={async () => { if (!metaInput.trim()) return; setIsAnalyzingIntent(true); try { const { analysis, needsConfirmation } = await analyzeIntentWithAutoConfirm(metaInput); if (needsConfirmation) { setPendingIntent({ input: metaInput, analysis }); setShowMetaModal(false); } else createProjectWithMode(metaInput, analysis.mode, analysis); } catch { createProjectWithMode(metaInput, 'research'); } finally { setIsAnalyzingIntent(false); } }} className="flex-[2] py-4 bg-blue-600 rounded-xl font-bold disabled:opacity-50">{isAnalyzingIntent ? '分析中...' : '开启探索'}</button></div></div></div>}
+      {showMetaModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"><div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-8 shadow-2xl"><h2 className="text-2xl font-bold">新探索任务</h2><textarea value={metaInput} onChange={e => setMetaInput(e.target.value)} placeholder="描述你想探索的问题..." className="w-full bg-slate-800 border border-slate-700 rounded-xl p-5 mt-6 min-h-[100px] outline-none text-slate-200 resize-none" /><button disabled={!metaInput.trim()} onClick={() => { setShowMetaModal(false); setShowQVSModal(true); }} className="w-full mt-4 py-3 bg-gradient-to-r from-violet-600/20 to-blue-600/20 border border-violet-500/30 text-violet-300 rounded-xl font-bold text-sm hover:from-violet-600/30 hover:to-blue-600/30 transition-all disabled:opacity-40 flex items-center justify-center gap-2"><span>📊</span> 先评估问题价值（推荐）</button><div className="flex gap-4 mt-4"><button onClick={() => setShowMetaModal(false)} className="flex-1 py-4 bg-slate-800 rounded-xl font-bold">取消</button><button disabled={isAnalyzingIntent || !metaInput.trim()} onClick={async () => { if (!metaInput.trim()) return; setIsAnalyzingIntent(true); try { const { analysis, needsConfirmation } = await analyzeIntentWithAutoConfirm(metaInput); if (needsConfirmation) { setPendingIntent({ input: metaInput, analysis }); setShowMetaModal(false); } else createProjectWithMode(metaInput, analysis.mode, analysis); } catch { createProjectWithMode(metaInput, 'research'); } finally { setIsAnalyzingIntent(false); } }} className="flex-[2] py-4 bg-blue-600 rounded-xl font-bold disabled:opacity-50">{isAnalyzingIntent ? '分析中...' : '直接开启探索'}</button></div></div></div>}
+
+      {/* 问题价值评估（QVS）模块 */}
+      {showQVSModal && (
+        <QuestionEvaluator
+          initialQuestion={metaInput}
+          onClose={() => { setShowQVSModal(false); setShowMetaModal(true); }}
+          onStartExploration={async (question: string, report: QVSReport) => {
+            setShowQVSModal(false);
+            setMetaInput(question);
+            setIsAnalyzingIntent(true);
+            try {
+              const { analysis, needsConfirmation } = await analyzeIntentWithAutoConfirm(question);
+              if (needsConfirmation) { setPendingIntent({ input: question, analysis }); }
+              else createProjectWithMode(question, analysis.mode, analysis);
+            } catch { createProjectWithMode(question, 'research'); }
+            finally { setIsAnalyzingIntent(false); }
+          }}
+        />
+      )}
+
+      {/* 设置：模型接入 / IoT 设备 */}
+      {showSettingsModal && <SettingsModal onClose={() => setShowSettingsModal(false)} />}
 
       {showHelpModal && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowHelpModal(false)}><div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-10 shadow-2xl flex flex-col items-center max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}><h3 className="text-xl font-bold text-white mb-8">有问题请联系</h3><div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 w-full text-center mb-8"><p className="text-slate-500 text-xs mb-3 uppercase tracking-widest font-bold">联系微信号</p><p className="text-2xl font-mono font-bold text-blue-400 select-all tracking-wider">seabird36</p></div><MessageBoard /><button onClick={() => setShowHelpModal(false)} className="mt-6 w-full py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-2xl border border-slate-700">关闭</button></div></div>}
 
