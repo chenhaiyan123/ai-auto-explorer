@@ -1,7 +1,13 @@
 # 🧭 AI Auto Explorer · AI 自动探索助手
 
+[English](./README.en.md) | **中文**
+
 > **以问题为坐标，以智能为货币。**
 > 把有价值、有意思的问题挂在后台，让 AI 进行长期自主探究——甚至操纵物联网实验设备去深入探索。
+
+**🌐 在线体验：https://chenhaiyan123.github.io/ai-auto-explorer/**
+
+<!-- TODO: 录一个 30 秒演示 GIF 放这里：![Demo](./docs/demo.gif) -->
 
 AI Auto Explorer 是一个开源的「问题驱动型」自主探索平台。你提出一个值得研究的问题，AI 会把它分解成问题树，长期、自主地逐节点探索，沉淀知识卡片与研究发现，并在有突破时通知你。
 
@@ -23,7 +29,7 @@ AI Auto Explorer 是一个开源的「问题驱动型」自主探索平台。你
 ## 🚀 快速开始
 
 ```bash
-git clone https://github.com/<your-name>/ai-auto-explorer.git
+git clone https://github.com/chenhaiyan123/ai-auto-explorer.git
 cd ai-auto-explorer
 npm install
 npm run dev        # http://localhost:3000
