@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ProblemNode, NodeStatus, ChatMessage, AgentResult } from '../types';
 import { runAgentTask, identifyNodeTask } from '../services/geminiService';
+import MarkdownView from './MarkdownView';
 
 interface NodeDetailsProps {
   node: ProblemNode | null;
@@ -12,6 +13,7 @@ interface NodeDetailsProps {
   onUpdateNotes: (nodeId: string, newNotes: string) => void;
   onUpdateNodeData: (id: string, updates: Partial<ProblemNode>) => void;
   onAppendToSummary: (text: string) => void;
+  onAddChildNode?: (parentId: string, title: string) => void;
 }
 
 const AGENT_MARKETPLACE = [
@@ -22,8 +24,8 @@ const AGENT_MARKETPLACE = [
   { category: '数理逻辑', agents: ['数学建模专家', '统计学家', '物理模拟员'] }
 ];
 
-const NodeDetails: React.FC<NodeDetailsProps> = ({ 
-  node, isFocused, isWide, onToggleWide, onClose, onSendMessage, onUpdateNotes, onUpdateNodeData, onAppendToSummary
+const NodeDetails: React.FC<NodeDetailsProps> = ({
+  node, isFocused, isWide, onToggleWide, onClose, onSendMessage, onUpdateNotes, onUpdateNodeData, onAppendToSummary, onAddChildNode
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -33,6 +35,12 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
   const [editingNotes, setEditingNotes] = useState(node?.notes || '');
   const [showAgentMenu, setShowAgentMenu] = useState(false);
   const [showDelegationModal, setShowDelegationModal] = useState(false);
+  // 节点笔记（Markdown）
+  const [isEditingNote, setIsEditingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(node?.fullNote || '');
+  const [tagInput, setTagInput] = useState('');
+  const [newDirectionTitle, setNewDirectionTitle] = useState('');
+  const [showNewDirection, setShowNewDirection] = useState(false);
 
   useEffect(() => {
     if (node) {
@@ -44,10 +52,38 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
       setManualInput(node.manualResults || '');
       setEditingTitle(node.title);
       setEditingNotes(node.notes);
+      setNoteDraft(node.fullNote || '');
+      setIsEditingNote(false);
+      setShowNewDirection(false);
     }
   }, [node?.id]);
 
   if (!node) return null;
+
+  const saveNote = () => {
+    onUpdateNodeData(node.id, { fullNote: noteDraft, noteUpdatedAt: Date.now() });
+    setIsEditingNote(false);
+  };
+
+  const addTag = () => {
+    const t = tagInput.trim().replace(/^#/, '');
+    if (!t) return;
+    const tags = node.tags || [];
+    if (!tags.includes(t)) onUpdateNodeData(node.id, { tags: [...tags, t] });
+    setTagInput('');
+  };
+
+  const removeTag = (t: string) => {
+    onUpdateNodeData(node.id, { tags: (node.tags || []).filter(x => x !== t) });
+  };
+
+  const createNewDirection = () => {
+    const title = newDirectionTitle.trim();
+    if (!title || !onAddChildNode) return;
+    onAddChildNode(node.id, title);
+    setNewDirectionTitle('');
+    setShowNewDirection(false);
+  };
 
   const handleAgentRun = async (type: string) => {
     setIsAgentRunning(true);
@@ -173,6 +209,86 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
       </div>
       
       <div className="p-4 flex-1 overflow-y-auto space-y-6 scroll-hide pb-20 relative">
+        {/* ===== 节点笔记（每个节点是一篇可编辑的 Markdown 笔记） ===== */}
+        <section className="bg-slate-900/60 border border-slate-700 rounded-xl p-4">
+          <div className="flex justify-between items-center mb-3">
+            <label className="text-[10px] uppercase tracking-widest text-purple-400 font-bold">📝 节点笔记</label>
+            <div className="flex items-center gap-2">
+              {node.noteUpdatedAt && !isEditingNote && (
+                <span className="text-[9px] text-slate-600">{new Date(node.noteUpdatedAt).toLocaleString()}</span>
+              )}
+              {isEditingNote ? (
+                <>
+                  <button onClick={saveNote} className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-[10px] font-bold transition-colors">保存</button>
+                  <button onClick={() => { setNoteDraft(node.fullNote || ''); setIsEditingNote(false); }} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-[10px] transition-colors">取消</button>
+                </>
+              ) : (
+                <button onClick={() => setIsEditingNote(true)} className="px-3 py-1 bg-slate-700 hover:bg-purple-600 text-slate-300 hover:text-white rounded text-[10px] font-bold transition-colors">✏️ 编辑</button>
+              )}
+            </div>
+          </div>
+
+          {isEditingNote ? (
+            <textarea
+              autoFocus
+              className="w-full bg-slate-950 border border-purple-500/40 rounded-lg p-3 text-[11px] text-slate-200 font-mono min-h-[180px] outline-none focus:ring-1 focus:ring-purple-500 leading-relaxed"
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') saveNote(); }}
+              placeholder={'支持 Markdown：# 标题、**粗体**、- 列表、```代码```、[[关联节点]]…\n\n把这个节点当作一篇笔记：记录你的思考、补充资料、修正 AI 的结论,或者标记一个新方向。\n\n⌘/Ctrl + Enter 保存'}
+            />
+          ) : node.fullNote ? (
+            <div onDoubleClick={() => setIsEditingNote(true)} title="双击编辑">
+              <MarkdownView source={node.fullNote} />
+            </div>
+          ) : (
+            <button onClick={() => setIsEditingNote(true)} className="w-full py-4 border border-dashed border-slate-700 hover:border-purple-500/50 rounded-lg text-[10px] text-slate-500 hover:text-purple-400 transition-colors">
+              + 把这个节点写成一篇笔记（Markdown）
+            </button>
+          )}
+
+          {/* 标签 */}
+          <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-slate-800">
+            {(node.tags || []).map(t => (
+              <span key={t} className="group inline-flex items-center gap-1 bg-purple-900/30 border border-purple-500/30 text-purple-300 text-[9px] px-2 py-0.5 rounded-full">
+                #{t}
+                <button onClick={() => removeTag(t)} className="opacity-0 group-hover:opacity-100 text-purple-400 hover:text-red-400 transition-opacity">×</button>
+              </span>
+            ))}
+            <input
+              className="bg-transparent border-none outline-none text-[9px] text-slate-400 w-20 placeholder:text-slate-600"
+              placeholder="+ 标签"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+              onBlur={addTag}
+            />
+          </div>
+
+          {/* 从此节点开新方向 */}
+          {onAddChildNode && (
+            <div className="mt-3">
+              {showNewDirection ? (
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    className="flex-1 bg-slate-950 border border-emerald-500/40 rounded-lg px-3 py-2 text-[11px] text-slate-200 outline-none focus:ring-1 focus:ring-emerald-500"
+                    placeholder="新方向的问题是什么？"
+                    value={newDirectionTitle}
+                    onChange={(e) => setNewDirectionTitle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') createNewDirection(); if (e.key === 'Escape') setShowNewDirection(false); }}
+                  />
+                  <button onClick={createNewDirection} className="px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold transition-colors">创建</button>
+                </div>
+              ) : (
+                <button onClick={() => setShowNewDirection(true)} className="w-full py-2 bg-emerald-900/20 hover:bg-emerald-900/40 border border-emerald-500/30 text-emerald-400 rounded-lg text-[10px] font-bold transition-colors">
+                  🌱 从此节点开一个新方向
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+
         {node.agentResults && node.agentResults.length > 0 && (
           <section>
              <label className="text-[10px] uppercase tracking-widest text-emerald-400 font-bold mb-3 block">Agent 执行结果及评分</label>

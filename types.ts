@@ -32,7 +32,12 @@ export interface ProblemNode {
   chatHistory?: ChatMessage[];
   agentResults?: AgentResult[];
   manualResults?: string;
+  /** 节点笔记正文（Markdown）——每个节点是一篇可编辑的笔记 */
   fullNote?: string;
+  /** 用户标签 */
+  tags?: string[];
+  /** 笔记最后编辑时间 */
+  noteUpdatedAt?: number;
   taskType?: 'image' | 'code' | 'web' | 'research' | 'none';
   pendingDecision?: DecisionPoint;
   x?: number;
