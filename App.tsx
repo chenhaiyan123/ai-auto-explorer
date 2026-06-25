@@ -757,18 +757,19 @@ const readmeTemplate = (name: string) => `# ${name}
 - 「项目总览」笔记里持续更新整体进展。
 - 每个子节点笔记里记录该方向的探索现状与后续方向。`;
 
-const overviewTemplate = (name: string) => `# ${name} · 项目总览
+const overviewTemplate = (name: string) => `# ${name} · 总览
 
-## 现状
-（项目整体进展、当前阶段）
+> 上方「📊 项目概览」会自动汇总主要方向、探索进度、待解决问题和相关笔记链接。这里写需要人来把握的部分：
 
-## 关键方向与负责 Agent
-| 方向 | 负责 Agent | 状态 |
-| --- | --- | --- |
-|  |  |  |
+## 项目简介
+（这个项目要解决什么、背景与意义）
 
-## 下一步
-- `;
+## 打算用的方法 / 思路
+-
+
+## 阶段小结
+（阶段性发现与判断，可手动维护或让 AI 更新）
+`;
 
 const directionTemplate = (title: string) => `# ${title}
 
