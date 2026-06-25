@@ -64,6 +64,20 @@ npm run dev        # http://localhost:3000
 
 ---
 
+## 🖥️ 桌面客户端（推荐用本地模型时）
+
+做成桌面应用后，调用本地 Ollama / 局域网 IoT 设备不再受浏览器跨域和混合内容限制，离线本地优先。
+
+```bash
+npm install          # 首次会下载 Electron 运行时
+npm run app          # 构建并打开 HiExplore 桌面应用
+npm run app:dist     # 打包安装包（macOS .dmg / Windows .exe / Linux AppImage），产物在 release/
+```
+
+> 开发调试：一个终端 `npm run dev`，另一个终端 `npm run app:dev`（连开发服务器、带热更新）。
+
+---
+
 ## 🏗️ 技术栈
 
 React 19 + TypeScript + Vite + Tailwind + D3，纯前端，零后端依赖，数据保存在浏览器与本地文件。

@@ -1,6 +1,7 @@
 # dependencies & build
 node_modules/
 dist/
+release/
 
 # env（本地私有配置，不入库）
 .env
