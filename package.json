@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "app": "npm run build && electron .",
     "app:dev": "VITE_DEV_SERVER_URL=http://localhost:3000 electron .",
-    "app:dist": "npm run build && electron-builder"
+    "app:dist": "npm run build && electron-builder",
+    "explore": "node server/explorer-daemon.mjs"
   },
   "build": {
     "appId": "com.hiexplore.app",

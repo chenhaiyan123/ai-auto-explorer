@@ -78,6 +78,23 @@ npm run app:dist     # 打包安装包（macOS .dmg / Windows .exe / Linux AppIm
 
 ---
 
+## 🤖 7×24 自主探索守护进程（真正不间断）
+
+网页/桌面里的探索循环只在打开时跑；想让 AI **关掉界面也持续自我研究**，用这个本地常驻守护进程。它会不停地「选前沿 → 拆解 → 执行 → 评审验证 → 沉淀 → 自主提新方向」，带每日预算和限流，产出可在 HiExplore「本地库/导入」或 Obsidian 里打开的 Markdown。
+
+```bash
+cp server/explorer.config.example.json server/explorer.config.json   # 填模型 + 你的研究问题
+npm run explore                          # 开始 7×24 自主探索
+# 或直接传问题： node server/explorer-daemon.mjs "我想长期研究的问题"
+# Ctrl+C 安全停止（自动存盘，下次继续）
+```
+
+产出在 `explorer-vault/`：`project.json`（完整状态）、按项目分文件夹的 `*.md`（每个节点一篇，含自评置信度）、`explorer.log`（运行日志）。低置信度的结论会自动标记「待人工复核」，等你来定夺——这就是「AI 干苦活、人做关键决策」。
+
+> 配套建议：本地用 Ollama 时把 `intervalSec` 调大、模型选轻一点（如 `qwen2.5:7b`/`14b`），35B 偏慢容易超时。
+
+---
+
 ## 🏗️ 技术栈
 
 React 19 + TypeScript + Vite + Tailwind + D3，纯前端，零后端依赖，数据保存在浏览器与本地文件。

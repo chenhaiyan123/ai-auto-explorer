@@ -1,0 +1,18 @@
+{
+  "model": {
+    "baseUrl": "http://localhost:11434/v1",
+    "apiKey": "",
+    "model": "qwen2.5:7b"
+  },
+  "question": "在这里写下你想让 AI 长期自主研究的核心问题",
+  "vaultDir": "./explorer-vault",
+  "budget": {
+    "maxStepsPerDay": 200,
+    "intervalSec": 20,
+    "maxTokensPerCall": 2048,
+    "timeoutSec": 180
+  },
+  "maxDepth": 3,
+  "maxNodes": 60,
+  "minConfidence": 0.5
+}

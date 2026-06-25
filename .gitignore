@@ -20,3 +20,7 @@ release/
 *.zip
 *.log
 .claude/
+
+# 守护进程：本地配置(可能含 Key)与产出数据，不入库
+server/explorer.config.json
+explorer-vault/
