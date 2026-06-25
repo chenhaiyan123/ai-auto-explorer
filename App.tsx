@@ -16,8 +16,14 @@ import { exploreResearchNode, generateResearchReport } from './services/research
 import ResearchReport from './components/ResearchReport';
 import AgentTeamPanel, { AgentTeamState, initialAgentTeamState } from './components/AgentTeamPanel';
 import QuestionEvaluator from './components/QuestionEvaluator';
+import QuestionBoard from './components/QuestionBoard';
+import TeamChat from './components/TeamChat';
 import SettingsModal from './components/SettingsModal';
 import { QVSReport } from './services/qvsService';
+import { resolveNodeByTitle } from './services/noteLinks';
+import { exportVaultZip, importMarkdownFiles, saveVaultToDirectory, supportsDirectoryPicker } from './services/vault';
+import { buildTeamPlan } from './services/teamService';
+import { loadLLMSettings } from './services/llmProvider';
 
 // ========== Agent 类型 ==========
 interface Agent {
@@ -135,7 +141,7 @@ const AIButler: React.FC<{
       const response = await callGemini([
         { role: "system", content: "你是一个擅长深度分析的AI管家，能够洞察用户的真实需求和深层动机。返回纯JSON，不要markdown。" },
         { role: "user", content: analysisPrompt }
-      ], GEMINI_MODEL);
+      ], undefined);
 
       try {
         const cleanJson = response.replace(/```json\n?|\n?```/g, '').trim();
@@ -255,7 +261,7 @@ ${projectInsight ? `
         { role: "system", content: systemPrompt },
         ...conversationHistory,
         { role: "user", content: userMessage }
-      ], GEMINI_MODEL);
+      ], undefined);
 
       // 解析响应中的特殊指令
       let displayResponse = response;
@@ -694,7 +700,7 @@ const DelegationView: React.FC<{ nodeId: string, taskTitle: string }> = ({ nodeI
     const init = async () => {
       setIsTyping(true);
       try {
-        const response = await callGemini([{ role: "system", content: `你是需求对齐AI。任务:"${taskTitle}"。向执行人解释背景目标，确认理解，后续监督进度。` }, { role: "user", content: "请开始讲解。" }], GEMINI_MODEL);
+        const response = await callGemini([{ role: "system", content: `你是需求对齐AI。任务:"${taskTitle}"。向执行人解释背景目标，确认理解，后续监督进度。` }, { role: "user", content: "请开始讲解。" }], undefined);
         setMessages([{ role: 'model', text: response }]);
       } catch (e) { setMessages([{ role: 'model', text: "任务: " + taskTitle }]); }
       finally { setIsTyping(false); }
@@ -710,7 +716,7 @@ const DelegationView: React.FC<{ nodeId: string, taskTitle: string }> = ({ nodeI
     setInput('');
     setIsTyping(true);
     try {
-      const response = await callGemini([{ role: "system", content: `你是进度监督AI。任务:${taskTitle}。引导执行人完成并同步进度。` }, ...newMsgs.map(m => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text }))], GEMINI_MODEL);
+      const response = await callGemini([{ role: "system", content: `你是进度监督AI。任务:${taskTitle}。引导执行人完成并同步进度。` }, ...newMsgs.map(m => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text }))], undefined);
       setMessages([...newMsgs, { role: 'model', text: response }]);
     } finally { setIsTyping(false); }
   };
@@ -729,12 +735,261 @@ const DelegationView: React.FC<{ nodeId: string, taskTitle: string }> = ({ nodeI
   );
 };
 
+// ===== 笔记模板（项目像一个代码仓库：README + 主文件 + 关键方向子节点） =====
+const readmeTemplate = (name: string) => `# ${name}
+
+> 项目说明（README）· 本项目不限于代码，也可以是研究 / 产品 / 其它类型。
+
+## 这个项目要解决什么
+（用一两句话写清核心问题或目标）
+
+## 项目类型
+代码开发 / 研究探索 / 产品 / 其它
+
+## 关键节点（二级，建议 5–8 个）
+把项目分解成 5–8 个重要节点，每个是一篇子笔记，像公司里不同部门分工，可由一个专门的 Agent 负责；节点内部可再建三级详情：
+
+- [[方向一]] — 负责 Agent：
+- [[方向二]] — 负责 Agent：
+
+## 说明
+- 「项目总览」笔记里持续更新整体进展。
+- 每个子节点笔记里记录该方向的探索现状与后续方向。`;
+
+const overviewTemplate = (name: string) => `# ${name} · 项目总览
+
+## 现状
+（项目整体进展、当前阶段）
+
+## 关键方向与负责 Agent
+| 方向 | 负责 Agent | 状态 |
+| --- | --- | --- |
+|  |  |  |
+
+## 下一步
+- `;
+
+const directionTemplate = (title: string) => `# ${title}
+
+## 探索现状
+（这个关键方向目前了解到什么、做到哪一步）
+
+## 后续探索方向
+-
+
+## 负责 Agent
+（指派一个专门的 Agent 负责这个子任务）`;
+
+// 按方向标题启发式推荐一个负责 Agent（AI 团队分工，像公司里不同部门）
+const recommendAgentFor = (title: string): string => {
+  const t = (title || '').toLowerCase();
+  const rules: [RegExp, string][] = [
+    [/代码|开发|程序|算法|系统|架构|工程|api|部署|后端|前端/, '全栈工程师'],
+    [/设计|ui|ux|界面|视觉|交互|原型/, 'UI/UX 设计师'],
+    [/数据|分析|统计|指标|图表|可视化/, '数据分析师'],
+    [/市场|营销|推广|增长|获客|用户运营|渠道/, '增长运营官'],
+    [/研究|文献|调研|综述|理论|学术/, '研究分析员'],
+    [/法律|合规|政策|监管|条款/, '法务顾问'],
+    [/财务|成本|预算|商业|盈利|定价|模式/, '商业分析师'],
+    [/内容|文案|写作|脚本|叙事|品牌/, '内容策划'],
+    [/实验|测试|验证|仿真|物理|硬件|设备/, '实验工程师'],
+    [/安全|风险|审计|隐私/, '安全审计员'],
+  ];
+  for (const [re, role] of rules) if (re.test(t)) return role;
+  return '通用研究员';
+};
+
+// 项目=文件夹，里面是 README / 项目总览 / 关键方向子节点
+const NotesPanel: React.FC<{
+  projects: Project[];
+  currentProjectId: string | null;
+  selectedNodeId: string | null;
+  search: string;
+  onSearch: (s: string) => void;
+  onOpenNode: (projectId: string, nodeId: string) => void;
+  onCreateProject: () => void;
+  onCreateDirection: (projectId: string, title?: string) => void;
+  onAddChild: (projectId: string, parentId: string) => void;
+  onBuildTeam: (projectId: string) => void;
+  onCleanup: (projectId: string) => void;
+  onImport?: () => void;
+  onExportVault?: () => void;
+  onSaveToFolder?: () => void;
+}> = ({ projects, currentProjectId, selectedNodeId, search, onSearch, onOpenNode, onCreateProject, onCreateDirection, onAddChild, onBuildTeam, onCleanup, onImport, onExportVault, onSaveToFolder }) => {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set()); // 节点子项默认收起，只有手动展开的才显示子节点
+  const toggleNode = (id: string) => setExpandedNodes(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const q = search.trim().toLowerCase();
+
+  // 节点排序：README → 总览 → 子节点（按方向/链接热度）
+  const typeRank = (n: ProblemNode) => n.noteType === 'readme' ? 0 : n.noteType === 'overview' ? 1 : 2;
+  const sortNotes = (list: ProblemNode[]) => [...list].sort((a, b) =>
+    typeRank(a) - typeRank(b) || (b.noteUpdatedAt || 0) - (a.noteUpdatedAt || 0));
+
+  const allNodes = useMemo(() => projects.flatMap(p => (p.nodes || []).map(n => ({ n, p }))), [projects]);
+  const searchResults = useMemo(() => {
+    if (!q) return [] as { n: ProblemNode; p: Project }[];
+    return allNodes.filter(({ n, p }) =>
+      n.title.toLowerCase().includes(q) ||
+      (n.fullNote || '').toLowerCase().includes(q) ||
+      p.name.toLowerCase().includes(q) ||
+      (n.tags || []).some(t => t.toLowerCase().includes(q)));
+  }, [allNodes, q]);
+
+  const toggleProject = (id: string) => setCollapsed(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  const noteIcon = (n: ProblemNode) => n.noteType === 'readme' ? '📘' : n.noteType === 'overview' ? '🏠' : '📄';
+
+  // 一行笔记。childCount>0 时显示折叠箭头（默认收起）。canAddChild: 二级节点可加三级详情。
+  const NoteRow = (projectId: string, n: ProblemNode, depth: number, opts?: { showProject?: string; canAddChild?: boolean; childCount?: number; expanded?: boolean }) => (
+    <div key={n.id} className="flex items-center group/row" style={{ paddingLeft: 16 + depth * 16 }}>
+      {opts?.childCount ? (
+        <button onClick={() => toggleNode(n.id)} className="px-1 py-1.5 text-slate-500 hover:text-slate-300 flex-shrink-0" title={opts.expanded ? '收起' : `展开 ${opts.childCount} 个子项`}>
+          <span className={`text-[9px] inline-block transition-transform ${opts.expanded ? 'rotate-90' : ''}`}>▶</span>
+        </button>
+      ) : <span className="w-[16px] flex-shrink-0" />}
+      <button
+        onClick={() => onOpenNode(projectId, n.id)}
+        className={`flex-1 text-left pr-2 py-1.5 rounded-lg border transition-colors min-w-0 ${
+          selectedNodeId === n.id ? 'bg-purple-600/15 border-purple-500/50' : 'bg-transparent border-transparent hover:bg-slate-800 hover:border-slate-700'
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[11px]">{noteIcon(n)}</span>
+            <span className={`text-[11px] font-semibold truncate ${selectedNodeId === n.id ? 'text-purple-200' : 'text-slate-200'}`}>{n.title || '未命名'}</span>
+            {!opts?.expanded && opts?.childCount ? <span className="flex-shrink-0 text-[9px] text-slate-600">{opts.childCount}</span> : null}
+          </span>
+          {n.assignedAgent && <span className="flex-shrink-0 text-[8px] text-blue-400 bg-blue-900/30 border border-blue-500/30 rounded-full px-1.5 py-0.5 truncate max-w-[72px]">🤖 {n.assignedAgent}</span>}
+        </div>
+        {opts?.showProject && <div className="text-[9px] text-slate-600 truncate mt-0.5 ml-5">📁 {opts.showProject}</div>}
+      </button>
+      {opts?.canAddChild && <button onClick={() => onAddChild(projectId, n.id)} className="opacity-0 group-hover/row:opacity-100 px-1.5 text-slate-500 hover:text-emerald-400 text-sm flex-shrink-0" title="在这个节点下加一条三级详情">＋</button>}
+    </div>
+  );
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="p-3 border-b border-slate-800 space-y-2">
+        <input
+          value={search}
+          onChange={e => onSearch(e.target.value)}
+          placeholder="🔍 搜索 / 新建项目名…"
+          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-[11px] text-slate-200 outline-none focus:ring-1 focus:ring-purple-500"
+        />
+        <button onClick={() => onCreateProject()} className="w-full py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-[11px] font-bold transition-colors">
+          ＋ 新建项目{q ? `「${search.trim()}」` : ''}
+        </button>
+        {(onImport || onExportVault || onSaveToFolder) && (
+          <div className="flex gap-1">
+            {onImport && <button onClick={onImport} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title="导入 .md 文件">⬆ 导入</button>}
+            {onExportVault && <button onClick={onExportVault} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title="导出当前项目为 Markdown(.zip，项目即文件夹)">⬇ 导出</button>}
+            {onSaveToFolder && <button onClick={onSaveToFolder} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title="保存到本地文件夹(Vault)">💾 本地库</button>}
+          </div>
+        )}
+        <div className="text-[9px] text-slate-600 flex justify-between">
+          <span>{projects.length} 个项目</span>
+          <span>项目 › 节点 › 详情（3 级）</span>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto scroll-hide p-2 space-y-0.5">
+        {q ? (
+          searchResults.length === 0
+            ? <div className="text-center text-[11px] text-slate-600 py-8">没有匹配的笔记</div>
+            : searchResults.map(({ n, p }) => NoteRow(p.id, n, 0, { showProject: p.name }))
+        ) : projects.length === 0 ? (
+          <div className="text-center text-[11px] text-slate-600 py-8">还没有项目，点上方新建</div>
+        ) : (
+          projects.map(p => {
+            const isOpen = !collapsed.has(p.id);
+            const pn = p.nodes || [];
+            const byId = new Map(pn.map(n => [n.id, n]));
+            const isDir = (n?: ProblemNode) => !!n && (n.noteType === 'direction' || !n.noteType);
+            // 结构父级 = 依赖里那个「方向」节点（README/总览 不作为嵌套父级）
+            const parentOf = (n: ProblemNode) => (n.dependencies || []).map(d => byId.get(d)).find(pp => isDir(pp));
+            const specials = pn.filter(n => n.noteType === 'readme' || n.noteType === 'overview');
+            const level2 = sortNotes(pn.filter(n => isDir(n) && !parentOf(n)));
+            const childrenOf = (id: string) => sortNotes(pn.filter(n => isDir(n) && parentOf(n)?.id === id));
+            // 二级节点可按 folder 字段归到「工作板块」文件夹下（按成员分工）
+            const fname = (n: ProblemNode) => (n.folder || '').trim();
+            const grouped = new Map<string, ProblemNode[]>();
+            const ungrouped: ProblemNode[] = [];
+            for (const n of level2) { const f = fname(n); if (f) { if (!grouped.has(f)) grouped.set(f, []); grouped.get(f)!.push(n); } else ungrouped.push(n); }
+            // 递归渲染节点（子项默认收起；seen 防止依赖成环时无限递归）
+            const renderNode = (n: ProblemNode, depth: number, seen: Set<string>): React.ReactNode => {
+              if (seen.has(n.id)) return null;
+              const nextSeen = new Set(seen); nextSeen.add(n.id);
+              const kids = childrenOf(n.id).filter(c => !nextSeen.has(c.id));
+              const expanded = expandedNodes.has(n.id);
+              return (
+                <div key={n.id}>
+                  {NoteRow(p.id, n, depth, { canAddChild: !parentOf(n), childCount: kids.length, expanded })}
+                  {expanded && kids.map(c => renderNode(c, Math.min(depth + 1, 3), nextSeen))}
+                </div>
+              );
+            };
+            return (
+              <div key={p.id}>
+                <div className={`flex items-center group rounded-lg ${p.id === currentProjectId ? 'bg-slate-800/40' : ''}`}>
+                  <button onClick={() => toggleProject(p.id)} className="flex-1 flex items-center gap-1.5 py-2 px-1 text-left min-w-0">
+                    <span className={`text-slate-500 text-[9px] transition-transform ${isOpen ? 'rotate-90' : ''}`}>▶</span>
+                    <span className="text-[12px]">{isOpen ? '📂' : '📁'}</span>
+                    <span className={`text-[11px] font-bold truncate ${p.id === currentProjectId ? 'text-purple-300' : 'text-slate-200'}`}>{p.name}</span>
+                    <span className="text-[9px] text-slate-600">{level2.length}</span>
+                  </button>
+                  <button onClick={() => onCleanup(p.id)} className="opacity-0 group-hover:opacity-100 px-1 text-slate-500 hover:text-amber-400 text-[11px]" title={`清理「${p.name}」里待探索且无内容的子问题`}>🧹</button>
+                  <button onClick={() => onBuildTeam(p.id)} className="opacity-0 group-hover:opacity-100 px-1 text-slate-500 hover:text-blue-400 text-[11px]" title={`AI 组建团队：读懂「${p.name}」目标→拆解 5–8 个关键节点→各配一名负责 Agent`}>🤝</button>
+                  <button onClick={() => onCreateDirection(p.id)} className="opacity-0 group-hover:opacity-100 px-1.5 text-slate-500 hover:text-emerald-400 text-sm" title={`在「${p.name}」里新增一个关键节点（二级）`}>＋</button>
+                </div>
+                {isOpen && (
+                  <div>
+                    {specials.map(n => NoteRow(p.id, n, 0))}
+                    {Array.from(grouped.entries()).map(([fn, fnodes]) => {
+                      const fkey = `${p.id}::f::${fn}`;
+                      const fopen = !collapsed.has(fkey);
+                      const agent = fnodes.find(n => n.assignedAgent)?.assignedAgent;
+                      return (
+                        <div key={fkey}>
+                          <button onClick={() => toggleProject(fkey)} style={{ paddingLeft: 14 }} className="w-full flex items-center gap-1.5 py-1.5 text-left min-w-0 hover:bg-slate-800/40 rounded-lg">
+                            <span className={`text-slate-500 text-[9px] transition-transform ${fopen ? 'rotate-90' : ''}`}>▶</span>
+                            <span className="text-[11px]">{fopen ? '📂' : '📁'}</span>
+                            <span className="text-[11px] font-bold text-slate-300 truncate">{fn}</span>
+                            {agent && <span className="flex-shrink-0 text-[8px] text-blue-400 bg-blue-900/30 border border-blue-500/30 rounded-full px-1.5 py-0.5 truncate max-w-[84px]">🤖 {agent}</span>}
+                            <span className="text-[9px] text-slate-600">{fnodes.length}</span>
+                          </button>
+                          {fopen && sortNotes(fnodes).map(n => renderNode(n, 1, new Set<string>()))}
+                        </div>
+                      );
+                    })}
+                    {ungrouped.map(n => renderNode(n, 0, new Set<string>()))}
+                    {pn.length === 0 && <div className="text-[9px] text-slate-600 italic pl-7 py-1">空项目</div>}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+};
+
 // --- 主应用 ---
 const App: React.FC = () => {
   const [user, setUser] = useState(auth.getUser());
   const [currentHash, setCurrentHash] = useState(window.location.hash);
   useEffect(() => { const h = () => setCurrentHash(window.location.hash); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
   const routeInfo = useMemo(() => { if (currentHash.startsWith('#/delegate/')) { const parts = currentHash.split('/'); return { type: 'delegate', nodeId: parts[2]?.split('?')[0], taskTitle: new URLSearchParams(currentHash.split('?')[1] || '').get('task') || '未知任务' }; } return { type: 'main' }; }, [currentHash]);
+
+  // 主题：白天 / 深色
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    try { return (localStorage.getItem('aae-theme') as 'dark' | 'light') || 'dark'; } catch { return 'dark'; }
+  });
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'light') root.classList.add('light'); else root.classList.remove('light');
+    try { localStorage.setItem('aae-theme', theme); } catch {}
+  }, [theme]);
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [loginEmail, setLoginEmail] = useState('');
@@ -784,8 +1039,16 @@ const App: React.FC = () => {
   const [notesPanelMode, setNotesPanelMode] = useState<number>(1);
   const [sidebarWidth, setSidebarWidth] = useState<number>(320); // 可调节的侧边栏宽度
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [sidebarActiveTab, setSidebarActiveTab] = useState<'butler' | 'agents' | 'research'>('butler');
+  const [sidebarActiveTab, setSidebarActiveTab] = useState<'butler' | 'agents' | 'research' | 'notes'>('notes');
+  const [notesSearch, setNotesSearch] = useState('');
+  const [showGraphModal, setShowGraphModal] = useState(false); // 图谱弹出层
+  const [showQuestionBoard, setShowQuestionBoard] = useState(false); // 问题广场
+  const [teamBusy, setTeamBusy] = useState(false); // AI 组队进行中
+  const [activeModel, setActiveModel] = useState<string>(() => { try { return loadLLMSettings().model || ''; } catch { return ''; } });
+  const [rightChatOpen, setRightChatOpen] = useState(true);     // 右侧 AI 对话栏
+  const [rightChatWidth, setRightChatWidth] = useState(360);
   const [nodes, setNodes] = useState<ProblemNode[]>([]);
+  const pendingSelectRef = useRef<string | null>(null); // 切换项目后要自动选中的节点
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [isLooping, setIsLooping] = useState(false);
@@ -913,13 +1176,15 @@ const App: React.FC = () => {
   useEffect(() => { if (user) { monitor.incrementSession(); const i = setInterval(() => monitor.updateHeartbeat(), 10000); return () => clearInterval(i); } }, [user]);
 
   const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId) || null, [projects, currentProjectId]);
+  // 项目视图：当前项目用实时 nodes，其它项目用各自保存的 nodes（供左侧项目树使用）
+  const projectsView = useMemo(() => projects.map(p => p.id === currentProjectId ? { ...p, nodes } : p), [projects, currentProjectId, nodes]);
   const selectedNode = useMemo(() => nodes.find(n => n.id === selectedNodeId) || null, [nodes, selectedNodeId]);
   const decisionNode = useMemo(() => decision ? nodes.find(n => n.id === decision.nodeId) || null : null, [decision, nodes]);
   const filteredNodes = useMemo(() => { if (!focusedNodeId) return nodes; const vis = new Set<string>([focusedNodeId]); const findA = (id: string) => { const n = nodes.find(x => x.id === id); if (n) n.dependencies.forEach(d => { if (!vis.has(d)) { vis.add(d); findA(d); } }); }; const findD = (id: string) => { nodes.forEach(n => { if (n.dependencies.includes(id) && !vis.has(n.id)) { vis.add(n.id); findD(n.id); } }); }; findA(focusedNodeId); findD(focusedNodeId); return nodes.filter(n => vis.has(n.id)); }, [nodes, focusedNodeId]);
   const criticalNodes = useMemo(() => nodes.filter(n => n.isCritical), [nodes]);
 
   useEffect(() => { if (user && projects.length > 0) localStorage.setItem(`exploration_projects_${user.username}`, JSON.stringify(projects)); }, [projects, user?.username]);
-  useEffect(() => { const p = projects.find(x => x.id === currentProjectId); if (p) { setSelectedNodeId(null); setFocusedNodeId(null); setDecision(null); setNodes(p.nodes || []); setIsLooping(false); setKnowledgeCards((p as any).knowledgeCards || []); setResearchFindings((p as any).researchFindings || []); setResearchReport(null); setAgentTeamState((p as any).agentTeamState || initialAgentTeamState); } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id); }, [currentProjectId, projects.length]);
+  useEffect(() => { const p = projects.find(x => x.id === currentProjectId); if (p) { setSelectedNodeId(pendingSelectRef.current); pendingSelectRef.current = null; setFocusedNodeId(null); setDecision(null); setNodes(p.nodes || []); setIsLooping(false); setKnowledgeCards((p as any).knowledgeCards || []); setResearchFindings((p as any).researchFindings || []); setResearchReport(null); setAgentTeamState((p as any).agentTeamState || initialAgentTeamState); } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id); }, [currentProjectId, projects.length]);
   useEffect(() => { if (currentProjectId && nodes.length > 0) setProjects(prev => { const i = prev.findIndex(p => p.id === currentProjectId); if (i === -1 || prev[i].nodes === nodes) return prev; const n = [...prev]; n[i] = { ...n[i], nodes }; return n; }); }, [nodes, currentProjectId]);
   useEffect(() => { if (currentProjectId && currentProject?.explorationMode === 'research') setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, knowledgeCards, researchFindings } as any : p)); }, [knowledgeCards, researchFindings, currentProjectId]);
   
@@ -1115,6 +1380,186 @@ const App: React.FC = () => {
 
   const handleDecisionChoice = (action: 'continue' | 'add_subproblem' | 'terminate', subTitle?: string) => { if (!decision) return; if (action === 'terminate') updateNode(decision.nodeId, { status: NodeStatus.INVALID, pendingDecision: undefined }); else if (action === 'add_subproblem' && subTitle) addNode(subTitle, [decision.nodeId]); else if (action === 'continue') updateNode(decision.nodeId, { status: NodeStatus.SOLVED, pendingDecision: undefined }); setDecision(null); setIsLooping(true); };
   const handleNodeClick = (node: ProblemNode) => { setSelectedNodeId(node.id); if (node.status === NodeStatus.NEEDS_REVIEW && node.pendingDecision) setDecision(node.pendingDecision); };
+
+  // 点击笔记里的 [[标题]]：已存在则跳转，不存在则创建一篇新笔记并关联（Obsidian 行为）
+  const handleWikiLink = useCallback((target: string, exists: boolean, fromNode: ProblemNode) => {
+    const found = resolveNodeByTitle(nodes, target);
+    if (found) { setSelectedNodeId(found.id); return; }
+    // 创建新笔记：以来源节点为父，正文里反向链接回来源，形成双向连接
+    const n: ProblemNode = {
+      id: uuidv4(), title: target.trim(), status: NodeStatus.UNEXPLORED, confidence: 0,
+      dependencies: fromNode ? [fromNode.id] : [], notes: '', chatHistory: [], agentResults: [],
+      fullNote: fromNode ? `> 由 [[${fromNode.title}]] 链接创建\n\n` : '', noteUpdatedAt: Date.now()
+    };
+    setNodes(prev => [...prev, n]);
+    setSelectedNodeId(n.id);
+  }, [nodes]);
+
+  // 新建项目（一个项目=一个文件夹，像代码仓库：自带 README + 项目总览主文件）
+  const handleCreateProject = useCallback((presetName?: string) => {
+    const name = (presetName || notesSearch || '').trim().slice(0, 40) || '新项目';
+    const projId = uuidv4();
+    const readmeId = uuidv4();
+    const overviewId = uuidv4();
+    const now = Date.now();
+    const readme: ProblemNode = { id: readmeId, title: 'README', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], noteType: 'readme', fullNote: readmeTemplate(name), noteUpdatedAt: now };
+    const overview: ProblemNode = { id: overviewId, title: '总览', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], noteType: 'overview', fullNote: overviewTemplate(name), noteUpdatedAt: now };
+    const p: Project = { id: projId, name, metaProblem: name, createdAt: now, explorationMode: 'research', nodes: [readme, overview] };
+    setProjects(prev => [...prev, p]);
+    pendingSelectRef.current = overviewId; // 切换后自动打开「项目总览」
+    setCurrentProjectId(projId);
+    setNotesSearch('');
+  }, [notesSearch]);
+
+  // 在某个项目里新增一个关键方向（子节点，带模板）
+  const handleCreateDirection = useCallback((projectId: string, title?: string) => {
+    const t = (title || (notesSearch || '').trim() || '新方向');
+    const id = uuidv4();
+    const dir: ProblemNode = { id, title: t, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(t), noteUpdatedAt: Date.now() };
+    if (projectId === currentProjectId) {
+      setNodes(prev => [...prev, dir]);
+      setSelectedNodeId(id);
+    } else {
+      setProjects(prev => prev.map(p => p.id === projectId ? { ...p, nodes: [...(p.nodes || []), dir] } : p));
+      pendingSelectRef.current = id;
+      setCurrentProjectId(projectId);
+    }
+    setNotesSearch('');
+  }, [notesSearch, currentProjectId]);
+
+  // 清理「待探索且无内容」的子问题（自动探索产生的一堆未完成空标题）
+  const handleCleanupProject = useCallback((projectId: string) => {
+    const proj = projects.find(p => p.id === projectId);
+    if (!proj) return;
+    const src = projectId === currentProjectId ? nodes : (proj.nodes || []);
+    const hasChild = (id: string) => src.some(n => (n.dependencies || []).includes(id));
+    const isJunk = (n: ProblemNode) =>
+      (n.noteType === 'direction' || !n.noteType) &&
+      n.status === NodeStatus.UNEXPLORED &&
+      !hasChild(n.id) &&
+      !(n.agentResults && n.agentResults.length) &&
+      !(n.notes && n.notes.trim()) &&
+      (!n.fullNote || n.fullNote.includes('（待探索）') || n.fullNote.trim().length < 30);
+    const junkIds = new Set(src.filter(isJunk).map(n => n.id));
+    if (junkIds.size === 0) { alert('没有需要清理的「待探索且无内容」子问题。'); return; }
+    if (!window.confirm(`将删除 ${junkIds.size} 个「待探索且无内容」的子问题（不影响有内容/已完成的节点），确定吗？`)) return;
+    const clean = (list: ProblemNode[]) => list.filter(n => !junkIds.has(n.id)).map(n => ({ ...n, dependencies: (n.dependencies || []).filter(d => !junkIds.has(d)) }));
+    if (projectId === currentProjectId) { setNodes(prev => clean(prev)); if (selectedNodeId && junkIds.has(selectedNodeId)) setSelectedNodeId(null); }
+    else setProjects(prev => prev.map(p => p.id === projectId ? { ...p, nodes: clean(p.nodes || []) } : p));
+  }, [projects, nodes, currentProjectId, selectedNodeId]);
+
+  // 在某个节点下新增三级详情（子节点）
+  const handleCreateChild = useCallback((projectId: string, parentId: string) => {
+    const id = uuidv4();
+    const child: ProblemNode = { id, title: '新详情', status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate('新详情'), noteUpdatedAt: Date.now() };
+    if (projectId === currentProjectId) { setNodes(prev => [...prev, child]); setSelectedNodeId(id); }
+    else { setProjects(prev => prev.map(p => p.id === projectId ? { ...p, nodes: [...(p.nodes || []), child] } : p)); pendingSelectRef.current = id; setCurrentProjectId(projectId); }
+  }, [currentProjectId]);
+
+  // 打开某个节点（必要时先切换到它所属的项目）
+  const openNode = useCallback((projectId: string, nodeId: string) => {
+    if (projectId === currentProjectId) { setSelectedNodeId(nodeId); }
+    else { pendingSelectRef.current = nodeId; setCurrentProjectId(projectId); }
+  }, [currentProjectId]);
+
+  // 兜底：纯启发式给现有方向指派 Agent（无模型时用）
+  const assignAgentsHeuristic = useCallback((projectId: string) => {
+    const apply = (list: ProblemNode[]) => list.map(n =>
+      (n.noteType === 'direction' || !n.noteType) && !n.assignedAgent
+        ? { ...n, assignedAgent: recommendAgentFor(n.title) } : n);
+    const proj = projects.find(p => p.id === projectId);
+    const liveNodes = projectId === currentProjectId ? nodes : (proj?.nodes || []);
+    const targets = liveNodes.filter(n => (n.noteType === 'direction' || !n.noteType) && !n.assignedAgent).length;
+    if (targets === 0) { alert('这个项目还没有「未指派」的关键方向，也没配置模型。先在项目里添加几个方向（子节点）。'); return; }
+    if (projectId === currentProjectId) setNodes(prev => apply(prev));
+    else setProjects(prev => prev.map(p => p.id === projectId ? { ...p, nodes: apply(p.nodes || []) } : p));
+    alert(`已为 ${targets} 个方向各指派一个负责 Agent（本地启发式）。配置模型后可用 AI 智能拆解+组队。`);
+  }, [projects, nodes, currentProjectId]);
+
+  // AI 组建团队：读懂目标 → 拆解 5–10 个关键方向 → 各配负责 Agent → 分层(方向挂在项目总览下)
+  const handleBuildTeam = useCallback(async (projectId: string) => {
+    if (teamBusy) return;
+    const proj = projects.find(p => p.id === projectId);
+    if (!proj) return;
+    const srcNodes = projectId === currentProjectId ? nodes : (proj.nodes || []);
+    const overview = srcNodes.find(n => n.noteType === 'overview');
+    const readme = srcNodes.find(n => n.noteType === 'readme');
+    const goal = proj.metaProblem || proj.name;
+    const context = `${overview?.fullNote || ''}\n${readme?.fullNote || ''}`.trim();
+    setTeamBusy(true);
+    try {
+      const plan = await buildTeamPlan(goal, context);
+      const overviewId = overview?.id;
+      const norm = (s: string) => (s || '').trim().replace(/[？?]+$/u, '').toLowerCase();
+      const now = Date.now();
+      // 生成「总览」主文件内容：项目目标 + 团队分工 + 指向各关键节点的链接
+      const buildOverviewDoc = (): string => {
+        const byArea = new Map<string, typeof plan.directions>();
+        for (const m of plan.directions) { const a = m.area || '未分组'; if (!byArea.has(a)) byArea.set(a, [] as any); (byArea.get(a) as any).push(m); }
+        let doc = `# ${proj.name} · 总览\n\n> 目标：${goal}\n> 总协调：${plan.lead.role}（${plan.lead.duty}）\n\n## 关键节点与分工\n按工作板块（文件夹）组织，点链接进入对应笔记：\n`;
+        for (const [area, ms] of byArea) {
+          doc += `\n### 📁 ${area}\n`;
+          for (const m of ms) doc += `- [[${m.title}]] — 🤖 ${m.agent}｜${m.duty}\n`;
+        }
+        doc += `\n## 相关链接\n- 项目说明：[[README]]\n${plan.directions.map(m => `- [[${m.title}]]`).join('\n')}\n`;
+        return doc;
+      };
+      const apply = (list: ProblemNode[]): ProblemNode[] => {
+        const next = list.map(n => n.id === overviewId ? { ...n, assignedAgent: plan.lead.role, fullNote: buildOverviewDoc(), noteUpdatedAt: now } : n);
+        for (const m of plan.directions) {
+          const existing = next.find(n => norm(n.title) === norm(m.title));
+          if (existing) {
+            const idx = next.indexOf(existing);
+            next[idx] = { ...existing, assignedAgent: existing.assignedAgent || m.agent, folder: existing.folder || m.area || undefined, dependencies: existing.dependencies?.length ? existing.dependencies : (overviewId ? [overviewId] : []) };
+          } else {
+            next.push({ id: uuidv4(), title: m.title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: overviewId ? [overviewId] : [], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', assignedAgent: m.agent, folder: m.area || undefined, fullNote: `# ${m.title}\n\n> 工作板块：${m.area || '未分组'} ｜ 负责 Agent：${m.agent}\n> 职责：${m.duty}\n\n## 探索现状\n（待探索）\n\n## 后续探索方向\n- `, noteUpdatedAt: now });
+          }
+        }
+        return next;
+      };
+      if (projectId === currentProjectId) setNodes(prev => apply(prev));
+      else setProjects(prev => prev.map(p => p.id === projectId ? { ...p, nodes: apply(p.nodes || []) } : p));
+      setTeamBusy(false);
+      const goExplore = window.confirm(`✅ AI 已组建团队：\n· 总协调：${plan.lead.role}\n· ${plan.directions.length} 个关键方向，各配一名 Agent\n\n现在让团队开始自动探索各自方向吗？`);
+      if (goExplore) {
+        if (projectId !== currentProjectId) { pendingSelectRef.current = overview?.id || null; setCurrentProjectId(projectId); }
+        setTimeout(() => setIsLooping(true), 300);
+      }
+    } catch (e: any) {
+      setTeamBusy(false);
+      if (window.confirm('AI 组队失败（可能未配置模型）：' + (e?.message || e) + '\n\n是否改用本地启发式，给现有方向指派 Agent？')) {
+        assignAgentsHeuristic(projectId);
+      }
+    }
+  }, [teamBusy, projects, nodes, currentProjectId, assignAgentsHeuristic]);
+
+  // 导入 .md
+  const handleImportMd = useCallback(async () => {
+    const parsed = await importMarkdownFiles();
+    if (!parsed.length) return;
+    const newNodes: ProblemNode[] = parsed.map(p => ({
+      id: uuidv4(), title: p.title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [],
+      notes: '', chatHistory: [], agentResults: [], folder: p.folder, tags: p.tags, fullNote: p.body, noteUpdatedAt: Date.now()
+    }));
+    setNodes(prev => [...prev, ...newNodes]);
+    if (newNodes[0]) setSelectedNodeId(newNodes[0].id);
+    alert(`已导入 ${newNodes.length} 篇笔记。`);
+  }, []);
+
+  // 导出整库 zip
+  const handleExportVault = useCallback(() => {
+    if (!nodes.length) { alert('当前没有笔记可导出。'); return; }
+    // 文件夹代表一个项目：以项目名作为顶层文件夹，子节点作为里面的 .md
+    exportVaultZip(nodes, (currentProject?.name || 'AI-Explorer') + '-Vault', currentProject?.name);
+  }, [nodes, currentProject]);
+
+  // 保存到本地文件夹（File System Access）
+  const handleSaveToFolder = useCallback(async () => {
+    if (!supportsDirectoryPicker()) { alert('当前浏览器不支持直接保存到本地文件夹，请用「导出」下载 .zip（推荐 Chrome / Edge）。'); return; }
+    if (!nodes.length) { alert('当前没有笔记可保存。'); return; }
+    try { const count = await saveVaultToDirectory(nodes); alert(`已保存 ${count} 篇 .md 到所选文件夹。`); }
+    catch (e: any) { if (e?.name !== 'AbortError') alert('保存失败：' + (e?.message || e)); }
+  }, [nodes]);
   const handleDeleteNode = useCallback((id: string) => { setNodes(prev => prev.filter(n => n.id !== id).map(n => ({ ...n, dependencies: n.dependencies.filter(d => d !== id) }))); if (selectedNodeId === id) setSelectedNodeId(null); if (focusedNodeId === id) setFocusedNodeId(null); if (decision?.nodeId === id) setDecision(null); }, [selectedNodeId, focusedNodeId, decision]);
   const handleGenerateReport = async () => { if (!currentProject || isGeneratingReport) return; setIsGeneratingReport(true); try { setResearchReport(await generateResearchReport(currentProject.metaProblem, nodes, knowledgeCards)); } finally { setIsGeneratingReport(false); } };
 
@@ -1125,8 +1570,8 @@ const App: React.FC = () => {
       <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-emerald-600"></div>
         <div className="text-center mb-6">
-          <div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">A</div>
-          <h2 className="text-xl sm:text-2xl font-bold">AI 自动探索助手</h2>
+          <div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">🧭</div>
+          <h2 className="text-xl sm:text-2xl font-bold">HiExplore · AI 自动探究平台</h2>
           <p className="text-slate-500 text-xs sm:text-sm mt-2">{isLoginAsAdmin ? '管理员验证' : '选择登录方式'}</p>
         </div>
         
@@ -1277,6 +1722,36 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {/* 当前模型：一眼确认用的是哪个模型，点击打开设置 */}
+          <button
+            onClick={() => setShowSettingsModal(true)}
+            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-emerald-400 max-w-[180px]"
+            title="当前使用的模型（点击修改）"
+          >
+            <span>🧠</span>
+            <span className="truncate">{activeModel || '未配置模型'}</span>
+          </button>
+
+          {/* 问题广场：筛选有价值的问题 */}
+          <button
+            onClick={() => setShowQuestionBoard(true)}
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-amber-400 flex items-center gap-1"
+            title="问题广场：筛选有价值的问题"
+          >🔥 问题</button>
+
+          {/* 主题切换：白天 / 深色 */}
+          <button
+            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+            className="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
+            title={theme === 'dark' ? '切换到白天模式' : '切换到深色模式'}
+          >
+            {theme === 'dark' ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-500"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>
+            )}
+          </button>
+
           {/* 设置：模型接入 / IoT 设备 */}
           <button
             onClick={() => setShowSettingsModal(true)}
@@ -1408,12 +1883,12 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="flex border-b border-slate-800">
-            <button onClick={() => setSidebarActiveTab('butler')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${sidebarActiveTab === 'butler' ? 'bg-blue-600/10 text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}><span>🏠</span> AI管家</button>
-            <button onClick={() => setSidebarActiveTab('agents')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${sidebarActiveTab === 'agents' ? 'bg-violet-600/10 text-violet-400 border-b-2 border-violet-500' : 'text-slate-500 hover:text-slate-300'}`}><span>🤖</span> Agent团队</button>
-            <button onClick={() => setSidebarActiveTab('research')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 ${sidebarActiveTab === 'research' ? 'bg-emerald-600/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}><span>📊</span> 研究</button>
+            <button onClick={() => setSidebarActiveTab('notes')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${sidebarActiveTab === 'notes' ? 'bg-purple-600/10 text-purple-400 border-b-2 border-purple-500' : 'text-slate-500 hover:text-slate-300'}`}><span>📝</span> 笔记</button>
+            <button onClick={() => setSidebarActiveTab('agents')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${sidebarActiveTab === 'agents' ? 'bg-violet-600/10 text-violet-400 border-b-2 border-violet-500' : 'text-slate-500 hover:text-slate-300'}`}><span>🤖</span> 团队</button>
+            <button onClick={() => setSidebarActiveTab('research')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${sidebarActiveTab === 'research' ? 'bg-emerald-600/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}><span>📊</span> 研究</button>
           </div>
           <div className="flex-1 overflow-hidden">
-            {sidebarActiveTab === 'butler' && <AIButler project={currentProject} nodes={nodes} onAddNode={addNode} onUpdateNode={updateNode} onStartExploration={() => setIsLooping(true)} quotedNode={quotedNodeForButler} onClearQuotedNode={() => setQuotedNodeForButler(null)} chatHistory={butlerChatHistory} onUpdateChatHistory={handleUpdateButlerChat} />}
+            {sidebarActiveTab === 'notes' && <NotesPanel projects={projectsView} currentProjectId={currentProjectId} selectedNodeId={selectedNodeId} search={notesSearch} onSearch={setNotesSearch} onOpenNode={openNode} onCreateProject={handleCreateProject} onCreateDirection={handleCreateDirection} onAddChild={handleCreateChild} onBuildTeam={handleBuildTeam} onCleanup={handleCleanupProject} onImport={handleImportMd} onExportVault={handleExportVault} onSaveToFolder={handleSaveToFolder} />}
             {sidebarActiveTab === 'agents' && <AgentTeamPanel projectId={currentProjectId || ''} projectGoal={currentProject?.metaProblem || ''} nodes={nodes} state={agentTeamState} onStateChange={setAgentTeamState} onTeamOutput={(output) => { if (currentProjectId) setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, agentOutput: output } : p)); }} />}
             {sidebarActiveTab === 'research' && <SimpleResearchPanel project={currentProject} nodes={nodes} knowledgeCards={knowledgeCards} findings={researchFindings} criticalNodes={criticalNodes} isLooping={isLooping} isGeneratingReport={isGeneratingReport} onNodeSelect={setSelectedNodeId} onStartExploration={() => setIsLooping(true)} onStopExploration={() => setIsLooping(false)} onGenerateReport={handleGenerateReport} />}
           </div>
@@ -1428,16 +1903,67 @@ const App: React.FC = () => {
         )}
         
         {notesPanelMode === 0 && <div className="w-8 h-full bg-slate-900 border-r border-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNotesPanelMode(1)}><div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">展开面板</div></div>}
-        <div className="flex-1 relative z-0"><GraphVisualization nodes={filteredNodes} onNodeClick={handleNodeClick} onNodeContextMenu={(node, x, y) => setContextMenu({ x, y, nodeId: node.id })} onToggleCollapse={(nodeId) => { const n = nodes.find(x => x.id === nodeId); if (n) updateNode(n.id, { isCollapsed: !n.isCollapsed }); }} onBatchUpdateNodes={(updates) => { setNodes(prev => prev.map(n => { const u = updates.find(x => x.id === n.id); return u ? { ...n, ...u.changes } : n; })); }} /></div>
-        <div className={`fixed inset-0 z-40 md:relative md:inset-auto md:z-20 transition-all duration-300 ${selectedNodeId ? 'translate-x-0 opacity-100 md:w-96' : 'translate-x-full opacity-0 md:w-0 overflow-hidden'}`} style={{ width: selectedNodeId && window.innerWidth >= 768 ? (isDetailsWide ? '600px' : '384px') : undefined }}>
-          <div className="absolute inset-0 bg-black/60 md:hidden" onClick={() => setSelectedNodeId(null)}></div>
-          <div className="relative h-full ml-auto"><NodeDetails node={selectedNode} isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => addNode(title, [parentId])} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} /></div>
+
+        {/* ===== 中间：笔记内容（Obsidian 主编辑区） ===== */}
+        <div className="flex-1 relative z-0 min-w-0 bg-slate-800">
+          {/* 顶部工具条 */}
+          <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-3 py-2 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/60 pointer-events-none">
+            <div className="text-[11px] text-slate-500 truncate pointer-events-auto">{selectedNode ? '📝 笔记' : ''}</div>
+            <div className="flex items-center gap-2 pointer-events-auto">
+              <button onClick={() => setShowGraphModal(true)} className="px-3 py-1.5 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title="打开关系图谱">🕸️ 图谱</button>
+              <button onClick={() => setRightChatOpen(v => !v)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${rightChatOpen ? 'bg-blue-600 text-white' : 'bg-slate-700/70 text-slate-200 hover:bg-blue-600 hover:text-white'}`} title="切换 AI 对话栏">💬 对话</button>
+            </div>
+          </div>
+
+          <div className="h-full pt-11">
+            {selectedNode ? (
+              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
+                <div className="text-5xl opacity-40">📂</div>
+                <div className="text-slate-400 text-sm font-bold">从左侧选择一个项目里的笔记，或新建项目</div>
+                <div className="text-slate-600 text-[11px] max-w-sm leading-relaxed">一个项目就是一个文件夹（含 README + 项目总览），里面放 5–10 个关键方向，每个方向是一篇子笔记、可由一个专门的 Agent 负责。用 <span className="text-purple-400">[[标题]]</span> 互相关联，点上方 <span className="text-purple-400">🕸️ 图谱</span> 看关系网络。</div>
+                <button onClick={() => handleCreateProject()} className="mt-2 px-4 py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">＋ 新建项目</button>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* ===== 右侧：AI 对话 ===== */}
+        <div className="hidden md:flex h-full flex-col bg-slate-900 border-l border-slate-800 overflow-hidden transition-all duration-300" style={{ width: rightChatOpen ? rightChatWidth : 0 }}>
+          <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
+            <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5"><span>🤝</span> 团队群聊</h3>
+            <button onClick={() => setRightChatOpen(false)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title="收起"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 17 5-5-5-5M13 17l5-5-5-5"/></svg></button>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            <TeamChat key={currentProjectId || 'none'} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} />
+          </div>
+        </div>
+
+        {/* 收起时的右侧重新展开把手 */}
+        {!rightChatOpen && (
+          <div className="hidden md:flex w-8 h-full bg-slate-900 border-l border-slate-800 items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setRightChatOpen(true)} title="展开 AI 对话">
+            <div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">AI 对话</div>
+          </div>
+        )}
+
+        {/* ===== 关系图谱弹出层 ===== */}
+        {showGraphModal && (
+          <div className="fixed inset-0 z-[90] flex flex-col bg-slate-950/95 backdrop-blur-sm">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/80">
+              <h3 className="text-sm font-bold text-purple-300 flex items-center gap-2"><span>🕸️</span> 关系图谱{currentProject?.name ? ` · ${currentProject.name}` : ''}</h3>
+              <button onClick={() => setShowGraphModal(false)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white transition-colors" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div className="flex-1 relative">
+              <GraphVisualization nodes={filteredNodes} onNodeClick={(node) => { handleNodeClick(node); setShowGraphModal(false); }} onNodeContextMenu={(node, x, y) => setContextMenu({ x, y, nodeId: node.id })} onToggleCollapse={(nodeId) => { const n = nodes.find(x => x.id === nodeId); if (n) updateNode(n.id, { isCollapsed: !n.isCollapsed }); }} onBatchUpdateNodes={(updates) => { setNodes(prev => prev.map(n => { const u = updates.find(x => x.id === n.id); return u ? { ...n, ...u.changes } : n; })); }} />
+            </div>
+          </div>
+        )}
       </main>
 
       {contextMenu && <div className="fixed z-[100] bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 w-48" style={{ top: Math.min(contextMenu.y, window.innerHeight - 350), left: Math.min(contextMenu.x, window.innerWidth - 200) }} onClick={e => e.stopPropagation()}>
-        {/* 引用到AI管家 - 放在最上面 */}
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2 text-blue-400" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) handleQuoteNodeToButler(n); setContextMenu(null); }}>💬 引用到AI管家讨论</button>
+        {/* 在团队群聊里讨论这个节点（选中它 + 打开右侧群聊，群聊会自动把当前笔记带进上下文） */}
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2 text-blue-400" onClick={() => { setSelectedNodeId(contextMenu.nodeId); setRightChatOpen(true); setContextMenu(null); }}>💬 在团队群聊里讨论</button>
         <div className="h-px bg-slate-700 my-1"></div>
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { setFocusedNodeId(focusedNodeId === contextMenu.nodeId ? null : contextMenu.nodeId); setContextMenu(null); }}>🎯 {focusedNodeId === contextMenu.nodeId ? '取消聚焦' : '聚焦节点'}</button>
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isCritical: !n.isCritical }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isCritical ? '⭐ 取消关键' : '⭐ 设为关键'}</button>
@@ -1478,8 +2004,19 @@ const App: React.FC = () => {
         />
       )}
 
+      {/* AI 组队进行中提示 */}
+      {teamBusy && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[120] bg-slate-900 border border-blue-500/40 rounded-full px-5 py-3 shadow-2xl flex items-center gap-3">
+          <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+          <span className="text-xs font-bold text-blue-300">🤝 AI 正在读懂目标、拆解方向、组建团队…</span>
+        </div>
+      )}
+
+      {/* 问题广场 */}
+      {showQuestionBoard && <QuestionBoard userKey={user?.username || 'guest'} onClose={() => setShowQuestionBoard(false)} onStartProject={(text) => handleCreateProject(text)} />}
+
       {/* 设置：模型接入 / IoT 设备 */}
-      {showSettingsModal && <SettingsModal onClose={() => setShowSettingsModal(false)} />}
+      {showSettingsModal && <SettingsModal onClose={() => { setShowSettingsModal(false); try { setActiveModel(loadLLMSettings().model || ''); } catch {} }} />}
 
       {showHelpModal && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowHelpModal(false)}><div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-10 shadow-2xl flex flex-col items-center max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}><h3 className="text-xl font-bold text-white mb-8">有问题请联系</h3><div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 w-full text-center mb-8"><p className="text-slate-500 text-xs mb-3 uppercase tracking-widest font-bold">联系微信号</p><p className="text-2xl font-mono font-bold text-blue-400 select-all tracking-wider">seabird36</p></div><MessageBoard /><button onClick={() => setShowHelpModal(false)} className="mt-6 w-full py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-2xl border border-slate-700">关闭</button></div></div>}
 

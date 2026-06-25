@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react'
 import * as d3 from 'd3';
 import { ProblemNode, NodeStatus } from '../types';
 import { STATUS_COLORS } from '../constants';
+import { buildAssocEdges } from '../services/noteLinks';
 
 interface GraphVisualizationProps {
   nodes: ProblemNode[];
@@ -80,6 +81,7 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
   const [layoutMode, setLayoutMode] = useState<'tree' | 'force'>('tree');
   const [viewMode, setViewMode] = useState<'graph' | 'outline'>('graph');
   const [showMiniMap, setShowMiniMap] = useState(true);
+  const [showAssoc, setShowAssoc] = useState(true); // 关联(wikilink)连线显隐
 
   const nodeLevels = useMemo(() => calculateNodeLevels(nodes || []), [nodes]);
   
@@ -170,7 +172,7 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
 
     svg.call(zoom);
 
-    // 连线数据
+    // 连线数据（纵向 / 层级）
     const links: { source: string; target: string }[] = [];
     const nodeIdSet = new Set(visibleNodes.map(n => n.id));
     visibleNodes.forEach(node => {
@@ -180,6 +182,9 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
         }
       });
     });
+
+    // 关联连线（横向 / wikilink）：仅两端都可见
+    const assocLinks = showAssoc ? buildAssocEdges(visibleNodes) : [];
 
     const getNodeRadius = (nodeId: string): number => {
       const level = nodeLevels.get(nodeId) || 0;
@@ -225,7 +230,21 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
         .attr("orient", "auto")
         .append("path").attr("d", "M0,-4L10,0L0,4").attr("fill", "#64748b");
 
-      // 连线
+      // 关联连线（横向 wikilink，紫色虚线弧）——先画，置于层级连线之下
+      assocLinks.forEach(link => {
+        const s = nodePositions.get(link.source);
+        const t = nodePositions.get(link.target);
+        if (!s || !t) return;
+        const dx = t.x - s.x;
+        const dy = t.y - s.y;
+        const dr = Math.hypot(dx, dy) * 1.1;
+        g.append("path")
+          .attr("d", `M${s.x},${s.y} A${dr},${dr} 0 0,1 ${t.x},${t.y}`)
+          .attr("fill", "none").attr("stroke", "#a855f7").attr("stroke-width", 1.2)
+          .attr("stroke-opacity", 0.55).attr("stroke-dasharray", "4,3");
+      });
+
+      // 连线（纵向 / 层级）
       links.forEach(link => {
         const s = nodePositions.get(link.source);
         const t = nodePositions.get(link.target);
@@ -307,6 +326,12 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
         .force("center", d3.forceCenter(width / 2, height / 2))
         .force("collision", d3.forceCollide().radius((d: any) => getNodeRadius(d.id) + 20));
 
+      const nodeById = new Map(visibleNodes.map(n => [n.id, n as any]));
+
+      // 关联连线（横向 wikilink，紫色虚线）——先画，置于层级连线之下
+      const assocLine = g.append("g").selectAll("line").data(assocLinks).enter().append("line")
+        .attr("stroke", "#a855f7").attr("stroke-width", 1.2).attr("stroke-opacity", 0.55).attr("stroke-dasharray", "4,3");
+
       const link = g.append("g").selectAll("line").data(links).enter().append("line")
         .attr("stroke", "#475569").attr("stroke-width", 1.5).attr("stroke-opacity", 0.5).attr("marker-end", "url(#arrow)");
 
@@ -342,6 +367,9 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
 
       simulation.on("tick", () => {
         link.attr("x1", (d: any) => d.source.x).attr("y1", (d: any) => d.source.y).attr("x2", (d: any) => d.target.x).attr("y2", (d: any) => d.target.y);
+        assocLine
+          .attr("x1", (d: any) => nodeById.get(d.source)?.x ?? 0).attr("y1", (d: any) => nodeById.get(d.source)?.y ?? 0)
+          .attr("x2", (d: any) => nodeById.get(d.target)?.x ?? 0).attr("y2", (d: any) => nodeById.get(d.target)?.y ?? 0);
         nodeGroup.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
       });
 
@@ -359,7 +387,7 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
         .attr("height", height / transform.k / 5);
     }
 
-  }, [visibleNodes, nodeLevels, hiddenChildrenCount, handleNodeClick, onNodeContextMenu, layoutMode, viewMode, showMiniMap]);
+  }, [visibleNodes, nodeLevels, hiddenChildrenCount, handleNodeClick, onNodeContextMenu, layoutMode, viewMode, showMiniMap, showAssoc]);
 
   // ========== 小地图 ==========
   useEffect(() => {
@@ -500,9 +528,18 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
               />
             </div>
 
+            {/* 关联连线显隐 */}
+            <button
+              onClick={() => setShowAssoc(v => !v)}
+              className={`w-full px-2 py-1 text-[10px] rounded transition-colors flex items-center justify-center gap-1 ${showAssoc ? 'bg-purple-600/80 text-white' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
+              title="显示/隐藏 [[关联]] 连线"
+            >
+              🔗 关联连线 {showAssoc ? '开' : '关'}
+            </button>
+
             {/* 折叠控制 */}
             <div className="flex gap-1">
-              <button 
+              <button
                 onClick={() => handleCollapseAll(true)}
                 className="flex-1 px-2 py-1 text-[10px] bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition-colors"
               >
@@ -557,6 +594,10 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
           <div className="flex items-center gap-1">
             <div className="w-3 h-3 rounded-full bg-amber-500 text-[7px] text-white flex items-center justify-center font-bold">+</div>
             <span className="text-slate-500">展开</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <svg width="14" height="6"><line x1="0" y1="3" x2="14" y2="3" stroke="#a855f7" strokeWidth="1.5" strokeDasharray="3,2" /></svg>
+            <span className="text-slate-500">关联</span>
           </div>
         </div>
       )}

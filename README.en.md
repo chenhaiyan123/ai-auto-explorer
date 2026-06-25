@@ -1,93 +1,73 @@
-# 🧭 AI Auto Explorer
+# 🧭 HiExplore · Autonomous Inquiry Platform
 
 **English** | [中文](./README.md)
 
 > **Questions as coordinates, intelligence as currency.**
-> Pin a question worth exploring, and let AI investigate it autonomously over days or weeks — even operating real lab equipment through IoT APIs.
+> Park your valuable questions, ideas and curiosity in the background, and let AI investigate them long‑term like a team — handing work back to you whenever a human call is needed.
 
-**🌐 Live Demo: https://chenhaiyan123.github.io/ai-auto-explorer/**
+HiExplore is an open‑source, **question‑driven autonomous inquiry platform**. It treats every project like a *research repository*: you define a question worth digging into, AI breaks it into a few key directions, assembles a team of specialized agents, explores those directions over time, produces structured notes, and weaves them into a navigable knowledge graph. All data stays in your own browser and local Markdown files, and you bring your own model.
 
-AI Auto Explorer is an open-source, question-driven autonomous research platform. You pose a question worth studying; the AI decomposes it into a question tree, explores it node by node over the long term, accumulates knowledge cards and findings, and notifies you when it makes a breakthrough.
+**Who it's for:** independent researchers / creators / indie developers (turn curiosity into ongoing inquiry with minimal friction), and people doing intelligence / due‑diligence work (park a question, get continuous, traceable investigation).
+
+---
 
 ## ✨ Features
 
-**📊 Question Value Scoring (QVS)** — Before burning compute, AI scores your question across 6 dimensions (scarcity, depth, verifiability, social value, novelty, feasibility) with a radar-chart report, so you know whether it's worth pursuing.
+**🗂️ Project = folder (engineering notes, like a code repo)**
+Each project is a folder with a `README` and an `Overview` main file. A project breaks down into 5–8 key nodes (level 2), each of which can hold level‑3 detail notes. The left sidebar is an indentable, collapsible note tree; long notes also fold by heading into an outline instead of a wall of text.
 
-**🌳 Autonomous question-tree exploration** — Big questions are decomposed into sub-question nodes, explored and synthesized one by one, with research and build modes and full graph visualization.
+**🔗 Bi‑directional links + knowledge graph**
+Use `[[Title]]` anywhere in a note to link others, forming outgoing / backlinks automatically. The "🕸️ Graph" button pops up the network: vertical = hierarchy, horizontal = associations.
 
-**🤖 Agent teams & long-term exploration** — Multi-agent collaborative analysis, 24/7 background exploration, automatic knowledge cards, findings, and stage reports.
+**🤝 AI team building + team chat**
+Click 🤝 on a project: AI reads the goal → splits it into 5–8 key nodes → groups them into "work areas" (folders) → assigns a specialized agent to each → and can kick off autonomous exploration. The right panel is a group chat with the team: @mention a member, `[[reference]]` any note into context, and append any AI reply straight into a note.
 
-**🧠 Bring your own model** — Every AI capability runs on a model *you* control:
-- Local models: Ollama, LM Studio, vLLM (your data never leaves your machine)
-- Cloud APIs: any OpenAI-compatible service (Qwen, DeepSeek, etc.)
-- Self-hosted proxy: hide your key behind a serverless function (see `fc_backend.js`)
+**🔥 Question board (surface valuable questions)**
+Collect candidate questions, score & rank them with QVS (scarcity / depth / verifiability / social value / innovation / feasibility), filter for high value, follow / upvote, and turn the best ones into projects in one click.
 
-**🔌 IoT lab-equipment integration** — Register any device with an HTTP REST API (sensors, incubators, robotic arms…). During exploration the AI can autonomously read data and execute operations, bringing the physical world into the research loop. Every call is logged and auditable.
+**📓 Local Markdown vault (your data)**
+Everything is stored in browser localStorage; export a single note as `.md`, the whole vault as a `.zip` (project‑as‑folder structure), import `.md`, or — in Chrome/Edge — save directly into a local folder (Obsidian‑style vault).
 
-## 🚀 Quick Start
+**🧠 Bring your own model**
+Every AI call uses the model you configure; no built‑in backend:
+- Local: Ollama, LM Studio, vLLM (data never leaves your machine)
+- Cloud: any OpenAI‑compatible API (DeepSeek, Qwen, Claude…)
+- Self‑hosted proxy: keep your key behind a serverless function (see `server/fc_backend.js`)
+
+**🔌 IoT / lab devices** — register HTTP‑API devices; AI can call them during exploration (read sensors, trigger actions) with an auditable log.
+
+**🌗 Light / dark theme**, toggle in the top bar.
+
+---
+
+## 🚀 Quick start
 
 ```bash
-git clone https://github.com/chenhaiyan123/ai-auto-explorer.git
-cd ai-auto-explorer
+git clone https://github.com/<your-name>/hiexplore.git
+cd hiexplore
 npm install
 npm run dev        # http://localhost:3000
 ```
 
-On first launch, open **⚙️ Settings → Model** in the top-right corner, pick a preset (e.g. local Ollama) or enter your API endpoint, test the connection, and you're set. No backend required.
+Open **⚙️ Settings → Model** and pick a preset. No backend required.
 
-### Use a local model (recommended, zero cost)
+| Setup | Provider | API Base URL | Model |
+|---|---|---|---|
+| Local, free | OpenAI‑compatible | `http://localhost:11434/v1` | `qwen2.5:7b` |
+| DeepSeek | OpenAI‑compatible | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| Claude | OpenAI‑compatible | `https://api.anthropic.com/v1` | `claude-sonnet-4-6` |
 
-```bash
-ollama pull qwen2.5:7b
-ollama serve
-```
+> The stronger the model, the deeper and more reliable the autonomous inquiry. The 🧠 badge in the top bar shows the model currently in use.
 
-Then select the "Ollama (local)" preset in Settings.
+---
 
-### Connect an IoT device
+## 🏗️ Stack
 
-**⚙️ Settings → IoT Devices → Register**, then fill in the device name, API base URL, and its operations (method / path / description). The AI will call them as needed during chat and exploration. Example:
-
-```
-Device: Incubator-1 (http://192.168.1.50:8080)
-Ops:    Read temperature   GET  /api/temperature
-        Set temperature    POST /api/temperature   body: {"target_temp": "{{temp}}"}
-```
-
-## 🏗️ Stack & Layout
-
-React 19 + TypeScript + Vite + Tailwind CSS + D3. Pure-frontend architecture; config and data live in browser localStorage.
-
-```
-├── App.tsx                    # Main app
-├── components/
-│   ├── QuestionEvaluator.tsx  # QVS radar-chart report
-│   ├── SettingsModal.tsx      # Settings: models / IoT devices
-│   ├── GraphVisualization.tsx # Question-tree visualization
-│   └── ...
-├── services/
-│   ├── llmProvider.ts         # Unified model layer (OpenAI-compatible / proxy)
-│   ├── iotService.ts          # IoT device registry, calls & AI tool execution
-│   ├── qvsService.ts          # Question value scoring (6 dimensions)
-│   ├── geminiService.ts       # Core AI exploration calls
-│   └── ...
-└── fc_backend.js              # Optional: serverless API proxy reference
-```
-
-## ⚙️ Deployment (optional)
-
-Copy `.env.example` to `.env.local`:
-
-| Variable | Purpose |
-|---|---|
-| `VITE_API_PROXY_URL` | Default cloud AI proxy URL (omit to let users configure their own model) |
-| `VITE_ADMIN_PASSWORD` | Admin dashboard password (omit to disable admin login) |
-
-Build with `npm run build`; the `dist/` output is fully static and deploys anywhere (GitHub Pages, Vercel, Cloudflare Pages, OSS…). This repo auto-deploys to GitHub Pages on every push via Actions.
+React 19 + TypeScript + Vite + Tailwind + D3. Pure front‑end, no backend dependency. Build with `npm run build` → static `dist/`, deployable to GitHub Pages / Vercel / any static host. A GitHub Pages workflow is included (`.github/workflows/deploy.yml`).
 
 ## 🤝 Contributing
 
-Issues and PRs welcome. We'd especially love: new IoT device adaptation examples, more model presets, and ideas for improving the QVS scoring dimensions.
+Issues and PRs welcome — especially IoT device adapters, agent/exploration templates, QVS improvements, and model presets. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## 📄 License
 

@@ -170,7 +170,7 @@ export async function evaluateQuestion(question: string): Promise<QVSReport> {
   try {
     const response = await callGemini(
       [{ role: 'user', content: prompt }],
-      'qwen-max',
+      undefined,
       'application/json'
     );
 

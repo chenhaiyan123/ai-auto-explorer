@@ -1,96 +1,96 @@
-# 🧭 AI Auto Explorer · AI 自动探索助手
+# 🧭 HiExplore · AI 自动探究平台
 
 [English](./README.en.md) | **中文**
 
 > **以问题为坐标，以智能为货币。**
-> 把有价值、有意思的问题挂在后台，让 AI 进行长期自主探究——甚至操纵物联网实验设备去深入探索。
+> 把有价值的问题、想法和好奇心挂在后台，让 AI 像一支团队一样长期自动探究、沉淀，并在必要时把工作交回给你。
 
-**🌐 在线体验：https://chenhaiyan123.github.io/ai-auto-explorer/**
+HiExplore 是一个开源的、**问题驱动的自主探究平台**。它把每个项目当成一个「研究仓库」：你定义一个值得深挖的问题，AI 把它拆成几个关键方向、组建一支各有分工的 Agent 团队，围绕这些方向长期探索、产出结构化笔记，并把笔记沉淀成一张可导航的知识图谱。整个过程数据都在你自己的浏览器与本地 Markdown 文件里，模型也由你自己接入。
 
-<!-- TODO: 录一个 30 秒演示 GIF 放这里：![Demo](./docs/demo.gif) -->
+**适合谁：** 独立研究者 / 创作者 / 独立开发者（低门槛地把好奇心变成持续探究），以及做情报调研、尽职调查的人（把一个问题挂上去，得到持续、可溯源的调查）。
 
-AI Auto Explorer 是一个开源的「问题驱动型」自主探索平台。你提出一个值得研究的问题，AI 会把它分解成问题树，长期、自主地逐节点探索，沉淀知识卡片与研究发现，并在有突破时通知你。
+---
 
 ## ✨ 核心功能
 
-**📊 问题价值评估（QVS）**：开始探索前，AI 从稀缺性、深度、可验证性、社会价值、创新性、可执行性 6 个维度为问题打分（雷达图报告），帮你判断这个问题值不值得投入算力。
+**🗂️ 项目即文件夹（像代码仓库的工程笔记）**
+一个项目就是一个文件夹，自带 `README` 和 `总览` 主文件。项目分解为 5–8 个关键节点（二级），每个节点内部还能再开三级详情。左侧是可缩进、可折叠的笔记树，所有笔记都能折叠收起，长内容也按标题折叠成大纲，不再是一面墙的字。
 
-**🌳 问题树自主探索**：AI 将大问题分解为子问题节点，逐个探索、推理、汇总，支持研究模式与构建模式，可视化展示整个探索图谱。
+**🔗 双向链接 + 知识图谱**
+在任意笔记正文里用 `[[标题]]` 关联其它笔记，自动形成出链 / 反向链接。点工具栏的「🕸️ 图谱」弹出关系网络：纵向是层级、横向是关联，一眼看清问题之间的脉络。
 
-**🤖 Agent 团队与长期探索**：多 Agent 协作分析，7×24 后台持续探索，自动产出知识卡片、研究发现和阶段性报告。
+**🤝 AI 组建团队 + 团队群聊**
+点项目上的 🤝，AI 会读懂项目目标 → 拆成 5–8 个关键节点 → 按「工作板块」（市场调研 / 工程制作…）分工 → 给每个方向指派一个专门的 Agent → 可一键让团队开始自动探索。右侧是与团队的群聊：@某个成员单独发言、`[[引用]]` 任意笔记进上下文、把 AI 的产出一键「补充到笔记」。
 
-**🧠 模型自由接入**：所有 AI 能力都通过你自己的模型驱动——
-- 本地模型：Ollama、LM Studio、vLLM（数据不出本机）
-- 云端 API：任何 OpenAI 兼容服务（通义千问、DeepSeek 等）
-- 自部署代理：把 Key 藏在 Serverless 函数后面（见 `fc_backend.js`）
+**🔥 问题广场（筛选有价值的问题）**
+像知乎一样收集候选问题，用 QVS（稀缺性 / 深度 / 可验证性 / 社会价值 / 创新性 / 可执行性 6 维）打分排序，支持「只看高价值」「关注 / 赞」两套兴趣机制，看中的问题一键「立项」转成项目。
 
-**🔌 IoT 实验设备接入**：注册任何带 HTTP REST API 的设备（传感器、培养箱、机械臂…），AI 在探索过程中可自主调用设备读取数据、执行操作，把物理世界纳入探究闭环。所有调用都有日志可审计。
+**📓 本地 Markdown 库（你的数据你做主）**
+所有内容存在浏览器 localStorage；可把单篇导出 `.md`、整库导出 `.zip`（项目即文件夹的结构）、导入 `.md`，在 Chrome/Edge 里还能直接保存到本地文件夹（Obsidian 式 Vault）。
+
+**🧠 模型自由接入**
+所有 AI 能力都走你自己配置的模型，无内置后端：
+- 本地：Ollama、LM Studio、vLLM（数据不出本机）
+- 云端：任何 OpenAI 兼容 API（DeepSeek、通义千问、Claude…）
+- 自部署代理：把 Key 藏在 Serverless 函数后（见 `server/fc_backend.js`）
+
+**🔌 IoT / 实验设备接入**
+注册带 HTTP API 的设备（传感器、培养箱、机械臂…），AI 在探索中可自主调用读取数据、执行操作，把物理世界纳入探究闭环，调用有日志可审计。
+
+**🌗 白天 / 深色主题**，顶栏一键切换。
+
+---
 
 ## 🚀 快速开始
 
 ```bash
-git clone https://github.com/chenhaiyan123/ai-auto-explorer.git
-cd ai-auto-explorer
+git clone https://github.com/<your-name>/hiexplore.git
+cd hiexplore
 npm install
 npm run dev        # http://localhost:3000
 ```
 
-首次进入后点击右上角 **⚙️ 设置 → 模型接入**，选择一个预设（如本地 Ollama）或填入你的 API 地址，测试连接即可使用。无需任何后端。
+首次进入点右上角 **⚙️ 设置 → 模型接入**，选一个预设填好即可使用，无需任何后端。
 
-### 用本地模型（推荐，零成本）
+### 配置模型（举例）
 
-```bash
-# 安装并启动 Ollama
-ollama pull qwen2.5:7b
-ollama serve
-```
+| 场景 | 接入方式 | API Base URL | 模型名 | 备注 |
+|---|---|---|---|---|
+| 本地零成本 | OpenAI 兼容 | `http://localhost:11434/v1` | `qwen2.5:7b` | 先 `ollama serve` |
+| DeepSeek（推荐性价比） | OpenAI 兼容 | `https://api.deepseek.com/v1` | `deepseek-chat` | 需 DeepSeek Key |
+| Claude（更完整） | OpenAI 兼容 | `https://api.anthropic.com/v1` | `claude-sonnet-4-6` | 需 Anthropic Key |
 
-设置中选择「Ollama（本地）」预设即可。
+> 提示：模型越强，自动探究的内容越深入、越可靠。顶栏的 🧠 徽标会显示当前正在使用的模型。
 
-### 接入 IoT 设备
+---
 
-**⚙️ 设置 → IoT 设备 → 注册设备**，填写设备名称、API 地址、操作列表（方法/路径/说明）。注册后 AI 会在对话与探索中按需调用，例如：
+## 🏗️ 技术栈
 
-```
-设备：恒温培养箱-1（http://192.168.1.50:8080）
-操作：读取温度 GET /api/temperature
-      设定温度 POST /api/temperature  体：{"target_temp": "{{temp}}"}
-```
-
-## 🏗️ 技术栈与结构
-
-React 19 + TypeScript + Vite + Tailwind CSS + D3，纯前端架构，配置与数据保存在浏览器 localStorage。
+React 19 + TypeScript + Vite + Tailwind + D3，纯前端，零后端依赖，数据保存在浏览器与本地文件。
 
 ```
-├── App.tsx                    # 主应用
-├── components/
-│   ├── QuestionEvaluator.tsx  # 问题价值评估（QVS 雷达图报告）
-│   ├── SettingsModal.tsx      # 设置：模型接入 / IoT 设备
-│   ├── GraphVisualization.tsx # 问题树可视化
-│   └── ...
+├── App.tsx                # 主应用
+├── components/            # NotesPanel(项目树) / NodeDetails(笔记) / TeamChat(团队群聊)
+│                          # QuestionBoard(问题广场) / GraphVisualization(图谱) / ...
 ├── services/
-│   ├── llmProvider.ts         # 统一模型接入层（OpenAI 兼容 / 云代理）
-│   ├── iotService.ts          # IoT 设备注册、调用与 AI 指令执行
-│   ├── qvsService.ts          # 问题价值评估（6 维度打分）
-│   ├── geminiService.ts       # AI 探索核心调用
+│   ├── noteLinks.ts       # 双向链接 / 反链 / 关联边
+│   ├── vault.ts           # Markdown 导入导出 / 本地库
+│   ├── teamService.ts     # AI 组建团队（拆方向 + 指派 Agent）
+│   ├── qvsService.ts      # 问题价值评估（6 维）
+│   ├── llmProvider.ts     # 统一模型接入层（OpenAI 兼容 / 云代理）
+│   ├── geminiService.ts   # 探索 / 对话核心调用
 │   └── ...
-└── fc_backend.js              # 可选：Serverless API 代理参考实现
+├── server/                # 可选参考后端（留言板 / Serverless 代理），非前端必需
+└── docs/                  # 部署等文档
 ```
 
-## ⚙️ 部署配置（可选）
+构建：`npm run build`，产物在 `dist/`，可托管到任何静态站点（GitHub Pages / Vercel / OSS）。仓库已内置 GitHub Pages 部署工作流（`.github/workflows/deploy.yml`）。
 
-复制 `.env.example` 为 `.env.local`：
-
-| 变量 | 说明 |
-|---|---|
-| `VITE_API_PROXY_URL` | 默认云端 AI 代理地址（不设则引导用户自行配置模型） |
-| `VITE_ADMIN_PASSWORD` | 管理员看板密码（不设则禁用管理员登录） |
-
-构建：`npm run build`，产物在 `dist/`，可托管到任何静态站点（GitHub Pages、Vercel、OSS 等）。
+---
 
 ## 🤝 贡献
 
-欢迎 Issue 与 PR。我们尤其欢迎：新的 IoT 设备适配案例、更多模型预设、QVS 评估维度的改进建议。
+欢迎 Issue 与 PR，尤其欢迎：新的 IoT 设备适配、Agent / 探索模板、QVS 维度改进、模型预设。详见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ## 📄 License
 

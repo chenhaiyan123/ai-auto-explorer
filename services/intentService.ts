@@ -248,7 +248,7 @@ export async function analyzeIntent(userInput: string): Promise<IntentAnalysis> 
     // 3. 调用 AI
     const response = await callGemini(
       [{ role: 'user', content: prompt }],
-      GEMINI_MODEL
+      undefined
     );
     
     // 4. 解析响应

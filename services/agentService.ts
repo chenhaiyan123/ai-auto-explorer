@@ -168,7 +168,7 @@ ${nodesContext || '暂无'}
 4. workflow描述角色间如何协作`;
 
   try {
-    const result = await callGemini([{ role: 'user', content: prompt }], 'qwen-turbo', 'application/json');
+    const result = await callGemini([{ role: 'user', content: prompt }], undefined, 'application/json');
     const clean = result.replace(/```json\n?|\n?```/g, '').trim();
     return JSON.parse(clean);
   } catch (e) {
@@ -314,7 +314,7 @@ export const executeTask = async (
   const agentPrompt = buildAgentPrompt(agent, task, context);
   
   try {
-    const output = await callGemini([{ role: 'user', content: agentPrompt }], 'qwen-turbo');
+    const output = await callGemini([{ role: 'user', content: agentPrompt }], undefined);
     
     // 更新完成状态
     updatedTeam = {
@@ -490,7 +490,7 @@ ${taskOutputs}
 要求简洁清晰，突出重点。`;
 
   try {
-    return await callGemini([{ role: 'user', content: prompt }], 'qwen-turbo');
+    return await callGemini([{ role: 'user', content: prompt }], undefined);
   } catch (e) {
     return taskOutputs; // 失败则直接返回原始输出
   }

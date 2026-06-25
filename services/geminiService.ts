@@ -22,7 +22,7 @@ export const callGemini = async (
   // 格式化消息并限制长度
   const formattedMessages = messages.map(m => ({
     role: m.role === 'system' ? 'system' : (m.role === 'model' || m.role === 'assistant' ? 'assistant' : 'user'),
-    content: ((m.content || m.text) || '').slice(0, m.role === 'system' ? 4000 : 1500)
+    content: ((m.content || m.text) || '').slice(0, m.role === 'system' ? 8000 : 6000)
   }));
 
   let lastError: Error | null = null;
@@ -84,37 +84,42 @@ export const exploreNode = async (node: ProblemNode, contextNodes: ProblemNode[]
     .map(n => `${n.title}:${(n.notes||'').slice(0,50)}`)
     .join(';');
 
-  const prompt = `分析问题："${node.title}"
-${node.notes ? `背景：${node.notes.slice(0,150)}` : ''}
-${context ? `相关：${context}` : ''}
+  const prompt = `你是一位资深研究员，正在深入探索下面这个关键节点。请给出有深度、可落地的分析。
 
-请返回JSON格式：
+节点问题："${node.title}"
+${node.notes ? `已有背景：${node.notes.slice(0,400)}` : ''}
+${context ? `相关节点：${context}` : ''}
+
+请返回 JSON：
 {
-  "notes": "分析内容（100-150字）",
+  "notes": "结构化的探索笔记（Markdown，400-800字）。请包含这几部分：\\n## 探索现状（目前了解到什么、关键事实）\\n## 关键发现 / 洞见（2-4 条，尽量具体）\\n## 方法与思路（怎么继续推进、可用的方法或实验）\\n## 后续探索方向（列出要继续追的点）",
   "confidence": 0.8,
   "subProblems": [
-    {"title": "具体的子问题标题1"},
-    {"title": "具体的子问题标题2"}
+    {"title": "子问题1"},
+    {"title": "子问题2"}
   ],
   "taskType": "research"
 }
 
 要求：
-1. notes要有实质内容
-2. subProblems的title必须是具体的问题，不能为空
-3. subProblems最多2个`;
+1. notes 要言之有物、具体（避免空泛套话），用 Markdown 小标题分段，400-800 字。
+2. subProblems 是这个节点下最值得继续深入的 0-3 个子问题（宁缺毋滥，没有就给空数组）；标题必须极简，是名词短语、不超过 10 个字，不要写成一整句问句。
+3. taskType 从 research/code/web/image 中选最贴切的一个。`;
 
   try {
-    const result = await callGemini([{ role: "user", content: prompt }], "qwen-turbo", "application/json");
-    const clean = result.replace(/```json\n?|\n?```/g, '').trim();
+    const result = await callGemini([{ role: "user", content: prompt }], undefined, "application/json");
+    // 稳健解析：去 ```fence```，并截取第一个 { 到最后一个 }（兼容会在 JSON 外带说明文字的模型，如 Claude 兼容层）
+    let clean = result.replace(/```json\n?|\n?```/g, '').trim();
+    const a = clean.indexOf('{'); const b = clean.lastIndexOf('}');
+    if (a > 0 || b < clean.length - 1) { if (a >= 0 && b > a) clean = clean.slice(a, b + 1); }
     const parsed = JSON.parse(clean);
     
     // 过滤掉没有有效title的子问题
     const validSubProblems = (parsed.subProblems || [])
       .filter((sp: any) => sp && sp.title && sp.title.trim())
-      .slice(0, 2)
+      .slice(0, 3)
       .map((sp: any) => ({
-        title: sp.title.trim(),
+        title: sp.title.trim().replace(/^(如何|怎么|怎样|为什么|什么是|关于)/u, '').replace(/[？?。.！!，,]+$/u, '').slice(0, 12),
         initialNotes: sp.initialNotes || ''
       }));
     
@@ -133,7 +138,11 @@ ${context ? `相关：${context}` : ''}
 };
 
 export const runAgentTask = async (node: ProblemNode, agentType: string): Promise<string> => {
-  return await callGemini([{ role: "user", content: `作为${agentType}，简要分析:${node.title}` }]);
+  const bg = (node.fullNote || node.notes || '').slice(0, 600);
+  return await callGemini([
+    { role: 'system', content: `你是「${agentType}」，请以该角色的专业视角，给出详尽、结构化、可执行的成果，而不是泛泛而谈。用 Markdown 分点呈现，不少于 400 字；如涉及代码/方案，请给出具体内容。` },
+    { role: 'user', content: `任务节点：${node.title}\n${bg ? `背景：\n${bg}` : ''}\n\n请产出你负责的部分的具体成果。` }
+  ]);
 };
 
 export const generateProjectSummary = async (project: Project): Promise<string> => {

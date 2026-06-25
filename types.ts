@@ -36,6 +36,16 @@ export interface ProblemNode {
   fullNote?: string;
   /** 用户标签 */
   tags?: string[];
+  /** 所属文件夹路径（Obsidian 式层级，用 / 分隔，如 "研究方向/材料"） */
+  folder?: string;
+  /** 笔记类型：readme=项目说明，overview=项目总览主文件，direction=关键方向子节点（默认） */
+  noteType?: 'readme' | 'overview' | 'direction';
+  /** 负责这个子任务的 Agent（AI 团队分工，类似公司部门负责人） */
+  assignedAgent?: string;
+  /** 人工核验：AI 探索的结论由人确认后置 true（人机分工 + 可信溯源的核心） */
+  verified?: boolean;
+  /** 核验时间 */
+  verifiedAt?: number;
   /** 笔记最后编辑时间 */
   noteUpdatedAt?: number;
   taskType?: 'image' | 'code' | 'web' | 'research' | 'none';

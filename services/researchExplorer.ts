@@ -77,7 +77,7 @@ ${context || '无'}
     const response = await callGemini([
       { role: 'system', content: '你是专业的研究助手，擅长系统性分析和知识整理。返回纯JSON，不要markdown代码块。' },
       { role: 'user', content: prompt }
-    ], GEMINI_MODEL);
+    ], undefined);
 
     const cleanJson = response.replace(/```json\n?|\n?```/g, '').trim();
     const result = JSON.parse(cleanJson);
@@ -179,7 +179,7 @@ ${cardsContext}
     const response = await callGemini([
       { role: 'system', content: '你是专业的研究报告撰写专家。返回纯JSON，不要markdown代码块。' },
       { role: 'user', content: prompt }
-    ], GEMINI_MODEL);
+    ], undefined);
 
     const cleanJson = response.replace(/```json\n?|\n?```/g, '').trim();
     return JSON.parse(cleanJson);

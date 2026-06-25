@@ -32,6 +32,7 @@ export const PRESET_PROVIDERS: { label: string; baseUrl: string; model: string; 
   { label: 'vLLM（本地/私有）', baseUrl: 'http://localhost:8000/v1', model: '', hint: '填写启动 vLLM 时指定的模型名' },
   { label: '通义千问（云端）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', hint: '需要 DashScope API Key' },
   { label: 'DeepSeek（云端）', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', hint: '需要 DeepSeek API Key' },
+  { label: 'Claude（Anthropic 云端）', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-6', hint: '需要 Claude API Key；更深更完整。浏览器直连可能受 CORS 限制，必要时走云代理' },
 ];
 
 export function getDefaultSettings(): LLMSettings {
@@ -101,7 +102,7 @@ export async function callLLM(
   const body: any = {
     model: options.model || s.model,
     messages,
-    max_tokens: options.maxTokens ?? 1000,
+    max_tokens: options.maxTokens ?? 2048,
     temperature: options.temperature ?? 0.7,
   };
   if (options.jsonMode) body.response_format = { type: 'json_object' };
@@ -141,12 +142,13 @@ export async function testLLMConnection(settings?: LLMSettings): Promise<{ ok: b
   const start = Date.now();
   try {
     const r = await callLLM(
-      [{ role: 'user', content: '回复"OK"两个字母即可' }],
-      { maxTokens: 10, timeoutMs: 20000 }
+      [{ role: 'user', content: '请只回复：OK' }],
+      { maxTokens: 64, timeoutMs: 25000 }
     );
     const latencyMs = Date.now() - start;
-    if (r.content) return { ok: true, message: `连接成功（${latencyMs}ms）`, latencyMs };
-    return { ok: false, message: '连接成功但返回为空' };
+    if (r.content && r.content.trim()) return { ok: true, message: `连接成功（${latencyMs}ms）`, latencyMs };
+    // 200 但 content 为空：连接其实通了，常见于推理模型（deepseek-reasoner 等）把额度用在隐藏思考上
+    return { ok: true, message: `连接已通，但模型未返回正文。若用的是 deepseek-reasoner 这类推理模型，建议模型名改成 deepseek-chat（更快、支持本应用所需的 JSON 模式）。`, latencyMs };
   } catch (e: any) {
     if (prev) saveLLMSettings(prev);
     const msg = e.name === 'AbortError' ? '连接超时' : (e.message || '未知错误');
