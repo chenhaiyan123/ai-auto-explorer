@@ -115,7 +115,14 @@ interface MarkdownViewProps {
 }
 
 const MarkdownView: React.FC<MarkdownViewProps> = ({ source, className, linkResolver, onWikiLink, large }) => {
-  const html = useMemo(() => renderMarkdown(source, linkResolver, large), [source, linkResolver, large]);
+  const html = useMemo(() => {
+    try {
+      return renderMarkdown(source, linkResolver, large);
+    } catch (e) {
+      console.error('[MarkdownView] 渲染失败，回退为纯文本', e);
+      return `<pre style="white-space:pre-wrap">${escapeHtml(source || '')}</pre>`;
+    }
+  }, [source, linkResolver, large]);
 
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!onWikiLink) return;

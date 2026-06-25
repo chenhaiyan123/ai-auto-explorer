@@ -24,6 +24,7 @@ import { resolveNodeByTitle } from './services/noteLinks';
 import { exportVaultZip, importMarkdownFiles, saveVaultToDirectory, supportsDirectoryPicker } from './services/vault';
 import { buildTeamPlan } from './services/teamService';
 import { loadLLMSettings } from './services/llmProvider';
+import { getWithMigration, idbSet } from './services/storage';
 
 // ========== Agent 类型 ==========
 interface Agent {
@@ -1172,7 +1173,21 @@ const App: React.FC = () => {
     if (notesPanelMode === 0) setNotesPanelMode(1);
   }, [notesPanelMode]);
 
-  useEffect(() => { if (user) { const k = `exploration_projects_${user.username}`; try { const s = localStorage.getItem(k); const p = s ? JSON.parse(s) : []; setProjects(p); setCurrentProjectId(null); if (p.length === 0) setShowMetaModal(true); } catch { setProjects([]); setShowMetaModal(true); } } else { setProjects([]); setCurrentProjectId(null); } }, [user?.username]);
+  useEffect(() => {
+    if (!user) { setProjects([]); setCurrentProjectId(null); return; }
+    const k = `exploration_projects_${user.username}`;
+    let cancelled = false;
+    (async () => {
+      let p: Project[] | undefined;
+      try { p = await getWithMigration<Project[]>(k); } catch { p = undefined; }
+      if (cancelled) return;
+      const list = Array.isArray(p) ? p : [];
+      setProjects(list);
+      setCurrentProjectId(null);
+      if (list.length === 0) setShowMetaModal(true);
+    })();
+    return () => { cancelled = true; };
+  }, [user?.username]);
   useEffect(() => { if (user) { monitor.incrementSession(); const i = setInterval(() => monitor.updateHeartbeat(), 10000); return () => clearInterval(i); } }, [user]);
 
   const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId) || null, [projects, currentProjectId]);
@@ -1183,7 +1198,7 @@ const App: React.FC = () => {
   const filteredNodes = useMemo(() => { if (!focusedNodeId) return nodes; const vis = new Set<string>([focusedNodeId]); const findA = (id: string) => { const n = nodes.find(x => x.id === id); if (n) n.dependencies.forEach(d => { if (!vis.has(d)) { vis.add(d); findA(d); } }); }; const findD = (id: string) => { nodes.forEach(n => { if (n.dependencies.includes(id) && !vis.has(n.id)) { vis.add(n.id); findD(n.id); } }); }; findA(focusedNodeId); findD(focusedNodeId); return nodes.filter(n => vis.has(n.id)); }, [nodes, focusedNodeId]);
   const criticalNodes = useMemo(() => nodes.filter(n => n.isCritical), [nodes]);
 
-  useEffect(() => { if (user && projects.length > 0) localStorage.setItem(`exploration_projects_${user.username}`, JSON.stringify(projects)); }, [projects, user?.username]);
+  useEffect(() => { if (user && projects.length > 0) idbSet(`exploration_projects_${user.username}`, projects).catch(e => console.warn('[HiExplore] 保存项目失败', e)); }, [projects, user?.username]);
   useEffect(() => { const p = projects.find(x => x.id === currentProjectId); if (p) { setSelectedNodeId(pendingSelectRef.current); pendingSelectRef.current = null; setFocusedNodeId(null); setDecision(null); setNodes(p.nodes || []); setIsLooping(false); setKnowledgeCards((p as any).knowledgeCards || []); setResearchFindings((p as any).researchFindings || []); setResearchReport(null); setAgentTeamState((p as any).agentTeamState || initialAgentTeamState); } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id); }, [currentProjectId, projects.length]);
   useEffect(() => { if (currentProjectId && nodes.length > 0) setProjects(prev => { const i = prev.findIndex(p => p.id === currentProjectId); if (i === -1 || prev[i].nodes === nodes) return prev; const n = [...prev]; n[i] = { ...n[i], nodes }; return n; }); }, [nodes, currentProjectId]);
   useEffect(() => { if (currentProjectId && currentProject?.explorationMode === 'research') setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, knowledgeCards, researchFindings } as any : p)); }, [knowledgeCards, researchFindings, currentProjectId]);
