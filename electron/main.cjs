@@ -14,6 +14,8 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      // 窗口最小化/后台时不降频，保证持续探索循环全速运行
+      backgroundThrottling: false,
       // 本地桌面应用：关闭 web 安全限制，让浏览器渲染层能直接访问
       // 本机 Ollama(http://localhost:11434) 与局域网 IoT 设备，无需处理 CORS / 混合内容。
       // 仅加载本地打包好的页面，不加载远程站点，故此设置在本场景是安全的。

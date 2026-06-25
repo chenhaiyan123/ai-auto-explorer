@@ -1080,6 +1080,13 @@ const App: React.FC = () => {
   const isLoopingRef = useRef(false);
   const isProcessingRef = useRef(false);
   useEffect(() => { isLoopingRef.current = isLooping; }, [isLooping]);
+  // 持续探索模式：探索完现有节点后自动提出新方向，永不停（7×24）
+  const [continuousMode, setContinuousMode] = useState(false);
+  const continuousModeRef = useRef(false);
+  const isProposingRef = useRef(false);
+  const runExplorationCycleRef = useRef<(() => void) | null>(null);
+  useEffect(() => { continuousModeRef.current = continuousMode; }, [continuousMode]);
+  const MAX_AUTO_NODES = 50;
 
   // 加载会员状态
   useEffect(() => {
@@ -1214,6 +1221,28 @@ const App: React.FC = () => {
   const retryCountRef = useRef<Record<string, number>>({});
   const MAX_RETRIES = 3;
 
+  // 持续模式下：探索完现有节点后，让 AI 自主提出一个新关键方向（加为待探索节点）
+  const proposeNewDirection = useCallback(async () => {
+    if (isProposingRef.current) return;
+    isProposingRef.current = true;
+    try {
+      const overview = nodes.find(n => n.noteType === 'overview');
+      const dirs = nodes.filter(n => n.noteType === 'direction' || !n.noteType);
+      const existing = dirs.map(n => n.title).join('、');
+      const goal = currentProject?.metaProblem || currentProject?.name || '';
+      const out = await callGemini([{ role: 'user', content: `项目核心问题：${goal}\n已有方向：${existing || '（无）'}\n请再提出 1 个还没覆盖、且值得深入的新关键方向，名词短语、不超过 10 字。只返回 JSON：{"title":"…"}` }], undefined, 'application/json');
+      const cleaned = out.replace(/```json\n?|\n?```/g, '').trim();
+      let title = '';
+      try { const a = cleaned.indexOf('{'), b = cleaned.lastIndexOf('}'); title = JSON.parse(a >= 0 && b > a ? cleaned.slice(a, b + 1) : cleaned).title; } catch {}
+      title = String(title || '').trim().replace(/^(如何|怎么|怎样|为什么|什么是|关于)/u, '').replace(/[？?。.！!]+$/u, '').slice(0, 12);
+      if (title && !nodes.some(n => n.title === title)) {
+        addNode(title, overview ? [overview.id] : []);
+        addNotification('discovery', '🧭 自主提出新方向', title);
+      }
+    } catch { /* 提方向失败就下次再试 */ }
+    finally { isProposingRef.current = false; }
+  }, [nodes, currentProject, addNode, addNotification]);
+
   const runExplorationCycle = useCallback(async () => {
     if (decision || isProcessingRef.current || !isLoopingRef.current) return;
     
@@ -1236,12 +1265,19 @@ const App: React.FC = () => {
     
     if (!unexplored) unexplored = nodes.find(n => n.status === NodeStatus.UNEXPLORED);
     
-    if (!unexplored) { 
+    if (!unexplored) {
       if (!nodes.some(n => n.status === NodeStatus.EXPLORING)) {
-        setIsLooping(false);
-        addNotification('info', '🎉 探索完成', '所有节点已探索完毕，可以生成研究报告了！');
+        // 持续模式：现有节点都探索完了 → 自主提一个新方向，循环继续（7×24）
+        if (continuousModeRef.current && nodes.filter(n => n.noteType === 'direction' || !n.noteType).length < MAX_AUTO_NODES) {
+          if (!isProposingRef.current) proposeNewDirection();
+          // 不论提方向成功与否，过几秒再来一轮，避免卡死
+          if (isLoopingRef.current) setTimeout(() => { if (isLoopingRef.current) runExplorationCycleRef.current?.(); }, 8000);
+        } else if (!continuousModeRef.current) {
+          setIsLooping(false);
+          addNotification('info', '🎉 探索完成', '所有节点已探索完毕，可以生成研究报告了！');
+        }
       }
-      return; 
+      return;
     }
     
     isProcessingRef.current = true;
@@ -1383,14 +1419,17 @@ const App: React.FC = () => {
     } finally { 
       isProcessingRef.current = false; 
     }
-  }, [nodes, decision, updateNode, focusedNodeId, currentProject?.explorationMode, addNotification]);
+  }, [nodes, decision, updateNode, focusedNodeId, currentProject?.explorationMode, addNotification, proposeNewDirection]);
+
+  // 让 ref 始终指向最新的探索循环（持续模式里用它自我重排，避免卡死）
+  useEffect(() => { runExplorationCycleRef.current = runExplorationCycle; }, [runExplorationCycle]);
 
   // 优化探索间隔：成功后500ms，避免太快触发API限流
-  useEffect(() => { 
-    if (isLooping && !decision) { 
-      const t = setTimeout(() => runExplorationCycle(), 500); 
-      return () => clearTimeout(t); 
-    } 
+  useEffect(() => {
+    if (isLooping && !decision) {
+      const t = setTimeout(() => runExplorationCycle(), 500);
+      return () => clearTimeout(t);
+    }
   }, [isLooping, decision, runExplorationCycle]);
 
   const handleDecisionChoice = (action: 'continue' | 'add_subproblem' | 'terminate', subTitle?: string) => { if (!decision) return; if (action === 'terminate') updateNode(decision.nodeId, { status: NodeStatus.INVALID, pendingDecision: undefined }); else if (action === 'add_subproblem' && subTitle) addNode(subTitle, [decision.nodeId]); else if (action === 'continue') updateNode(decision.nodeId, { status: NodeStatus.SOLVED, pendingDecision: undefined }); setDecision(null); setIsLooping(true); };
@@ -1925,6 +1964,11 @@ const App: React.FC = () => {
           <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-3 py-2 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/60 pointer-events-none">
             <div className="text-[11px] text-slate-500 truncate pointer-events-auto">{selectedNode ? '📝 笔记' : ''}</div>
             <div className="flex items-center gap-2 pointer-events-auto">
+              <button
+                onClick={() => { const next = !continuousMode; setContinuousMode(next); setIsLooping(next); if (next) addNotification('info', '♾️ 持续探索已开启', '保持本应用打开，AI 会不停探索并自主提出新方向'); }}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white animate-pulse' : 'bg-slate-700/70 text-slate-200 hover:bg-emerald-600 hover:text-white'}`}
+                title="7×24 持续探索：探索完会自主提出新方向，永不停（保持应用打开即可）"
+              >♾️ {continuousMode ? '探索中' : '持续探索'}</button>
               <button onClick={() => setShowGraphModal(true)} className="px-3 py-1.5 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title="打开关系图谱">🕸️ 图谱</button>
               <button onClick={() => setRightChatOpen(v => !v)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${rightChatOpen ? 'bg-blue-600 text-white' : 'bg-slate-700/70 text-slate-200 hover:bg-blue-600 hover:text-white'}`} title="切换 AI 对话栏">💬 对话</button>
             </div>
