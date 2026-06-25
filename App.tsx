@@ -801,6 +801,20 @@ const recommendAgentFor = (title: string): string => {
   return '通用研究员';
 };
 
+// 确保每个项目都有 README + 总览（老项目自动补齐）
+function ensureOverview(p: Project): Project {
+  const nodes = p.nodes || [];
+  if (nodes.some(n => n.noteType === 'overview')) return p;
+  const name = p.name || (p.metaProblem || '').slice(0, 12) || '项目';
+  const now = Date.now();
+  const add: ProblemNode[] = [];
+  if (!nodes.some(n => n.noteType === 'readme')) {
+    add.push({ id: uuidv4(), title: 'README', noteType: 'readme', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], fullNote: readmeTemplate(name), noteUpdatedAt: now });
+  }
+  add.push({ id: uuidv4(), title: '总览', noteType: 'overview', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], fullNote: overviewTemplate(name), noteUpdatedAt: now });
+  return { ...p, nodes: [...add, ...nodes] };
+}
+
 // 项目=文件夹，里面是 README / 项目总览 / 关键方向子节点
 const NotesPanel: React.FC<{
   projects: Project[];
@@ -1189,7 +1203,7 @@ const App: React.FC = () => {
       let p: Project[] | undefined;
       try { p = await getWithMigration<Project[]>(k); } catch { p = undefined; }
       if (cancelled) return;
-      const list = Array.isArray(p) ? p : [];
+      const list = (Array.isArray(p) ? p : []).map(ensureOverview);
       setProjects(list);
       setCurrentProjectId(null);
       if (list.length === 0) setShowMetaModal(true);
