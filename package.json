@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "main": "electron/main.cjs",
+  "repository": { "type": "git", "url": "https://github.com/chenhaiyan123/ai-auto-explorer.git" },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -20,7 +21,8 @@
     "files": ["dist/**/*", "electron/**/*", "package.json"],
     "mac": { "target": "dmg", "category": "public.app-category.productivity" },
     "win": { "target": "nsis" },
-    "linux": { "target": "AppImage" }
+    "linux": { "target": "AppImage" },
+    "publish": [{ "provider": "github", "owner": "chenhaiyan123", "repo": "ai-auto-explorer" }]
   },
   "dependencies": {
     "cors": "^2.8.5",

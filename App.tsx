@@ -18,6 +18,8 @@ import AgentTeamPanel, { AgentTeamState, initialAgentTeamState } from './compone
 import QuestionEvaluator from './components/QuestionEvaluator';
 import QuestionBoard from './components/QuestionBoard';
 import TeamChat from './components/TeamChat';
+import DownloadModal from './components/DownloadModal';
+const IS_DESKTOP = typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent);
 import SettingsModal from './components/SettingsModal';
 import { QVSReport } from './services/qvsService';
 import { resolveNodeByTitle } from './services/noteLinks';
@@ -1059,6 +1061,7 @@ const App: React.FC = () => {
   const [notesSearch, setNotesSearch] = useState('');
   const [showGraphModal, setShowGraphModal] = useState(false); // 图谱弹出层
   const [showQuestionBoard, setShowQuestionBoard] = useState(false); // 问题广场
+  const [showDownloadModal, setShowDownloadModal] = useState(false); // 下载客户端
   const [teamBusy, setTeamBusy] = useState(false); // AI 组队进行中
   const [activeModel, setActiveModel] = useState<string>(() => { try { return loadLLMSettings().model || ''; } catch { return ''; } });
   const [rightChatOpen, setRightChatOpen] = useState(true);     // 右侧 AI 对话栏
@@ -1801,6 +1804,15 @@ const App: React.FC = () => {
             <span className="truncate">{activeModel || '未配置模型'}</span>
           </button>
 
+          {/* 下载客户端（在桌面客户端内则隐藏） */}
+          {!IS_DESKTOP && (
+            <button
+              onClick={() => setShowDownloadModal(true)}
+              className="px-2.5 py-1.5 bg-slate-800 hover:bg-blue-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-blue-400 flex items-center gap-1"
+              title="下载桌面客户端（支持本地模型 / 7×24）"
+            >⬇ 客户端</button>
+          )}
+
           {/* 问题广场：筛选有价值的问题 */}
           <button
             onClick={() => setShowQuestionBoard(true)}
@@ -2085,6 +2097,9 @@ const App: React.FC = () => {
           <span className="text-xs font-bold text-blue-300">🤝 AI 正在读懂目标、拆解方向、组建团队…</span>
         </div>
       )}
+
+      {/* 下载客户端 */}
+      {showDownloadModal && <DownloadModal onClose={() => setShowDownloadModal(false)} />}
 
       {/* 问题广场 */}
       {showQuestionBoard && <QuestionBoard userKey={user?.username || 'guest'} onClose={() => setShowQuestionBoard(false)} onStartProject={(text) => handleCreateProject(text)} />}
