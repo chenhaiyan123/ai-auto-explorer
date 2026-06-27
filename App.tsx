@@ -8,7 +8,7 @@ import NodeDetails from './components/NodeDetails';
 import DecisionModal from './components/DecisionModal';
 import { exploreNode, chatWithNode, generateProjectSummary, callGemini, identifyNodeTask } from './services/geminiService';
 import { monitor } from './services/monitoringService';
-import { auth } from './services/authService';
+import { auth, hasAuthBackend } from './services/authService';
 import { GEMINI_MODEL } from './constants';
 import { analyzeIntentWithAutoConfirm, IntentAnalysis, ExplorationMode } from './services/intentService';
 import IntentConfirmModal from './components/IntentConfirmModal';
@@ -1652,22 +1652,27 @@ const App: React.FC = () => {
             {/* 登录方式切换 */}
             {!isOtpSent && (
               <div className="flex gap-2 p-1 bg-slate-800 rounded-xl">
-                <button 
-                  onClick={() => setLoginMethod('wechat')} 
+                {/* 托管版当前只有邮箱是真登录，微信/短信暂隐藏（需后端+资质） */}
+                {!hasAuthBackend() && (
+                <button
+                  onClick={() => setLoginMethod('wechat')}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'wechat' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-6.656-6.088V8.89c-.135-.01-.27-.027-.407-.03zm-2.53 3.274c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z"/></svg>
                   微信
                 </button>
-                <button 
-                  onClick={() => setLoginMethod('phone')} 
+                )}
+                {!hasAuthBackend() && (
+                <button
+                  onClick={() => setLoginMethod('phone')}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'phone' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
                   短信
                 </button>
-                <button 
-                  onClick={() => setLoginMethod('email')} 
+                )}
+                <button
+                  onClick={() => setLoginMethod('email')}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'email' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
@@ -1711,7 +1716,13 @@ const App: React.FC = () => {
             {loginMethod === 'email' && !isOtpSent && (
               <>
                 <input type="email" placeholder="电子邮箱" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
-                <button onClick={() => { if (loginEmail.includes('@')) { setIsOtpSent(true); setOtpCode('123456'); } }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">获取邮箱验证码</button>
+                <button onClick={async () => {
+                  if (!loginEmail.includes('@')) { alert('请输入正确的邮箱'); return; }
+                  if (hasAuthBackend()) {
+                    try { const d = await auth.sendEmailCode(loginEmail); setIsOtpSent(true); setOtpCode(''); if (d.devCode) alert('开发模式验证码：' + d.devCode); }
+                    catch (e: any) { alert(e.message || '发送失败'); }
+                  } else { setIsOtpSent(true); setOtpCode('123456'); }
+                }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">获取邮箱验证码</button>
               </>
             )}
             
@@ -1722,7 +1733,12 @@ const App: React.FC = () => {
                   验证码已发送至 {loginMethod === 'phone' ? loginPhone : loginEmail}
                 </div>
                 <input type="text" placeholder="输入验证码" value={otpCode} onChange={e => setOtpCode(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-4 text-center text-xl tracking-[0.5em] font-mono text-white outline-none" />
-                <button onClick={() => setUser(auth.loginWithEmail(loginMethod === 'phone' ? loginPhone : loginEmail))} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl">确认登录</button>
+                <button onClick={async () => {
+                  if (hasAuthBackend() && loginMethod === 'email') {
+                    try { setUser(await auth.verifyEmailCode(loginEmail, otpCode)); }
+                    catch (e: any) { alert(e.message || '验证失败'); }
+                  } else { setUser(auth.loginWithEmail(loginMethod === 'phone' ? loginPhone : loginEmail)); }
+                }} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl">确认登录</button>
                 <button onClick={() => { setIsOtpSent(false); setOtpCode(''); }} className="w-full text-xs text-slate-500 hover:text-slate-300 py-2">返回重新获取</button>
               </>
             )}

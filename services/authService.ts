@@ -2,6 +2,10 @@
 import { User } from '../types';
 
 const AUTH_KEY = 'exploration_auth_session';
+const TOKEN_KEY = 'aae-auth-token';
+// 托管版后端地址；不配置则不启用真实登录（开源/本地版保持免登录）
+const AUTH_API = ((import.meta as any).env?.VITE_AUTH_API || '').replace(/\/+$/, '');
+export const hasAuthBackend = (): boolean => !!AUTH_API;
 
 class AuthService {
   private currentUser: User | null = null;
@@ -31,6 +35,28 @@ class AuthService {
     return this.currentUser;
   }
 
+  // ===== 托管版：真实邮箱验证码登录（需配置 VITE_AUTH_API + 部署 auth-server） =====
+  public async sendEmailCode(email: string): Promise<{ devCode?: string }> {
+    const r = await fetch(`${AUTH_API}/auth/email/send-code`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || '发送失败');
+    return d;
+  }
+
+  public async verifyEmailCode(email: string, code: string): Promise<User> {
+    const r = await fetch(`${AUTH_API}/auth/email/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, code }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || '验证失败');
+    this.currentUser = { username: d.user.username, role: 'user', email: d.user.email };
+    this.save();
+    try { localStorage.setItem(TOKEN_KEY, d.token); } catch {}
+    return this.currentUser;
+  }
+
   private save() {
     localStorage.setItem(AUTH_KEY, JSON.stringify(this.currentUser));
   }
@@ -38,6 +64,7 @@ class AuthService {
   public logout() {
     this.currentUser = null;
     localStorage.removeItem(AUTH_KEY);
+    try { localStorage.removeItem(TOKEN_KEY); } catch {}
     // 移除导致 404 的页面刷新逻辑，改由 App.tsx 的状态控制直接回到登录页
   }
 

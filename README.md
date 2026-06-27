@@ -95,6 +95,21 @@ npm run explore                          # 开始 7×24 自主探索
 
 ---
 
+## 🔐 托管版登录（可选 · 仅 SaaS 需要）
+
+开源/本地版**不需要登录**，直接用。只有托管版（www.hiexplore.com）做用户体系时才用到——目前支持**邮箱验证码登录**：
+
+```bash
+# 后端（零额外依赖，复用 express）
+RESEND_API_KEY=你的Resend密钥 MAIL_FROM="HiExplore <noreply@hiexplore.com>" AUTH_SECRET=随机长串 npm run auth
+# 前端构建时设置后端地址即可启用真实登录；不设则保持免登录
+VITE_AUTH_API=https://api.hiexplore.com npm run build
+```
+
+不配 `RESEND_API_KEY` 时验证码会打印到后端控制台（方便本地联调）。手机号 / 微信扫码需各自的第三方账号与资质，后续接入。
+
+---
+
 ## 🏗️ 技术栈
 
 React 19 + TypeScript + Vite + Tailwind + D3，纯前端，零后端依赖，数据保存在浏览器与本地文件。
