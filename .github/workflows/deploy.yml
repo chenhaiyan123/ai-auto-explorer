@@ -25,6 +25,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          # 在仓库 Settings → Secrets and variables → Actions → Variables 里设置
+          # VITE_AUTH_API = https://api.hiexplore.com （不设则保持免登录）
+          VITE_AUTH_API: ${{ vars.VITE_AUTH_API }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

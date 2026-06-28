@@ -24,3 +24,6 @@ release/
 # 守护进程：本地配置(可能含 Key)与产出数据，不入库
 server/explorer.config.json
 explorer-vault/
+
+# 登录后端本地启动脚本（含 Resend Key），不入库
+server/start-auth.sh
