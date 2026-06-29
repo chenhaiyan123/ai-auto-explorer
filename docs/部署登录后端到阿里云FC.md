@@ -120,3 +120,31 @@ VITE_AUTH_API=https://api.hiexplore.com npm run build
 ## 安全提醒
 - `RESEND_API_KEY`、`AUTH_SECRET` 只放在 FC 环境变量里，不要写进代码、不要截图外泄。
 - 本地 `server/start-auth.sh`（含 Key）已加入 `.gitignore`，不会提交。
+
+---
+
+## 附：开启「免注册体验」额度（让新用户一进来就能用）
+
+后端 `auth-fc.mjs` 内置了一个体验代理：它替用户保管一个你自己的 DeepSeek Key，按额度转发，用户不用配置任何模型就能试。前端已自动接入（没自配 Key 就走这个代理，复用 `VITE_AUTH_API` 地址，无需额外前端变量）。
+
+**在 FC 的「环境变量」里再加这几条即可开启：**
+
+| 变量名 | 示例值 | 说明 |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | `sk-xxxx` | 你的 DeepSeek Key（不填则体验代理关闭） |
+| `DEEPSEEK_MODEL` | `deepseek-chat` | 可选，默认 deepseek-chat |
+| `TRIAL_ANON_QUOTA` | `5` | 匿名（免注册）每天次数 |
+| `TRIAL_USER_QUOTA` | `30` | 登录用户每天次数 |
+| `TRIAL_GLOBAL_DAILY_CAP` | `2000` | **全站每天总次数上限（护钱包，最重要）** |
+| `TRIAL_IP_PER_MIN` | `20` | 每 IP 每分钟限流 |
+| `TRIAL_MAX_TOKENS` | `2048` | 单次最大输出 token（封顶成本） |
+
+加完保存并**重新部署**。验证：
+```bash
+curl https://你的地址/api/quota -H "X-Device-Id: test123"
+# 期望 {"enabled":true,"scope":"anon","limit":5,"used":0,"remaining":5}
+```
+
+> 说明：当前额度是**内存计数**（A 方案 MVP），函数冷启动会重置。配合「全站每日上限」你的花费始终封顶可控。等有稳定流量了，再把计数换成表格存储/Redis 做持久化即可。
+
+前端表现：登录页多一个「🎁 先免注册体验一下」按钮；进去后顶栏显示「🎁 体验剩余 N/M」；用完会提示登录或填自己的 Key。
