@@ -35,6 +35,13 @@ class AuthService {
     return this.currentUser;
   }
 
+  /** 免注册体验：游客身份进入（无令牌，后端按匿名设备给小额度） */
+  public loginAsGuest(): User {
+    this.currentUser = { username: '体验用户', role: 'user', email: '' };
+    this.save();
+    return this.currentUser;
+  }
+
   // ===== 托管版：真实邮箱验证码登录（需配置 VITE_AUTH_API + 部署 auth-server） =====
   public async sendEmailCode(email: string): Promise<{ devCode?: string }> {
     const r = await fetch(`${AUTH_API}/auth/email/send-code`, {

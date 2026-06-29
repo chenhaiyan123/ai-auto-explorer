@@ -25,7 +25,7 @@ import { QVSReport } from './services/qvsService';
 import { resolveNodeByTitle } from './services/noteLinks';
 import { exportVaultZip, importMarkdownFiles, saveVaultToDirectory, supportsDirectoryPicker } from './services/vault';
 import { buildTeamPlan } from './services/teamService';
-import { loadLLMSettings } from './services/llmProvider';
+import { loadLLMSettings, isTrialMode, getTrialQuota, hasTrialBackend } from './services/llmProvider';
 import { getWithMigration, idbSet } from './services/storage';
 
 // ========== Agent 类型 ==========
@@ -1064,6 +1064,18 @@ const App: React.FC = () => {
   const [showDownloadModal, setShowDownloadModal] = useState(false); // 下载客户端
   const [teamBusy, setTeamBusy] = useState(false); // AI 组队进行中
   const [activeModel, setActiveModel] = useState<string>(() => { try { return loadLLMSettings().model || ''; } catch { return ''; } });
+  // 免配置体验：剩余次数（仅托管版体验模式下显示）
+  const [trialQuota, setTrialQuota] = useState<{ scope: 'anon' | 'user'; remaining: number; limit: number } | null>(null);
+  useEffect(() => {
+    if (!isTrialMode()) { setTrialQuota(null); return; }
+    let alive = true;
+    const refresh = async () => { const q = await getTrialQuota(); if (alive && q && q.enabled) setTrialQuota({ scope: q.scope, remaining: q.remaining, limit: q.limit }); };
+    refresh();
+    const id = setInterval(refresh, 20000);
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    return () => { alive = false; clearInterval(id); window.removeEventListener('focus', onFocus); };
+  }, [activeModel]);
   const [rightChatOpen, setRightChatOpen] = useState(true);     // 右侧 AI 对话栏
   const [rightChatWidth, setRightChatWidth] = useState(360);
   const [nodes, setNodes] = useState<ProblemNode[]>([]);
@@ -1751,6 +1763,16 @@ const App: React.FC = () => {
           </div>
         )}
         
+        {/* 免注册体验：游客进入，按匿名设备给小额度 */}
+        {!isLoginAsAdmin && hasTrialBackend() && (
+          <button
+            onClick={() => setUser(auth.loginAsGuest())}
+            className="w-full mt-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold py-3.5 rounded-xl flex items-center justify-center gap-2"
+          >
+            🎁 先免注册体验一下
+          </button>
+        )}
+
         <div className="mt-6 pt-4 border-t border-slate-800 text-center">
           <button onClick={() => { setIsLoginAsAdmin(!isLoginAsAdmin); setOtpCode(''); setIsOtpSent(false); }} className="text-slate-500 hover:text-white text-sm font-medium">{isLoginAsAdmin ? '返回普通登录' : '管理员入口'}</button>
         </div>
@@ -1819,6 +1841,18 @@ const App: React.FC = () => {
             <span>🧠</span>
             <span className="truncate">{activeModel || '未配置模型'}</span>
           </button>
+
+          {/* 体验剩余次数：仅免配置体验模式显示，用完引导注册/填 Key */}
+          {trialQuota && (
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className={`hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-bold border transition-colors ${trialQuota.remaining > 0 ? 'bg-emerald-600/15 text-emerald-400 border-emerald-600/30 hover:bg-emerald-600/25' : 'bg-amber-600/15 text-amber-400 border-amber-600/30 hover:bg-amber-600/25'}`}
+              title={trialQuota.scope === 'anon' ? '免注册体验额度（登录可获得更多，或填入你自己的模型 Key）' : '今日体验额度（用完可填入你自己的模型 Key）'}
+            >
+              <span>🎁</span>
+              <span>体验剩余 {trialQuota.remaining}/{trialQuota.limit}</span>
+            </button>
+          )}
 
           {/* 下载客户端（在桌面客户端内则隐藏） */}
           {!IS_DESKTOP && (

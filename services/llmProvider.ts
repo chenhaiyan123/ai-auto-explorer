@@ -9,7 +9,7 @@
  * 配置保存在 localStorage，用户可在「设置 → 模型接入」中修改。
  */
 
-export type LLMProviderType = 'cloud-proxy' | 'openai-compatible';
+export type LLMProviderType = 'cloud-proxy' | 'openai-compatible' | 'trial';
 
 export interface LLMSettings {
   provider: LLMProviderType;
@@ -26,6 +26,27 @@ const STORAGE_KEY = 'ai_explorer_llm_settings';
 /** 部署者可通过环境变量提供默认云代理（见 .env.example），开源用户默认走本地配置 */
 const ENV_PROXY_URL: string = (import.meta as any).env?.VITE_API_PROXY_URL || '';
 
+/** 体验代理后端：默认复用登录后端(VITE_AUTH_API)，也可单独用 VITE_TRIAL_API 指定 */
+const ENV_TRIAL_API: string = (((import.meta as any).env?.VITE_TRIAL_API || (import.meta as any).env?.VITE_AUTH_API) || '').replace(/\/+$/, '');
+/** 托管版是否提供「免配置体验」 */
+export const hasTrialBackend = (): boolean => !!ENV_TRIAL_API;
+
+const DEVICE_KEY = 'hiexplore-device-id';
+/** 匿名体验用的稳定设备标识（存在浏览器） */
+export function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = (globalThis.crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(16).slice(2)));
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch { return 'nodev'; }
+}
+function getAuthToken(): string {
+  try { return localStorage.getItem('aae-auth-token') || ''; } catch { return ''; }
+}
+
 export const PRESET_PROVIDERS: { label: string; baseUrl: string; model: string; hint: string }[] = [
   { label: 'Ollama（本地）', baseUrl: 'http://localhost:11434/v1', model: 'qwen2.5:7b', hint: '需先运行 ollama serve' },
   { label: 'LM Studio（本地）', baseUrl: 'http://localhost:1234/v1', model: 'local-model', hint: '在 LM Studio 中启动本地服务器' },
@@ -36,10 +57,19 @@ export const PRESET_PROVIDERS: { label: string; baseUrl: string; model: string; 
 ];
 
 export function getDefaultSettings(): LLMSettings {
+  // 托管版：新用户默认走「免配置体验」（DeepSeek，有额度），一进来就能用
+  if (ENV_TRIAL_API) {
+    return { provider: 'trial', baseUrl: ENV_TRIAL_API, apiKey: '', model: 'deepseek-chat' };
+  }
   if (ENV_PROXY_URL) {
     return { provider: 'cloud-proxy', baseUrl: ENV_PROXY_URL, apiKey: '', model: 'qwen-turbo' };
   }
   return { provider: 'openai-compatible', baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'qwen2.5:7b' };
+}
+
+/** 当前是否处于「免配置体验」模式 */
+export function isTrialMode(): boolean {
+  return loadLLMSettings().provider === 'trial';
 }
 
 export function loadLLMSettings(): LLMSettings {
@@ -76,6 +106,16 @@ export interface LLMCallOptions {
 export interface LLMResult {
   content: string;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
+  /** 体验模式下返回的剩余次数信息 */
+  trial?: { scope: 'anon' | 'user'; remaining: number; limit: number };
+}
+
+/** 体验额度用完时抛出的错误（前端可据此引导注册/填 Key） */
+export class TrialQuotaError extends Error {
+  code: string; scope?: string;
+  constructor(message: string, code = 'QUOTA_EXCEEDED', scope?: string) {
+    super(message); this.name = 'TrialQuotaError'; this.code = code; this.scope = scope;
+  }
 }
 
 /**
@@ -90,17 +130,25 @@ export async function callLLM(
     throw new Error('尚未配置模型 API，请点击右上角 ⚙️ 设置模型接入');
   }
 
-  const url = s.provider === 'cloud-proxy'
-    ? s.baseUrl
-    : `${s.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+  const isTrial = s.provider === 'trial';
+  const trialBase = (ENV_TRIAL_API || s.baseUrl).replace(/\/+$/, '');
+  const url = isTrial
+    ? `${trialBase}/api/chat`
+    : s.provider === 'cloud-proxy'
+      ? s.baseUrl
+      : `${s.baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (s.provider === 'openai-compatible' && s.apiKey) {
+  if (isTrial) {
+    headers['X-Device-Id'] = getDeviceId();
+    const t = getAuthToken();
+    if (t) headers['Authorization'] = `Bearer ${t}`;
+  } else if (s.provider === 'openai-compatible' && s.apiKey) {
     headers['Authorization'] = `Bearer ${s.apiKey}`;
   }
 
   const body: any = {
-    model: options.model || s.model,
+    model: options.model || s.model,  // 体验模式下后端会忽略此字段、强制用服务端模型
     messages,
     max_tokens: options.maxTokens ?? 2048,
     temperature: options.temperature ?? 0.7,
@@ -120,17 +168,36 @@ export async function callLLM(
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({} as any));
-      throw new Error(`HTTP ${response.status}: ${err.error?.message || response.statusText}`);
+      if (isTrial && (response.status === 402 || response.status === 429)) {
+        throw new TrialQuotaError(err.error || '体验次数已用完', err.code || 'QUOTA_EXCEEDED', err.scope);
+      }
+      // 兼容两种错误结构：OpenAI 的 {error:{message}} 与本服务的 {error:"..."}
+      const msg = err.error?.message || (typeof err.error === 'string' ? err.error : '') || response.statusText;
+      throw new Error(`HTTP ${response.status}: ${msg}`);
     }
 
     const data = await response.json();
     return {
       content: data.choices?.[0]?.message?.content || data.content || '',
       usage: data.usage,
+      trial: data._trial,
     };
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+/** 查询体验剩余次数（托管版；非托管或未开启返回 null） */
+export async function getTrialQuota(): Promise<{ enabled: boolean; scope: 'anon' | 'user'; limit: number; used: number; remaining: number } | null> {
+  if (!ENV_TRIAL_API) return null;
+  try {
+    const headers: Record<string, string> = { 'X-Device-Id': getDeviceId() };
+    const t = getAuthToken();
+    if (t) headers['Authorization'] = `Bearer ${t}`;
+    const r = await fetch(`${ENV_TRIAL_API}/api/quota`, { headers });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
 }
 
 /**
