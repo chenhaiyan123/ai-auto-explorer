@@ -43,8 +43,8 @@ Every AI call uses the model you configure; no built‑in backend:
 ## 🚀 Quick start
 
 ```bash
-git clone https://github.com/<your-name>/hiexplore.git
-cd hiexplore
+git clone https://github.com/chenhaiyan123/ai-auto-explorer.git
+cd ai-auto-explorer
 npm install
 npm run dev        # http://localhost:3000
 ```

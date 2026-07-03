@@ -61,8 +61,8 @@ HiExplore 想改变这一点：你把一个值得长期投入的问题「立项�
 ## 🔗 相关笔记与资源
 
 - [[README]]
-- GitHub：https://github.com/chenhaiyan123/hiexplore
-- 在线体验：https://chenhaiyan123.github.io/hiexplore/
+- GitHub：https://github.com/chenhaiyan123/ai-auto-explorer
+- 在线体验：https://chenhaiyan123.github.io/ai-auto-explorer/
 
 ---
 *最近更新：2026-07-03*

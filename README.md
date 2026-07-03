@@ -44,8 +44,8 @@ HiExplore 是一个开源的、**问题驱动的自主探究平台**。它把每
 ## 🚀 快速开始
 
 ```bash
-git clone https://github.com/<your-name>/hiexplore.git
-cd hiexplore
+git clone https://github.com/chenhaiyan123/ai-auto-explorer.git
+cd ai-auto-explorer
 npm install
 npm run dev        # http://localhost:3000
 ```
