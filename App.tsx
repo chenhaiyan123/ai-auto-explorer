@@ -6,7 +6,7 @@ import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage } from './
 import GraphVisualization from './components/GraphVisualization';
 import NodeDetails from './components/NodeDetails';
 import DecisionModal from './components/DecisionModal';
-import { exploreNode, chatWithNode, generateProjectSummary, callGemini, identifyNodeTask } from './services/geminiService';
+import { exploreNode, chatWithNode, generateProjectSummary, callGemini, identifyNodeTask, synthesizeOverview } from './services/geminiService';
 import { monitor } from './services/monitoringService';
 import { auth, hasAuthBackend } from './services/authService';
 import { GEMINI_MODEL } from './constants';
@@ -1157,6 +1157,10 @@ const App: React.FC = () => {
   const runExplorationCycleRef = useRef<(() => void) | null>(null);
   useEffect(() => { continuousModeRef.current = continuousMode; }, [continuousMode]);
   const MAX_AUTO_NODES = 50;
+  // 「总览优先」：探索一开始先写总览，之后每解决若干节点自动刷新一次
+  const overviewRefreshingRef = useRef(false);
+  const solvedSinceOverviewRef = useRef(0);
+  const OVERVIEW_REFRESH_EVERY = 3; // 每解决 3 个节点刷新一次总览
 
   // 加载会员状态
   useEffect(() => {
@@ -1313,6 +1317,42 @@ const App: React.FC = () => {
     finally { isProposingRef.current = false; }
   }, [nodes, currentProject, addNode, addNotification]);
 
+  // 「总览优先」：把当前已探索到的内容合成/刷新为「项目总览」正文。
+  // 用户手动编辑过总览（autoNote===false）则不再覆盖，尊重人的编辑。
+  const refreshOverview = useCallback(async (reason: 'start' | 'progress' = 'progress') => {
+    if (overviewRefreshingRef.current) return;
+    const overview = nodes.find(n => n.noteType === 'overview');
+    if (!overview) return;
+    if (overview.autoNote === false) return; // 用户已接管，不自动覆盖
+    const goal = currentProject?.metaProblem || currentProject?.name || '';
+    const name = currentProject?.name || goal.slice(0, 16) || '项目';
+    const statusZh = (s: NodeStatus) =>
+      s === NodeStatus.SOLVED ? '已完成'
+      : s === NodeStatus.EXPLORING ? '探索中'
+      : s === NodeStatus.NEEDS_REVIEW ? '待人工复核'
+      : s === NodeStatus.INVALID ? '已终止' : '待探索';
+    const directions = nodes
+      .filter(n => n.noteType === 'direction' || (!n.noteType))
+      .map(n => ({ title: n.title, status: statusZh(n.status), note: n.notes || n.fullNote || '' }));
+    const findings = researchFindings.map(f => f.insight).filter(Boolean);
+    const cards = knowledgeCards.map(c => c.title).filter(Boolean);
+    overviewRefreshingRef.current = true;
+    try {
+      const md = await synthesizeOverview(name, goal, directions, findings, cards);
+      if (md && md.trim().length > 20) {
+        updateNode(overview.id, { fullNote: md.trim(), autoNote: true, noteUpdatedAt: Date.now() });
+        solvedSinceOverviewRef.current = 0;
+        if (reason === 'start') addNotification('info', '🏠 已生成项目总览', '总览会随探索进度自动更新');
+      }
+    } catch (e) {
+      console.warn('[总览] 合成失败', e);
+    } finally {
+      overviewRefreshingRef.current = false;
+    }
+  }, [nodes, currentProject, researchFindings, knowledgeCards, updateNode, addNotification]);
+  const refreshOverviewRef = useRef(refreshOverview);
+  useEffect(() => { refreshOverviewRef.current = refreshOverview; }, [refreshOverview]);
+
   const runExplorationCycle = useCallback(async () => {
     if (decision || isProcessingRef.current || !isLoopingRef.current) return;
     
@@ -1452,8 +1492,14 @@ const App: React.FC = () => {
         addNotification('warning', '⚠️ 需要您的决策', `「${nodeTitle}」遇到了分支点，请做出选择`);
       } else {
         updateNode(cid, { status: NodeStatus.SOLVED, confidence: result.confidence, notes: result.notes, taskType });
+        // 「总览优先」：每解决若干节点，自动刷新一次项目总览，让用户随时看到最新进展
+        solvedSinceOverviewRef.current += 1;
+        if (solvedSinceOverviewRef.current >= OVERVIEW_REFRESH_EVERY) {
+          solvedSinceOverviewRef.current = 0;
+          setTimeout(() => refreshOverviewRef.current?.('progress'), 300);
+        }
       }
-      
+
       // 成功后重置重试计数
       retryCountRef.current[cid] = 0;
       
@@ -1501,6 +1547,11 @@ const App: React.FC = () => {
       return () => clearTimeout(t);
     }
   }, [isLooping, decision, runExplorationCycle]);
+
+  // 「总览优先」：一开始探索，就第一时间把项目总览写出来（用户基本先看总览）
+  useEffect(() => {
+    if (isLooping) { const t = setTimeout(() => refreshOverviewRef.current?.('start'), 200); return () => clearTimeout(t); }
+  }, [isLooping]);
 
   const handleDecisionChoice = (action: 'continue' | 'add_subproblem' | 'terminate', subTitle?: string) => { if (!decision) return; if (action === 'terminate') updateNode(decision.nodeId, { status: NodeStatus.INVALID, pendingDecision: undefined }); else if (action === 'add_subproblem' && subTitle) addNode(subTitle, [decision.nodeId]); else if (action === 'continue') updateNode(decision.nodeId, { status: NodeStatus.SOLVED, pendingDecision: undefined }); setDecision(null); setIsLooping(true); };
   const handleNodeClick = (node: ProblemNode) => { setSelectedNodeId(node.id); if (node.status === NodeStatus.NEEDS_REVIEW && node.pendingDecision) setDecision(node.pendingDecision); };

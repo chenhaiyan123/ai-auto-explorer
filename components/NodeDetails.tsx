@@ -138,7 +138,8 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
   if (!node) return null;
 
   const saveNote = () => {
-    onUpdateNodeData(node.id, { fullNote: noteDraft, noteUpdatedAt: Date.now() });
+    // 用户手动保存后，标记 autoNote=false：AI 的「总览自动刷新」不再覆盖你的编辑
+    onUpdateNodeData(node.id, { fullNote: noteDraft, noteUpdatedAt: Date.now(), autoNote: false });
     setIsEditingNote(false);
   };
 

@@ -150,6 +150,85 @@ export const generateProjectSummary = async (project: Project): Promise<string> 
   return await callGemini([{ role: "user", content: `总结(80字):\n目标:${project.metaProblem}\n${nodes}` }]);
 };
 
+/**
+ * 合成「项目总览」正文（结构化 Markdown）。
+ * 用户第一时间看的是总览，所以探索一开始就先把它写全、并随进度持续刷新。
+ * 只依据当前已探索到的内容如实汇总，未知的写「待探索」，不编造。
+ *
+ * @param goal       项目目标/元问题
+ * @param name       项目名
+ * @param directions 关键方向节点（标题 + 状态 + 已有笔记摘要）
+ * @param findings   已产出的研究发现（insight 文本）
+ * @param cards      已产出的知识卡片标题
+ */
+export const synthesizeOverview = async (
+  name: string,
+  goal: string,
+  directions: { title: string; status: string; note?: string }[],
+  findings: string[] = [],
+  cards: string[] = []
+): Promise<string> => {
+  const dirLines = directions.length
+    ? directions.map(d => `- ${d.title}（状态:${d.status}）${d.note ? '：' + d.note.slice(0, 80) : ''}`).join('\n')
+    : '（暂无，AI 正在拆解方向）';
+  const findLines = findings.length ? findings.slice(0, 12).map(f => `- ${f.slice(0, 120)}`).join('\n') : '（尚无）';
+  const cardLines = cards.length ? cards.slice(0, 12).join('、') : '（尚无）';
+
+  const sys = `你是项目的「总览编辑」。任务：把已探索到的内容，汇总成一篇让人一眼看懂项目全貌的「项目总览」。
+要求：
+1. 严格按给定的 Markdown 标题结构输出，不要新增或删除章节标题。
+2. 只依据我提供的材料如实总结；不知道的写「待探索」，绝不编造事实或数据。
+3. 语言精炼，多用短句和要点；每个要点一行，别写大段空话。
+4. 「主要方向」里每个方向用 [[方向标题]] 双链格式，标题必须与我给的完全一致，方便跳转。
+5. 直接输出正文，不要解释、不要用代码块包裹。`;
+
+  const user = `项目名：${name}
+核心目标 / 元问题：${goal}
+
+已拆解的关键方向：
+${dirLines}
+
+已产出的研究发现：
+${findLines}
+
+已产出的知识卡片：${cardLines}
+
+请按以下结构输出总览正文（保留这些标题）：
+
+# ${name} · 总览
+
+> 用一句话说清这个项目在做什么。
+
+## 📌 项目简介
+（背景、要解决什么、为什么值得做，2–4 句）
+
+## 🎯 目标与成功标准
+（核心目标；怎样算成功；不做什么）
+
+## 🔑 关键点与关键问题
+（成败取决于哪几件事、还有哪些核心问题没解决）
+
+## 🧭 主要方向
+（逐个列出关键方向，用 [[方向标题]]，标注状态与一句话进展）
+
+## 📈 进展情况
+（已完成 / 进行中 / 下一步；如实反映当前探索到哪一步）
+
+## 🧩 目前遇到的问题
+（当前卡点、风险、待人工决策的事；没有就写「暂无」）
+
+## 🗺️ 后续规划
+（接下来打算探索的方向与优先级）
+
+---
+*本总览由 AI 随探索进度自动维护，可手动编辑（编辑后不再自动覆盖）*`;
+
+  return await callGemini([
+    { role: 'system', content: sys },
+    { role: 'user', content: user },
+  ]);
+};
+
 export const chatWithNode = async (node: ProblemNode, message: string, history: ChatMessage[]): Promise<string> => {
   const recent = history.slice(-3);
   const iotPrompt = buildIoTSystemPrompt(); // 已注册 IoT 设备时，告知 AI 可调用

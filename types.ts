@@ -48,6 +48,8 @@ export interface ProblemNode {
   verifiedAt?: number;
   /** 笔记最后编辑时间 */
   noteUpdatedAt?: number;
+  /** 该笔记正文是否由 AI 自动维护（如总览）。用户一旦手动编辑即置 false，AI 不再覆盖 */
+  autoNote?: boolean;
   taskType?: 'image' | 'code' | 'web' | 'research' | 'none';
   pendingDecision?: DecisionPoint;
   x?: number;
