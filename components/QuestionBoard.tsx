@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { evaluateQuestion, quickEstimate, QVSReport } from '../services/qvsService';
+import { buildSeedQuestions, SEED_CATEGORIES } from '../services/seedQuestions';
 
 /**
  * 有价值问题广场（知乎式）
@@ -18,6 +19,7 @@ interface VQuestion {
   reasoning?: string;   // AI 总评
   interested?: boolean; // 我关注
   upvotes?: number;     // 赞（兴趣热度）
+  category?: string;    // 领域（种子问题自带）
 }
 
 type SortMode = 'value' | 'hot' | 'new';
@@ -37,15 +39,38 @@ const QuestionBoard: React.FC<{
   onStartProject: (question: string) => void;
 }> = ({ userKey, onClose, onStartProject }) => {
   const storageKey = `aae-questions_${userKey}`;
-  // 用惰性初始化同步读取，避免挂载时先写入空数组覆盖已存数据
+  const seededKey = `aae-questions-seeded_${userKey}`;
+  // 用惰性初始化同步读取，避免挂载时先写入空数组覆盖已存数据。
+  // 首次打开（从未种子化过且当前为空）时，自动注入精选问题做冷启动。
   const [questions, setQuestions] = useState<VQuestion[]>(() => {
-    try { const s = localStorage.getItem(storageKey); return s ? JSON.parse(s) : []; } catch { return []; }
+    try {
+      const s = localStorage.getItem(storageKey);
+      const existing: VQuestion[] = s ? JSON.parse(s) : [];
+      if (existing.length === 0 && !localStorage.getItem(seededKey)) {
+        const seeds = buildSeedQuestions();
+        localStorage.setItem(seededKey, '1');
+        return seeds;
+      }
+      return existing;
+    } catch { return []; }
   });
   const [input, setInput] = useState('');
-  const [sort, setSort] = useState<SortMode>('value');
+  const [sort, setSort] = useState<SortMode>('new');
   const [onlyValuable, setOnlyValuable] = useState(false);
   const [onlyInterested, setOnlyInterested] = useState(false);
+  const [category, setCategory] = useState<string>('全部');
   const [evaluatingId, setEvaluatingId] = useState<string | null>(null);
+
+  // 手动重新载入精选问题库（去重后并入，已删除的不强行恢复）
+  const loadSeeds = () => {
+    const seeds = buildSeedQuestions();
+    setQuestions(prev => {
+      const existingTexts = new Set(prev.map(q => q.text.trim()));
+      const fresh = seeds.filter(s => !existingTexts.has(s.text.trim()));
+      return [...prev, ...fresh];
+    });
+    try { localStorage.setItem(seededKey, '1'); } catch {}
+  };
 
   // 持久化
   useEffect(() => {
@@ -74,17 +99,24 @@ const QuestionBoard: React.FC<{
     }
   };
 
+  // 当前问题里实际出现过的领域（用于领域筛选条）
+  const categories = useMemo(() => {
+    const present = new Set(questions.map(q => q.category).filter(Boolean) as string[]);
+    return ['全部', ...SEED_CATEGORIES.filter(c => present.has(c))];
+  }, [questions]);
+
   const view = useMemo(() => {
     let list = [...questions];
     if (onlyValuable) list = list.filter(q => (q.score ?? -1) >= 60);
     if (onlyInterested) list = list.filter(q => q.interested);
+    if (category !== '全部') list = list.filter(q => q.category === category);
     list.sort((a, b) => {
       if (sort === 'value') return (b.score ?? -1) - (a.score ?? -1) || b.createdAt - a.createdAt;
       if (sort === 'hot') return (b.upvotes || 0) - (a.upvotes || 0) || b.createdAt - a.createdAt;
       return b.createdAt - a.createdAt;
     });
     return list;
-  }, [questions, sort, onlyValuable, onlyInterested]);
+  }, [questions, sort, onlyValuable, onlyInterested, category]);
 
   const est = quickEstimate(input);
 
@@ -92,7 +124,10 @@ const QuestionBoard: React.FC<{
     <div className="fixed inset-0 z-[95] flex flex-col bg-slate-950/95 backdrop-blur-sm">
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/80">
         <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2"><span>🔥</span> 问题广场 · 筛选有价值的问题</h3>
-        <button onClick={onClose} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white transition-colors" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        <div className="flex items-center gap-2">
+          <button onClick={loadSeeds} className="px-3 py-1.5 bg-amber-900/40 hover:bg-amber-800/50 border border-amber-600/40 text-amber-300 rounded-lg text-[11px] font-medium transition-colors" title="并入平台精选的问题库">✨ 载入精选</button>
+          <button onClick={onClose} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white transition-colors" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
       </div>
 
       <div className="max-w-3xl w-full mx-auto flex-1 overflow-y-auto scroll-hide p-4 space-y-4">
@@ -123,6 +158,21 @@ const QuestionBoard: React.FC<{
           <span className="text-[10px] text-slate-600 ml-auto">{view.length} / {questions.length} 个问题</span>
         </div>
 
+        {/* 领域筛选 */}
+        {categories.length > 1 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {categories.map(c => (
+              <button
+                key={c}
+                onClick={() => setCategory(c)}
+                className={`px-2.5 py-1 text-[10px] rounded-full border transition-colors ${category === c ? 'bg-amber-600/80 border-amber-500 text-white font-bold' : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'}`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* 列表 */}
         {view.length === 0 ? (
           <div className="text-center text-[12px] text-slate-600 py-16">还没有问题。先抛出一个值得长期研究的问题吧。</div>
@@ -142,6 +192,7 @@ const QuestionBoard: React.FC<{
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
+                  {q.category && <div className="inline-block text-[9px] text-amber-400/80 bg-amber-900/20 border border-amber-500/20 rounded px-1.5 py-0.5 mb-1.5">{q.category}</div>}
                   <div className="text-sm text-slate-200 leading-relaxed">{q.text}</div>
                   {q.reasoning && <div className="text-[10px] text-slate-500 mt-1 leading-relaxed">{q.reasoning}</div>}
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
