@@ -29,6 +29,12 @@ jobs:
           # 在仓库 Settings → Secrets and variables → Actions → Variables 里设置
           # VITE_AUTH_API = https://api.hiexplore.com （不设则保持免登录）
           VITE_AUTH_API: ${{ vars.VITE_AUTH_API }}
+          # 流量统计（Umami）：不设则不启用
+          VITE_UMAMI_WEBSITE_ID: ${{ vars.VITE_UMAMI_WEBSITE_ID }}
+          VITE_UMAMI_SRC: ${{ vars.VITE_UMAMI_SRC }}
+          # 用户聊天挂件（Tawk.to）：不设则不启用
+          VITE_TAWK_PROPERTY_ID: ${{ vars.VITE_TAWK_PROPERTY_ID }}
+          VITE_TAWK_WIDGET_ID: ${{ vars.VITE_TAWK_WIDGET_ID }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

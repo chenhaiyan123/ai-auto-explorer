@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ProblemNode, NodeStatus, ChatMessage, AgentResult } from '../types';
+import { ProblemNode, NodeStatus, ChatMessage, AgentResult, DecisionRecord } from '../types';
+import { TRIGGER_LABEL } from '../services/decisionService';
 import { runAgentTask, identifyNodeTask } from '../services/geminiService';
 import MarkdownView from './MarkdownView';
 import { getOutgoingLinks, getBacklinks, resolveNodeByTitle } from '../services/noteLinks';
@@ -24,6 +25,12 @@ interface NodeDetailsProps {
   onWikiLink?: (target: string, exists: boolean, fromNode: ProblemNode) => void;
   /** 布局变体：panel=右侧滑出（默认），center=作为中间主编辑区铺满 */
   variant?: 'panel' | 'center';
+  /** 决策节点持久化：本项目的决策记录（组件内会按当前节点过滤） */
+  decisions?: DecisionRecord[];
+  /** 打开决策记录弹窗 */
+  onRecordDecision?: (nodeId: string) => void;
+  /** 从某条决策记录 fork 复刻分支 */
+  onForkDecision?: (decisionId: string) => void;
 }
 
 const AGENT_MARKETPLACE = [
@@ -36,7 +43,8 @@ const AGENT_MARKETPLACE = [
 
 const NodeDetails: React.FC<NodeDetailsProps> = ({
   node, isFocused, isWide, onToggleWide, onClose, onSendMessage, onUpdateNotes, onUpdateNodeData, onAppendToSummary, onAddChildNode,
-  allNodes = [], onNavigate, onWikiLink, variant = 'panel'
+  allNodes = [], onNavigate, onWikiLink, variant = 'panel',
+  decisions = [], onRecordDecision, onForkDecision
 }) => {
   const isCenter = variant === 'center';
   const [chatInput, setChatInput] = useState('');
@@ -56,7 +64,13 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
   const [folderInput, setFolderInput] = useState(node?.folder || '');
   const [agentInput, setAgentInput] = useState(node?.assignedAgent || '');
   // 笔记属性/功能模块：默认不展开任何模块，正常只看笔记本身
-  const [activeModule, setActiveModule] = useState<null | 'links' | 'task' | 'results' | 'chat' | 'props'>(null);
+  const [activeModule, setActiveModule] = useState<null | 'links' | 'task' | 'results' | 'chat' | 'props' | 'decision'>(null);
+
+  // 当前节点的决策记录（决策节点持久化）
+  const nodeDecisions = useMemo(
+    () => decisions.filter(d => d.nodeId === node?.id).sort((a, b) => b.createdAt - a.createdAt),
+    [decisions, node?.id]
+  );
 
   // ===== 双向链接（Obsidian 式）=====
   const outgoingLinks = useMemo(
@@ -351,6 +365,36 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
             </form>
           </div>
         );
+      case 'decision':
+        return (
+          <div className="space-y-3">
+            {onRecordDecision && (
+              <button onClick={() => { onRecordDecision(node.id); setActiveModule(null); }}
+                className="w-full py-2.5 bg-amber-600/20 hover:bg-amber-600 border border-amber-500/40 text-amber-300 hover:text-white rounded-xl text-[11px] font-bold transition-colors">
+                ⚖️ 记录一个决策（选了什么 / 放弃了什么 / 为什么）
+              </button>
+            )}
+            {nodeDecisions.length === 0 ? (
+              <div className="text-[10px] text-slate-600 italic text-center py-3">这个节点还没有决策记录。每条记录会保存当时的子树快照，之后可随时 fork 复刻。</div>
+            ) : nodeDecisions.map(d => (
+              <div key={d.id} className="bg-slate-950/60 border border-slate-800 rounded-lg p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-[11px] font-bold text-slate-200">{d.question}</div>
+                  {onForkDecision && (
+                    <button onClick={() => onForkDecision(d.id)} className="flex-shrink-0 text-[9px] px-2 py-0.5 bg-purple-600/20 hover:bg-purple-600 border border-purple-500/40 text-purple-300 hover:text-white rounded-full font-bold transition-colors" title="用当时的快照复刻一条新分支">⑂ Fork</button>
+                  )}
+                </div>
+                <div className="text-[9px] text-slate-500 mt-0.5 mb-1.5">{TRIGGER_LABEL[d.trigger]} · {new Date(d.createdAt).toLocaleString()} · 快照 {d.snapshot.length} 节点{(d.forks?.length || 0) > 0 ? ` · 已 fork ${d.forks!.length} 次` : ''}</div>
+                {d.options.map((o, i) => (
+                  <div key={i} className="text-[10px] leading-relaxed">
+                    <span className={o.chosen ? 'text-emerald-400 font-bold' : 'text-red-400/80 line-through'}>{o.chosen ? '✓' : '✗'} {o.label}</span>
+                    {o.reason && <span className="text-slate-500"> — {o.reason}</span>}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        );
       case 'props':
         return (
           <div className="space-y-3">
@@ -383,7 +427,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
     }
   };
 
-  const moduleTitle: Record<string, string> = { links: '🔗 关联笔记', task: '🤖 任务执行建议', results: '📊 记录成果', chat: '💬 咨询对话', props: 'ℹ️ 属性 · 负责Agent / 文件夹 / 标签 / 导出' };
+  const moduleTitle: Record<string, string> = { links: '🔗 关联笔记', task: '🤖 任务执行建议', results: '📊 记录成果', chat: '💬 咨询对话', props: 'ℹ️ 属性 · 负责Agent / 文件夹 / 标签 / 导出', decision: '⚖️ 决策记录 · 可 fork 复刻' };
 
   const statusInfo: Record<string, { label: string; cls: string }> = {
     unexplored: { label: '待探索', cls: 'text-slate-400 bg-slate-700/40 border-slate-600' },
@@ -421,6 +465,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
               { key: 'task' as const, icon: '🤖', label: '任务执行建议', badge: (node.agentResults || []).length },
               { key: 'results' as const, icon: '📊', label: '记录成果', badge: node.manualResults ? 1 : 0 },
               { key: 'chat' as const, icon: '💬', label: '咨询对话', badge: (node.chatHistory || []).length },
+              { key: 'decision' as const, icon: '⚖️', label: '决策记录（可 fork 复刻）', badge: nodeDecisions.length },
               { key: 'props' as const, icon: 'ℹ️', label: '属性 · 文件夹 / 标签 / 导出', badge: 0 },
             ].map(m => (
               <button key={m.key} onClick={() => setActiveModule(a => a === m.key ? null : m.key)} title={m.label}
@@ -474,6 +519,8 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
           <button onClick={() => setActiveModule('links')} className="px-2 py-0.5 rounded-full border border-slate-700 text-slate-400 hover:border-purple-500/40 transition-colors" title="关联笔记">🔗 出{outgoingLinks.length} 入{backlinks.length}</button>
           {(node.agentResults || []).length > 0 && <button onClick={() => setActiveModule('task')} className="px-2 py-0.5 rounded-full border border-slate-700 text-emerald-400 hover:border-emerald-500/40 transition-colors" title="任务成果">📊 成果{node.agentResults!.length}</button>}
           {(node.chatHistory || []).length > 0 && <button onClick={() => setActiveModule('chat')} className="px-2 py-0.5 rounded-full border border-slate-700 text-sky-400 hover:border-sky-500/40 transition-colors" title="咨询对话">💬 {node.chatHistory!.length}</button>}
+          {node.forkOfDecisionId && <button onClick={() => setActiveModule('decision')} className="px-2 py-0.5 rounded-full border border-purple-500/40 text-purple-300 bg-purple-900/20" title="这是从一条决策记录 fork 出来的分支">⑂ fork 分支</button>}
+          {nodeDecisions.length > 0 && <button onClick={() => setActiveModule('decision')} className="px-2 py-0.5 rounded-full border border-slate-700 text-amber-400 hover:border-amber-500/40 transition-colors" title="决策记录">⚖️ {nodeDecisions.length}</button>}
           {node.folder && <span className="px-2 py-0.5 text-slate-500">📁 {node.folder}</span>}
           {(node.tags || []).map(t => <span key={t} className="px-2 py-0.5 rounded-full bg-purple-900/30 border border-purple-500/30 text-purple-300">#{t}</span>)}
           {node.noteUpdatedAt && <span className="px-2 py-0.5 text-slate-600 ml-auto">更新于 {new Date(node.noteUpdatedAt).toLocaleString()}</span>}

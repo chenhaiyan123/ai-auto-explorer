@@ -51,9 +51,39 @@ export interface ProblemNode {
   /** 该笔记正文是否由 AI 自动维护（如总览）。用户一旦手动编辑即置 false，AI 不再覆盖 */
   autoNote?: boolean;
   taskType?: 'image' | 'code' | 'web' | 'research' | 'none';
+  /** 该节点是从某条决策记录 fork（复刻）出来的 */
+  forkOfDecisionId?: string;
   pendingDecision?: DecisionPoint;
   x?: number;
   y?: number;
+}
+
+// ========== 决策节点持久化（重点功能）==========
+/** 决策的一个候选项：选中或放弃，理由可选填 */
+export interface DecisionOption {
+  label: string;
+  chosen: boolean;
+  /** 选择理由（chosen=true）或放弃理由（chosen=false），可不填 */
+  reason?: string;
+}
+
+export type DecisionTrigger = 'manual' | 'delete_node' | 'invalidate' | 'explore' | 'fork';
+
+/** 一条持久化的决策记录：过程 + 当时的节点子树快照（可随时 fork 复刻） */
+export interface DecisionRecord {
+  id: string;
+  /** 决策发生的节点 */
+  nodeId: string;
+  nodeTitle: string;
+  /** 决策问题 / 背景 */
+  question: string;
+  options: DecisionOption[];
+  trigger: DecisionTrigger;
+  /** 决策当时该节点及其子树的完整快照（深拷贝），fork 的依据 */
+  snapshot: ProblemNode[];
+  createdAt: number;
+  /** 从此决策 fork 出的分支记录 */
+  forks?: { rootNodeId: string; createdAt: number }[];
 }
 
 export interface DecisionPoint {
@@ -149,6 +179,8 @@ export interface Project {
   knowledgeCards?: KnowledgeCard[];
   researchFindings?: ResearchFinding[];
   butlerChatHistory?: ChatMessage[];
+  /** 决策记录（持久化，随项目保存） */
+  decisions?: DecisionRecord[];
 }
 
 // ========== Artifact 类型 ==========

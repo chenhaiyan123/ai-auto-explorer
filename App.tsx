@@ -2,7 +2,10 @@ import { UserStats, KnowledgeCard, ResearchFinding } from './types';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import MessageBoard from './components/MessageBoard';
 import { v4 as uuidv4 } from 'uuid';
-import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage } from './types';
+import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage, DecisionOption, DecisionTrigger } from './types';
+import { DecisionRecordModal, DecisionTimelineModal, DecisionDraft } from './components/DecisionCenter';
+import { captureSubtree, createDecision, forkFromDecision } from './services/decisionService';
+import { trackEvent, identifyChatUser } from './services/analytics';
 import GraphVisualization from './components/GraphVisualization';
 import NodeDetails from './components/NodeDetails';
 import DecisionModal from './components/DecisionModal';
@@ -1131,6 +1134,9 @@ const App: React.FC = () => {
   const [tempProjectName, setTempProjectName] = useState('');
   const [decision, setDecision] = useState<DecisionPoint | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId: string } | null>(null);
+  // 决策节点持久化（重点功能）：记录弹窗草稿 + 项目级时间线
+  const [decisionDraft, setDecisionDraft] = useState<(DecisionDraft & { pendingAction?: 'delete' | 'invalidate' }) | null>(null);
+  const [showDecisionTimeline, setShowDecisionTimeline] = useState(false);
   
   // 通知系统
   const [notifications, setNotifications] = useState<Array<{id: string, type: 'discovery' | 'warning' | 'info', title: string, message: string, time: number}>>([]);
@@ -1270,6 +1276,8 @@ const App: React.FC = () => {
     return () => { cancelled = true; };
   }, [user?.username]);
   useEffect(() => { if (user) { monitor.incrementSession(); const i = setInterval(() => monitor.updateHeartbeat(), 10000); return () => clearInterval(i); } }, [user]);
+  // 登录后：把用户身份同步给聊天挂件 + 记一次登录事件（未配置统计/聊天时均为空操作）
+  useEffect(() => { if (user) { identifyChatUser(user.username, user.email); trackEvent('login'); } }, [user?.username]);
 
   const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId) || null, [projects, currentProjectId]);
   // 项目视图：当前项目用实时 nodes，其它项目用各自保存的 nodes（供左侧项目树使用）
@@ -1736,6 +1744,62 @@ const App: React.FC = () => {
     catch (e: any) { if (e?.name !== 'AbortError') alert('保存失败：' + (e?.message || e)); }
   }, [nodes]);
   const handleDeleteNode = useCallback((id: string) => { setNodes(prev => prev.filter(n => n.id !== id).map(n => ({ ...n, dependencies: n.dependencies.filter(d => d !== id) }))); if (selectedNodeId === id) setSelectedNodeId(null); if (focusedNodeId === id) setFocusedNodeId(null); if (decision?.nodeId === id) setDecision(null); }, [selectedNodeId, focusedNodeId, decision]);
+
+  // ===== 决策节点持久化（重点功能）=====
+  const projectDecisions = useMemo(() => currentProject?.decisions || [], [currentProject]);
+
+  /** 打开决策记录弹窗（打开时就对节点子树做快照，保证删除/失效前的状态被留存） */
+  const openDecisionRecorder = useCallback((nodeId: string, trigger: DecisionTrigger, opts?: { pendingAction?: 'delete' | 'invalidate'; presetQuestion?: string; presetOptions?: { label: string; chosen: boolean }[]; skippable?: boolean }) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    setDecisionDraft({
+      nodeId, nodeTitle: node.title, trigger,
+      snapshot: captureSubtree(nodes, nodeId),
+      presetQuestion: opts?.presetQuestion,
+      presetOptions: opts?.presetOptions,
+      skippable: opts?.skippable,
+      pendingAction: opts?.pendingAction,
+    });
+  }, [nodes]);
+
+  /** 执行关键时机弹窗附带的动作（删除 / 设为无效） */
+  const runPendingDecisionAction = useCallback((draft: DecisionDraft & { pendingAction?: 'delete' | 'invalidate' }) => {
+    if (draft.pendingAction === 'delete') handleDeleteNode(draft.nodeId);
+    else if (draft.pendingAction === 'invalidate') updateNode(draft.nodeId, { status: NodeStatus.INVALID });
+  }, [handleDeleteNode, updateNode]);
+
+  const handleSaveDecision = useCallback((question: string, options: DecisionOption[]) => {
+    if (!decisionDraft || !currentProjectId) return;
+    const record = createDecision({ nodeId: decisionDraft.nodeId, nodeTitle: decisionDraft.nodeTitle, question, options, trigger: decisionDraft.trigger, snapshot: decisionDraft.snapshot });
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, decisions: [...(p.decisions || []), record] } : p));
+    runPendingDecisionAction(decisionDraft);
+    setDecisionDraft(null);
+    trackEvent('record_decision', { trigger: decisionDraft.trigger });
+  }, [decisionDraft, currentProjectId, runPendingDecisionAction]);
+
+  const handleSkipDecision = useCallback(() => {
+    if (!decisionDraft) return;
+    runPendingDecisionAction(decisionDraft);
+    setDecisionDraft(null);
+  }, [decisionDraft, runPendingDecisionAction]);
+
+  /** 从决策点 fork：用当时的快照在同项目里复刻一条新分支，新旧路线并存 */
+  const handleForkDecision = useCallback((decisionId: string) => {
+    if (!currentProjectId) return;
+    const record = projectDecisions.find(d => d.id === decisionId);
+    if (!record) return;
+    const { nodes: forked, rootId } = forkFromDecision(record, new Set(nodes.map(n => n.id)));
+    setNodes(prev => [...prev, ...forked]);
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, decisions: (p.decisions || []).map(d => d.id === decisionId ? { ...d, forks: [...(d.forks || []), { rootNodeId: rootId, createdAt: Date.now() }] } : d) } : p));
+    setSelectedNodeId(rootId);
+    setShowDecisionTimeline(false);
+    trackEvent('fork_decision');
+  }, [currentProjectId, projectDecisions, nodes]);
+
+  const handleDeleteDecision = useCallback((decisionId: string) => {
+    if (!currentProjectId) return;
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, decisions: (p.decisions || []).filter(d => d.id !== decisionId) } : p));
+  }, [currentProjectId]);
   const handleGenerateReport = async () => { if (!currentProject || isGeneratingReport) return; setIsGeneratingReport(true); try { setResearchReport(await generateResearchReport(currentProject.metaProblem, nodes, knowledgeCards)); } finally { setIsGeneratingReport(false); } };
 
   if (routeInfo.type === 'delegate' && routeInfo.nodeId) return <DelegationView nodeId={routeInfo.nodeId} taskTitle={routeInfo.taskTitle} />;
@@ -1954,6 +2018,13 @@ const App: React.FC = () => {
             >⬇ 客户端</button>
           )}
 
+          {/* 决策时间线：每条决策带快照，可随时 fork 复刻 */}
+          <button
+            onClick={() => setShowDecisionTimeline(true)}
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-amber-400 flex items-center gap-1"
+            title="决策时间线：记录每个决策的过程与理由，可随时回来 fork 复刻"
+          >⚖️ 决策{projectDecisions.length > 0 && <span className="text-[9px] opacity-70">{projectDecisions.length}</span>}</button>
+
           {/* 问题广场：筛选有价值的问题 */}
           <button
             onClick={() => setShowQuestionBoard(true)}
@@ -2144,7 +2215,7 @@ const App: React.FC = () => {
 
           <div className="h-full pt-11">
             {selectedNode ? (
-              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
+              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="text-5xl opacity-40">📂</div>
@@ -2198,12 +2269,33 @@ const App: React.FC = () => {
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isCollapsed: !n.isCollapsed }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isCollapsed ? '📂 展开节点' : '📁 折叠节点'}</button>
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const title = prompt('标题:'); if (title) addNode(title, [contextMenu.nodeId]); setContextMenu(null); }}>➕ 增加子节点</button>
         <div className="h-px bg-slate-700 my-1"></div>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-red-600 text-red-400 hover:text-white flex items-center gap-2" onClick={() => { updateNode(contextMenu.nodeId, { status: NodeStatus.INVALID }); setContextMenu(null); }}>🚫 设为无效</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-amber-600 text-amber-400 hover:text-white flex items-center gap-2" onClick={() => { openDecisionRecorder(contextMenu.nodeId, 'manual'); setContextMenu(null); }}>⚖️ 记录决策</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-red-600 text-red-400 hover:text-white flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); openDecisionRecorder(contextMenu.nodeId, 'invalidate', { pendingAction: 'invalidate', skippable: true, presetQuestion: `是否放弃「${n?.title || ''}」这个方向？`, presetOptions: [{ label: '放弃这个方向（设为无效）', chosen: true }, { label: '继续探索', chosen: false }] }); setContextMenu(null); }}>🚫 设为无效</button>
         <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-emerald-600 flex items-center gap-2" onClick={() => { updateNode(contextMenu.nodeId, { status: NodeStatus.SOLVED }); setContextMenu(null); }}>✅ 标记完成</button>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-red-600 text-red-400 hover:text-white flex items-center gap-2" onClick={() => { if (confirm('确认删除？')) handleDeleteNode(contextMenu.nodeId); setContextMenu(null); }}>🗑️ 删除节点</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-red-600 text-red-400 hover:text-white flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); openDecisionRecorder(contextMenu.nodeId, 'delete_node', { pendingAction: 'delete', skippable: true, presetQuestion: `是否删除「${n?.title || ''}」？`, presetOptions: [{ label: `删除「${(n?.title || '').slice(0, 12)}」`, chosen: true }, { label: '保留', chosen: false }] }); setContextMenu(null); }}>🗑️ 删除节点</button>
       </div>}
 
-      {showAdminDashboard && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl p-6"><div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-5xl w-full p-8 shadow-2xl flex flex-col h-full max-h-[90vh]">
+      {/* 决策记录弹窗（手动 + 关键时机） */}
+      {decisionDraft && (
+        <DecisionRecordModal
+          draft={decisionDraft}
+          onSave={handleSaveDecision}
+          onSkip={decisionDraft.skippable ? handleSkipDecision : undefined}
+          onCancel={() => setDecisionDraft(null)}
+        />
+      )}
+      {/* 决策时间线（项目级，可从任意决策点 fork） */}
+      {showDecisionTimeline && (
+        <DecisionTimelineModal
+          decisions={projectDecisions}
+          onFork={handleForkDecision}
+          onDelete={handleDeleteDecision}
+          onNavigate={(id) => setSelectedNodeId(id)}
+          onClose={() => setShowDecisionTimeline(false)}
+        />
+      )}
+
+      {showAdminDashboard &&<div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl p-6"><div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-5xl w-full p-8 shadow-2xl flex flex-col h-full max-h-[90vh]">
         <div className="flex items-center justify-between mb-6"><h2 className="text-2xl font-bold text-purple-400">📊 监控看板</h2><div className="flex gap-2"><button onClick={() => setAdminActiveTab('stats')} className={`px-4 py-2 rounded-lg text-xs font-bold ${adminActiveTab === 'stats' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'}`}>用户统计</button><button onClick={() => setAdminActiveTab('messages')} className={`px-4 py-2 rounded-lg text-xs font-bold ${adminActiveTab === 'messages' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'}`}>用户留言</button></div></div>
         {adminActiveTab === 'stats' && <><div className="grid grid-cols-3 gap-6 mb-6">{Object.entries(monitor.getSystemSummary()).map(([k, v]) => <div key={k} className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700 text-center"><div className="text-[10px] uppercase text-slate-500 font-bold mb-1">{k}</div><div className="text-2xl font-bold text-white">{v}</div></div>)}</div><div className="flex-1 overflow-auto border border-slate-800 rounded-2xl"><table className="w-full text-left text-sm"><thead className="bg-slate-800 text-slate-400"><tr><th className="px-4 py-4 text-[10px] uppercase">用户</th><th className="px-4 py-4 text-[10px] uppercase">会话</th><th className="px-4 py-4 text-[10px] uppercase">时长(m)</th><th className="px-4 py-4 text-[10px] uppercase">Token</th><th className="px-4 py-4 text-[10px] uppercase">最后活跃</th></tr></thead><tbody className="divide-y divide-slate-800">{cloudStats.map((s, i) => <tr key={i} className="hover:bg-slate-800/30"><td className="px-4 py-4 text-blue-400">{s.username}</td><td className="px-4 py-4">{s.sessionCount}</td><td className="px-4 py-4">{(s.totalActiveSeconds / 60).toFixed(1)}</td><td className="px-4 py-4 text-emerald-400">{(s.totalPromptTokens + s.totalCompletionTokens).toLocaleString()}</td><td className="px-4 py-4 text-slate-500 text-xs">{new Date(s.lastActiveTimestamp).toLocaleString()}</td></tr>)}</tbody></table></div></>}
         {adminActiveTab === 'messages' && <div className="flex-1 overflow-auto space-y-3">{adminMessages.length === 0 ? <div className="text-center py-12 text-slate-500">暂无留言</div> : adminMessages.map((msg, i) => <div key={i} className="p-4 bg-slate-800/50 rounded-xl border border-slate-700"><div className="flex justify-between mb-2"><span className="text-sm font-bold text-blue-400">{msg.username}</span><span className="text-[10px] text-slate-500">{new Date(msg.createdAt).toLocaleString()}</span></div><p className="text-sm text-slate-300">{msg.content}</p></div>)}</div>}
