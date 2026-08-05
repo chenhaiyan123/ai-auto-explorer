@@ -1,47 +1,67 @@
-# 🧭 HiExplore · AI 自动探究平台
+# 🧭 HiExplore
 
-[English](./README.en.md) | **中文**
+**English** | [中文](./README.zh-CN.md)
 
-> **以问题为坐标，以智能为货币。**
-> 把有价值的问题、想法和好奇心挂在后台，让 AI 像一支团队一样长期自动探究、沉淀，并在必要时把工作交回给你。
+### Score whether a question is worth researching — before you research it.
 
-HiExplore 是一个开源的、**问题驱动的自主探究平台**。它把每个项目当成一个「研究仓库」：你定义一个值得深挖的问题，AI 把它拆成几个关键方向、组建一支各有分工的 Agent 团队，围绕这些方向长期探索、产出结构化笔记，并把笔记沉淀成一张可导航的知识图谱。整个过程数据都在你自己的浏览器与本地 Markdown 文件里，模型也由你自己接入。
+Every AI tool is racing to answer questions better. None of them ask whether the question deserved an answer in the first place.
 
-**适合谁：** 独立研究者 / 创作者 / 独立开发者（低门槛地把好奇心变成持续探究），以及做情报调研、尽职调查的人（把一个问题挂上去，得到持续、可溯源的调查）。
+HiExplore starts one step earlier. You put candidate questions on a board, it scores each one across six dimensions, and only the ones that survive get promoted into long-running research projects — where a team of specialized agents works on them over days and weeks, producing plain Markdown you own.
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Live demo](https://img.shields.io/badge/demo-hiexplore-blue)](https://chenhaiyan123.github.io/ai-auto-explorer/)
 
-## ✨ 核心功能
+![HiExplore demo](./docs/assets/demo-en.gif)
 
-**🗂️ 项目即文件夹（像代码仓库的工程笔记）**
-一个项目就是一个文件夹，自带 `README` 和 `总览` 主文件。项目分解为 5–8 个关键节点（二级），每个节点内部还能再开三级详情。左侧是可缩进、可折叠的笔记树，所有笔记都能折叠收起，长内容也按标题折叠成大纲，不再是一面墙的字。
-
-**🔗 双向链接 + 知识图谱**
-在任意笔记正文里用 `[[标题]]` 关联其它笔记，自动形成出链 / 反向链接。点工具栏的「🕸️ 图谱」弹出关系网络：纵向是层级、横向是关联，一眼看清问题之间的脉络。
-
-**🤝 AI 组建团队 + 团队群聊**
-点项目上的 🤝，AI 会读懂项目目标 → 拆成 5–8 个关键节点 → 按「工作板块」（市场调研 / 工程制作…）分工 → 给每个方向指派一个专门的 Agent → 可一键让团队开始自动探索。右侧是与团队的群聊：@某个成员单独发言、`[[引用]]` 任意笔记进上下文、把 AI 的产出一键「补充到笔记」。
-
-**🔥 问题广场（筛选有价值的问题）**
-像知乎一样收集候选问题，用 QVS（稀缺性 / 深度 / 可验证性 / 社会价值 / 创新性 / 可执行性 6 维）打分排序，支持「只看高价值」「关注 / 赞」两套兴趣机制，看中的问题一键「立项」转成项目。
-
-**📓 本地 Markdown 库（你的数据你做主）**
-所有内容存在浏览器 localStorage；可把单篇导出 `.md`、整库导出 `.zip`（项目即文件夹的结构）、导入 `.md`，在 Chrome/Edge 里还能直接保存到本地文件夹（Obsidian 式 Vault）。
-
-**🧠 模型自由接入**
-所有 AI 能力都走你自己配置的模型，无内置后端：
-- 本地：Ollama、LM Studio、vLLM（数据不出本机）
-- 云端：任何 OpenAI 兼容 API（DeepSeek、通义千问、Claude…）
-- 自部署代理：把 Key 藏在 Serverless 函数后（见 `server/fc_backend.js`）
-
-**🔌 IoT / 实验设备接入**
-注册带 HTTP API 的设备（传感器、培养箱、机械臂…），AI 在探索中可自主调用读取数据、执行操作，把物理世界纳入探究闭环，调用有日志可审计。
-
-**🌗 白天 / 深色主题**，顶栏一键切换。
+> *The UI in the recording is Chinese — an English UI is on the roadmap. The flow is: ask → score → promote → assemble team → notes.*
 
 ---
 
-## 🚀 快速开始
+## 🔥 QVS — Question Value Score
+
+Drop in a question and QVS returns a 0–100 score with a letter grade, a radar breakdown per dimension, and concrete suggestions for sharpening it. Below 60 and the system tells you not to bother yet.
+
+<img src="./docs/assets/qvs-score.png" width="620" alt="QVS score card: 78 / grade B, six-axis radar" />
+
+| Dimension | Weight | What it asks |
+|---|---|---|
+| **Verifiability** | 0.20 | Can the conclusion actually be checked, or is it unfalsifiable? |
+| **Depth** | 0.20 | Does it go three layers down, or bottom out in one sentence? |
+| **Scarcity** | 0.15 | Has this already been answered to death? |
+| **Social value** | 0.15 | Does anyone besides you care about the answer? |
+| **Innovation** | 0.15 | A genuinely new angle, or a rehash? |
+| **Feasibility** | 0.15 | Reachable with the resources you actually have? |
+
+Two questions, same topic:
+
+> ❌ *"Will AI replace programmers?"* — unfalsifiable, answered a thousand times, no way to know you were right.
+>
+> ✅ *"Across 3 real codebases, how did Copilot change median PR review time and defect escape rate?"* — checkable, specific, nobody has published it.
+
+Most "this seems interesting" questions die on **verifiability** and **feasibility**. That's the point — finding out costs you 10 seconds instead of three weeks.
+
+> The six weights above are a judgment call, not an empirical result. If you have a better answer, [open an issue](https://github.com/chenhaiyan123/ai-auto-explorer/issues) — this is the part of the project I most want torn apart.
+
+---
+
+## What happens after a question passes
+
+**🤝 An agent team assembles.** The system reads the goal, splits it into 5–8 key directions, groups them into work areas (market research / engineering / …), and assigns a specialized agent to each. There's a group chat on the right: @mention a member, `[[reference]]` any note into context, append any reply straight into a note.
+
+**🤖 It keeps running with the UI closed.** A local daemon loops *pick frontier → decompose → execute → review → record → propose new directions*, with a daily budget and rate limits. Low-confidence conclusions are flagged **needs human review** rather than silently written in as fact — AI does the grinding, you make the calls.
+
+**📓 Output is plain Markdown you own.** Project-as-folder structure, `[[bidirectional links]]`, a navigable knowledge graph. Export a note, export the whole vault as a zip, or write straight into a local folder (Obsidian-style). Everything lives in your browser and your filesystem.
+
+**🧠 You bring the model.** No built-in backend, no API key of ours:
+- **Local** — Ollama, LM Studio, vLLM. Data never leaves your machine.
+- **Cloud** — any OpenAI-compatible endpoint (DeepSeek, Qwen, Claude…).
+- **Self-hosted proxy** — keep your key behind a serverless function (`server/fc_backend.js`).
+
+**🔌 It can touch the physical world.** Register any HTTP-API device (sensors, incubators, robot arms) and agents can read from and act on them mid-exploration, with an auditable call log.
+
+---
+
+## 🚀 Quick start
 
 ```bash
 git clone https://github.com/chenhaiyan123/ai-auto-explorer.git
@@ -50,93 +70,57 @@ npm install
 npm run dev        # http://localhost:3000
 ```
 
-首次进入点右上角 **⚙️ 设置 → 模型接入**，选一个预设填好即可使用，无需任何后端。
+Open **⚙️ Settings → Model**, pick a preset, done. No backend, no signup.
 
-### 配置模型（举例）
+| Setup | Provider | API Base URL | Model |
+|---|---|---|---|
+| Local, free | OpenAI-compatible | `http://localhost:11434/v1` | `qwen2.5:7b` |
+| Best value | OpenAI-compatible | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| Strongest | OpenAI-compatible | `https://api.anthropic.com/v1` | `claude-sonnet-4-6` |
 
-| 场景 | 接入方式 | API Base URL | 模型名 | 备注 |
-|---|---|---|---|---|
-| 本地零成本 | OpenAI 兼容 | `http://localhost:11434/v1` | `qwen2.5:7b` | 先 `ollama serve` |
-| DeepSeek（推荐性价比） | OpenAI 兼容 | `https://api.deepseek.com/v1` | `deepseek-chat` | 需 DeepSeek Key |
-| Claude（更完整） | OpenAI 兼容 | `https://api.anthropic.com/v1` | `claude-sonnet-4-6` | 需 Anthropic Key |
+### Desktop app
 
-> 提示：模型越强，自动探究的内容越深入、越可靠。顶栏的 🧠 徽标会显示当前正在使用的模型。
-
----
-
-## 🖥️ 桌面客户端（推荐用本地模型时）
-
-做成桌面应用后，调用本地 Ollama / 局域网 IoT 设备不再受浏览器跨域和混合内容限制，离线本地优先。
+Recommended when using local models — no CORS or mixed-content limits when reaching Ollama or LAN devices.
 
 ```bash
-npm install          # 首次会下载 Electron 运行时
-npm run app          # 构建并打开 HiExplore 桌面应用
-npm run app:dist     # 打包安装包（macOS .dmg / Windows .exe / Linux AppImage），产物在 release/
+npm run app          # build + launch
+npm run app:dist     # package .dmg / .exe / .AppImage into release/
 ```
 
-> 开发调试：一个终端 `npm run dev`，另一个终端 `npm run app:dev`（连开发服务器、带热更新）。
-
----
-
-## 🤖 7×24 自主探索守护进程（真正不间断）
-
-网页/桌面里的探索循环只在打开时跑；想让 AI **关掉界面也持续自我研究**，用这个本地常驻守护进程。它会不停地「选前沿 → 拆解 → 执行 → 评审验证 → 沉淀 → 自主提新方向」，带每日预算和限流，产出可在 HiExplore「本地库/导入」或 Obsidian 里打开的 Markdown。
+### 24/7 autonomous daemon
 
 ```bash
-cp server/explorer.config.example.json server/explorer.config.json   # 填模型 + 你的研究问题
-npm run explore                          # 开始 7×24 自主探索
-# 或直接传问题： node server/explorer-daemon.mjs "我想长期研究的问题"
-# Ctrl+C 安全停止（自动存盘，下次继续）
+cp server/explorer.config.example.json server/explorer.config.json   # model + your question
+npm run explore
+# or: node server/explorer-daemon.mjs "the question you want researched long-term"
+# Ctrl+C saves state and resumes next time
 ```
 
-产出在 `explorer-vault/`：`project.json`（完整状态）、按项目分文件夹的 `*.md`（每个节点一篇，含自评置信度）、`explorer.log`（运行日志）。低置信度的结论会自动标记「待人工复核」，等你来定夺——这就是「AI 干苦活、人做关键决策」。
+Output lands in `explorer-vault/`: `project.json` (full state), one `.md` per node with self-rated confidence, and `explorer.log`. Open it in HiExplore or Obsidian.
 
-> 配套建议：本地用 Ollama 时把 `intervalSec` 调大、模型选轻一点（如 `qwen2.5:7b`/`14b`），35B 偏慢容易超时。
+> On local models, raise `intervalSec` and stay light (`qwen2.5:7b`/`14b`) — 35B tends to time out.
 
 ---
 
-## 🔐 托管版登录（可选 · 仅 SaaS 需要）
+## 🏗️ Stack
 
-开源/本地版**不需要登录**，直接用。只有托管版（www.hiexplore.com）做用户体系时才用到——目前支持**邮箱验证码登录**：
-
-```bash
-# 后端（零额外依赖，复用 express）
-RESEND_API_KEY=你的Resend密钥 MAIL_FROM="HiExplore <noreply@hiexplore.com>" AUTH_SECRET=随机长串 npm run auth
-# 前端构建时设置后端地址即可启用真实登录；不设则保持免登录
-VITE_AUTH_API=https://api.hiexplore.com npm run build
-```
-
-不配 `RESEND_API_KEY` 时验证码会打印到后端控制台（方便本地联调）。手机号 / 微信扫码需各自的第三方账号与资质，后续接入。
-
----
-
-## 🏗️ 技术栈
-
-React 19 + TypeScript + Vite + Tailwind + D3，纯前端，零后端依赖，数据保存在浏览器与本地文件。
+React 19 + TypeScript + Vite + Tailwind + D3. Pure front-end, zero backend dependency, static build.
 
 ```
-├── App.tsx                # 主应用
-├── components/            # NotesPanel(项目树) / NodeDetails(笔记) / TeamChat(团队群聊)
-│                          # QuestionBoard(问题广场) / GraphVisualization(图谱) / ...
-├── services/
-│   ├── noteLinks.ts       # 双向链接 / 反链 / 关联边
-│   ├── vault.ts           # Markdown 导入导出 / 本地库
-│   ├── teamService.ts     # AI 组建团队（拆方向 + 指派 Agent）
-│   ├── qvsService.ts      # 问题价值评估（6 维）
-│   ├── llmProvider.ts     # 统一模型接入层（OpenAI 兼容 / 云代理）
-│   ├── geminiService.ts   # 探索 / 对话核心调用
-│   └── ...
-├── server/                # 可选参考后端（留言板 / Serverless 代理），非前端必需
-└── docs/                  # 部署等文档
+services/
+├── qvsService.ts        # QVS — 6-dimension question scoring
+├── teamService.ts       # agent team assembly + direction decomposition
+├── dashboardService.ts  # project rollup (pure functions)
+├── llmProvider.ts       # unified model layer (OpenAI-compatible / proxy)
+├── noteLinks.ts         # bidirectional links / backlinks
+└── vault.ts             # Markdown import / export / local vault
 ```
 
-构建：`npm run build`，产物在 `dist/`，可托管到任何静态站点（GitHub Pages / Vercel / OSS）。仓库已内置 GitHub Pages 部署工作流（`.github/workflows/deploy.yml`）。
+`npm run build` → static `dist/`, deployable anywhere. A GitHub Pages workflow is included.
 
----
+## 🤝 Contributing
 
-## 🤝 贡献
-
-欢迎 Issue 与 PR，尤其欢迎：新的 IoT 设备适配、Agent / 探索模板、QVS 维度改进、模型预设。详见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+Issues and PRs welcome — especially **QVS dimension and weight proposals**, agent/exploration templates, IoT device adapters, and model presets. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## 📄 License
 
