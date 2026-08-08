@@ -1807,14 +1807,60 @@ ${plan.lead.duty}
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-emerald-600"></div>
         <div className="text-center mb-6">
           <div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">🧭</div>
-          <h2 className="text-xl sm:text-2xl font-bold">HiExplore · AI 自动探究平台</h2>
-          <p className="text-slate-500 text-xs sm:text-sm mt-2">{isLoginAsAdmin ? '管理员验证' : '选择登录方式'}</p>
+          <h2 className="text-xl sm:text-2xl font-bold">HiExplore</h2>
+          {isLoginAsAdmin ? (
+            <p className="text-slate-500 text-xs sm:text-sm mt-2">管理员验证</p>
+          ) : (
+            /*
+              首屏必须先回答「这是什么」再要东西。
+              数据依据：上线首 12 天 40 访客只有 3 次登录、跳出率 86%、平均停留 47 秒——
+              访客落地看到的是一个要邮箱的表单，没有任何信息告诉他为什么要填。
+            */
+            <p className="text-slate-400 text-[13px] leading-6 mt-3">
+              别急着让 AI 回答问题，<br className="sm:hidden" />先算清楚这个问题<span className="text-blue-400 font-bold">值不值得答</span>
+            </p>
+          )}
         </div>
-        
+
+        {!isLoginAsAdmin && !isOtpSent && (
+          <div className="mb-6 space-y-2 text-[12px] text-slate-400 leading-6">
+            <div className="flex gap-2"><span className="text-blue-400">01</span><span>给问题打分：稀缺性、深度、可验证性等六个维度，先筛掉不值得研究的</span></div>
+            <div className="flex gap-2"><span className="text-blue-400">02</span><span>值得的问题一键立项，AI 组一支分工的团队长期跑，你关掉也在继续</span></div>
+            <div className="flex gap-2"><span className="text-blue-400">03</span><span>产出是带双链的 Markdown，能直接当 Obsidian 库打开</span></div>
+          </div>
+        )}
+
+        {/*
+          免注册体验提到主按钮位置。原来它排在邮箱表单和「管理员入口」之后、
+          用的还是次级灰色样式——等于把转化率最高的入口藏在了最不显眼的地方。
+        */}
+        {!isLoginAsAdmin && !isOtpSent && hasTrialBackend() && (
+          <div className="mb-5">
+            <button
+              onClick={() => { trackEvent('trial_start'); setUser(auth.loginAsGuest()); }}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition-colors"
+            >
+              🎁 免注册，直接开始
+            </button>
+            <p className="text-center text-[11px] text-slate-500 mt-2.5 leading-5">
+              不用填任何信息 · 笔记只存在你自己的浏览器里
+            </p>
+          </div>
+        )}
+
+        {!isLoginAsAdmin && !isOtpSent && hasTrialBackend() && (
+          <div className="flex items-center gap-3 mb-5">
+            <div className="flex-1 h-px bg-slate-800" />
+            <span className="text-[11px] text-slate-600">或登录以长期保存</span>
+            <div className="flex-1 h-px bg-slate-800" />
+          </div>
+        )}
+
         {!isLoginAsAdmin ? (
           <div className="space-y-4">
-            {/* 登录方式切换 */}
-            {!isOtpSent && (
+            {/* 登录方式切换。托管版只有邮箱是真登录，此时这个切换条只剩一个「邮箱」按钮，
+                纯属噪音，直接整条隐藏（loginMethod 默认就是 email）。 */}
+            {!isOtpSent && !hasAuthBackend() && (
               <div className="flex gap-2 p-1 bg-slate-800 rounded-xl">
                 {/* 托管版当前只有邮箱是真登录，微信/短信暂隐藏（需后端+资质） */}
                 {!hasAuthBackend() && (
@@ -1915,18 +1961,12 @@ ${plan.lead.duty}
           </div>
         )}
         
-        {/* 免注册体验：游客进入，按匿名设备给小额度 */}
-        {!isLoginAsAdmin && hasTrialBackend() && (
-          <button
-            onClick={() => { trackEvent('trial_start'); setUser(auth.loginAsGuest()); }}
-            className="w-full mt-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold py-3.5 rounded-xl flex items-center justify-center gap-2"
-          >
-            🎁 先免注册体验一下
-          </button>
-        )}
+        {/* 没有体验后端时（自部署场景），免注册入口无法提供，此处不渲染 */}
 
-        <div className="mt-6 pt-4 border-t border-slate-800 text-center">
-          <button onClick={() => { setIsLoginAsAdmin(!isLoginAsAdmin); setOtpCode(''); setIsOtpSent(false); }} className="text-slate-500 hover:text-white text-sm font-medium">{isLoginAsAdmin ? '返回普通登录' : '管理员入口'}</button>
+        <div className="mt-6 pt-4 border-t border-slate-800 flex items-center justify-center gap-4">
+          <a href="https://github.com/chenhaiyan123/ai-auto-explorer" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-white text-xs font-medium">开源代码</a>
+          <span className="text-slate-700">·</span>
+          <button onClick={() => { setIsLoginAsAdmin(!isLoginAsAdmin); setOtpCode(''); setIsOtpSent(false); }} className="text-slate-500 hover:text-white text-xs font-medium">{isLoginAsAdmin ? '返回普通登录' : '管理员入口'}</button>
         </div>
 
         {/*
