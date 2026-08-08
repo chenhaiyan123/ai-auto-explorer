@@ -4,44 +4,46 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HiExplore · AI 自动探究平台</title>
-    <!-- 自动跳转 HTTPS 脚本：如果不是本地环境且是 http 协议，则跳转 -->
-    <script>
-        if (window.location.protocol === 'http:' && !window.location.hostname.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+$/.test(window.location.hostname)) {
-            // 本地开发环境不强制 HTTPS
-            if (window.location.port !== '3000') {
-                 window.location.replace(window.location.href.replace('http:', 'https:'));
-            }
-        }
-    </script>
-    <!-- 自动将页面上的所有不安全请求升级为安全请求 -->
-    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <meta name="description" content="HiExplore 是一个面向独立研究者与创作者的 AI 自动探究工具：把一个问题拆成问题树与笔记库，由 AI 团队协助推进。纯前端应用，数据保存在你自己的浏览器本地。">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <!--
+      内容安全策略（CSP）
+      - script-src 只允许本站脚本，杜绝任何第三方 / 注入脚本执行（不含 unsafe-inline / unsafe-eval）
+      - object-src none + base-uri self，防止 <base> 劫持与插件对象
+      - connect-src 需保持宽松：本项目支持用户自带模型（BYO-model），
+        用户会在设置里填自己的 API 地址，故允许 https/wss 出站
+    -->
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self';
+      script-src 'self' https://cloud.umami.is https://embed.tawk.to https://*.tawk.to;
+      style-src 'self' 'unsafe-inline' https://*.tawk.to;
+      img-src 'self' data: blob: https:;
+      font-src 'self' data: https://*.tawk.to;
+      connect-src 'self' blob: https: wss:;
+      worker-src 'self' blob:;
+      media-src 'self' blob:;
+      frame-src 'self' https://*.tawk.to;
+      object-src 'none';
+      base-uri 'self';
+      form-action 'none';
+      upgrade-insecure-requests;
+    ">
     <style>
-        body { font-family: 'Inter', sans-serif; overflow: hidden; background-color: #0f172a; color: #f8fafc; margin: 0; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+                         'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+            overflow: hidden;
+            background-color: #0f172a;
+            color: #f8fafc;
+            margin: 0;
+        }
         .scroll-hide::-webkit-scrollbar { display: none; }
         #root { height: 100vh; width: 100vw; }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@19.0.0",
-    "react-dom": "https://esm.sh/react-dom@19.0.0",
-    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
-    "d3": "https://esm.sh/d3@7.9.0",
-    "uuid": "https://esm.sh/uuid@11.0.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "vite": "https://esm.sh/vite@^7.3.1",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
+    <link rel="stylesheet" href="/index.css">
 </head>
 <body>
     <div id="root"></div>
-    <script type="module" src="index.tsx"></script>
-<script type="module" src="/index.tsx"></script>
+    <script type="module" src="/index.tsx"></script>
 </body>
 </html>

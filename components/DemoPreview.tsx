@@ -2,7 +2,7 @@
  * DemoPreview - Demo 预览组件
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 interface DemoPreviewProps {
   code: string;
@@ -10,45 +10,46 @@ interface DemoPreviewProps {
   onClose: () => void;
 }
 
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 const DemoPreview: React.FC<DemoPreviewProps> = ({ code, title, onClose }) => {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!iframeRef.current) return;
-
+  /**
+   * 安全说明：这里渲染的是模型生成的 HTML，属于不可信内容。
+   * - 用 srcDoc 而不是 blob: URL —— blob: 会继承本站源，等于让任意代码跑在本站域下。
+   * - sandbox 只给 allow-scripts，**不给 allow-same-origin**（两者同时给等于沙箱失效，
+   *   iframe 可反过来操作父页面 / 本站 localStorage）。这样它运行在不透明源里。
+   * - 不再注入 cdn.tailwindcss.com 等远程脚本，改为内联最小样式。
+   */
+  const srcDoc = useMemo(() => {
     try {
-      // 创建完整的 HTML 文档
-      const htmlContent = code.includes('<html') ? code : `
-<!DOCTYPE html>
+      setError(null);
+      if (code.includes('<html')) return code;
+      return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>${escapeHtml(title)}</title>
   <style>
-    body { 
-      margin: 0; 
-      padding: 16px; 
-      background: #0f172a; 
+    body {
+      margin: 0;
+      padding: 16px;
+      background: #0f172a;
       color: #e2e8f0;
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
     }
   </style>
 </head>
 <body>
-  ${code}
+${code}
 </body>
 </html>`;
-
-      const blob = new Blob([htmlContent], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      iframeRef.current.src = url;
-
-      return () => URL.revokeObjectURL(url);
     } catch (e) {
       setError(e instanceof Error ? e.message : '预览加载失败');
+      return '';
     }
   }, [code, title]);
 
@@ -94,9 +95,10 @@ const DemoPreview: React.FC<DemoPreviewProps> = ({ code, title, onClose }) => {
             </div>
           ) : (
             <iframe
-              ref={iframeRef}
               className="w-full h-full border-0"
-              sandbox="allow-scripts allow-same-origin"
+              sandbox="allow-scripts"
+              referrerPolicy="no-referrer"
+              srcDoc={srcDoc}
               title={title}
             />
           )}

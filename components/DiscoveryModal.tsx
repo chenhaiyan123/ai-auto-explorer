@@ -18,11 +18,13 @@ const DiscoveryModal: React.FC<DiscoveryModalProps> = ({
   onVerify,
   onExploreRelated
 }) => {
+  // 注意：Tailwind 走本地构建（静态扫描类名），不能用 `bg-${color}-600` 这类拼接，
+  // 否则类名不会被生成。这里直接写完整的字面量类名。
   const typeConfig = {
-    breakthrough: { icon: '🌟', label: '突破性发现', color: 'yellow' },
-    significant: { icon: '💡', label: '重要发现', color: 'blue' },
-    minor: { icon: '📝', label: '一般发现', color: 'slate' },
-    pending: { icon: '⏳', label: '待验证', color: 'orange' }
+    breakthrough: { icon: '🌟', label: '突破性发现', head: 'bg-yellow-600/10', chip: 'bg-yellow-600/20', text: 'text-yellow-400', bar: 'bg-yellow-500' },
+    significant: { icon: '💡', label: '重要发现', head: 'bg-blue-600/10', chip: 'bg-blue-600/20', text: 'text-blue-400', bar: 'bg-blue-500' },
+    minor: { icon: '📝', label: '一般发现', head: 'bg-slate-600/10', chip: 'bg-slate-600/20', text: 'text-slate-400', bar: 'bg-slate-500' },
+    pending: { icon: '⏳', label: '待验证', head: 'bg-orange-600/10', chip: 'bg-orange-600/20', text: 'text-orange-400', bar: 'bg-orange-500' }
   };
 
   const config = typeConfig[discovery.type] || typeConfig.pending;
@@ -31,14 +33,14 @@ const DiscoveryModal: React.FC<DiscoveryModalProps> = ({
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl">
         {/* 头部 */}
-        <div className={`p-6 border-b border-slate-800 bg-${config.color}-600/10`}>
+        <div className={`p-6 border-b border-slate-800 ${config.head}`}>
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
-              <div className={`w-12 h-12 bg-${config.color}-600/20 rounded-xl flex items-center justify-center text-2xl`}>
+              <div className={`w-12 h-12 ${config.chip} rounded-xl flex items-center justify-center text-2xl`}>
                 {config.icon}
               </div>
               <div>
-                <div className={`text-[10px] font-bold text-${config.color}-400 uppercase mb-1`}>
+                <div className={`text-[10px] font-bold ${config.text} uppercase mb-1`}>
                   {config.label}
                 </div>
                 <h3 className="text-lg font-bold text-white">{discovery.title}</h3>
@@ -107,7 +109,7 @@ const DiscoveryModal: React.FC<DiscoveryModalProps> = ({
             <div className="flex items-center gap-3">
               <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
                 <div
-                  className={`h-full bg-${config.color}-500 rounded-full transition-all`}
+                  className={`h-full ${config.bar} rounded-full transition-all`}
                   style={{ width: `${discovery.confidence || 0}%` }}
                 />
               </div>
