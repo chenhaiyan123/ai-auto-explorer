@@ -762,58 +762,28 @@ const readmeTemplate = (name: string) => `# ${name}
 - 「项目总览」笔记里持续更新整体进展。
 - 每个子节点笔记里记录该方向的探索现状与后续方向。`;
 
+// 总览正文：方向 / 进度 / Agent / 笔记链接都由上方仪表盘自动汇总，
+// 这里只写机器算不出来的判断，保持短。
 const overviewTemplate = (name: string) => `# ${name} · 总览
 
-> 一句话说清这个项目在做什么，让任何人读一句就懂。
-> 上方「📊 项目概览」会自动汇总方向、进度与链接；这里写需要人来把握的判断与叙述。
-> 目标：别人只看这一篇总览，就能明白项目的来龙去脉；想深入某一点，点 [[链接]] 跳到对应笔记。
+> 一句话说清这个项目在做什么。
 
-## 📌 项目简介
-这个项目要解决什么问题、背景是什么、为什么值得做。写给第一次接触的人看。
+## 📌 这是什么
+（背景 + 要解决的问题，三句以内）
 
-## 🎯 目标与成功标准
-- 核心目标：
-- 怎样算成功（可衡量的标志）：
-- 明确不做什么（划定边界）：
+## 🎯 成功标准
+- 算成功：
+- 不做：
 
-## 🔑 关键点与关键问题
-项目成败取决于哪几件事、还有哪些核心问题没解决。
-- 关键点一：
-- 关键问题一（尚无定论）：
+## 🧩 当前卡点
+- 卡在哪 → 影响什么 → 目前的思路
 
-## 🧭 主要方向
-把项目拆成几个关键方向，每个是一篇子笔记；点进去看细节。
-- [[方向一]] — 负责 Agent： · 状态：
-- [[方向二]] — 负责 Agent： · 状态：
-
-## 📈 进展情况
-到今天为止做到哪一步：已完成什么、正在做什么、下一个里程碑。
-- 已完成：
-- 进行中：
-- 下一里程碑：
-
-## 🧩 目前遇到的问题
-当前卡点、风险、待决策的事项。写清楚「卡在哪、影响什么、可能的解法」。
-- 问题 / 卡点：
-- 影响：
-- 目前的思路：
-
-## 🗺️ 后续规划
-接下来的计划与优先级（近期 / 中期 / 远期）。
-- 近期（1–2 周）：
+## 🗺️ 下一步
+- 近期：
 - 中期：
-- 远期设想：
 
-## 💡 关键结论与决策记录
-沉淀下来的重要判断，以及「为什么这么决定」，方便日后回看不重复踩坑。
+## 💡 关键结论
 - （日期）决定了什么，因为……
-
-## 🔗 相关笔记与资源
-- [[README]]
-- 外部资料：
-
----
-*最近更新：（填日期）*
 `;
 
 const directionTemplate = (title: string) => `# ${title}
@@ -1121,6 +1091,12 @@ const App: React.FC = () => {
   }, [activeModel]);
   const [rightChatOpen, setRightChatOpen] = useState(true);     // 右侧 AI 对话栏
   const [rightChatWidth, setRightChatWidth] = useState(360);
+  // 仪表盘点 Agent → 打开群聊并把 @某某 塞进输入框（nonce 保证同一个 Agent 连点两次也生效）
+  const [chatPrefill, setChatPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  const mentionAgentInChat = useCallback((agent: string) => {
+    setRightChatOpen(true);
+    setChatPrefill({ text: `@${agent} `, nonce: Date.now() });
+  }, []);
   const [nodes, setNodes] = useState<ProblemNode[]>([]);
   const pendingSelectRef = useRef<string | null>(null); // 切换项目后要自动选中的节点
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -1675,17 +1651,30 @@ const App: React.FC = () => {
       const overviewId = overview?.id;
       const norm = (s: string) => (s || '').trim().replace(/[？?]+$/u, '').toLowerCase();
       const now = Date.now();
-      // 生成「总览」主文件内容：项目目标 + 团队分工 + 指向各关键节点的链接
+      // 生成「总览」正文：方向 / 分工 / 链接由上方仪表盘自动展示，这里只留机器算不出来的判断，保持极简
       const buildOverviewDoc = (): string => {
-        const byArea = new Map<string, typeof plan.directions>();
-        for (const m of plan.directions) { const a = m.area || '未分组'; if (!byArea.has(a)) byArea.set(a, [] as any); (byArea.get(a) as any).push(m); }
-        let doc = `# ${proj.name} · 总览\n\n> 目标：${goal}\n> 总协调：${plan.lead.role}（${plan.lead.duty}）\n\n## 关键节点与分工\n按工作板块（文件夹）组织，点链接进入对应笔记：\n`;
-        for (const [area, ms] of byArea) {
-          doc += `\n### 📁 ${area}\n`;
-          for (const m of ms) doc += `- [[${m.title}]] — 🤖 ${m.agent}｜${m.duty}\n`;
-        }
-        doc += `\n## 相关链接\n- 项目说明：[[README]]\n${plan.directions.map(m => `- [[${m.title}]]`).join('\n')}\n`;
-        return doc;
+        const areas = Array.from(new Set(plan.directions.map(m => m.area || '未分组')));
+        return `# ${proj.name} · 总览
+
+> ${goal}
+
+## 📌 这是什么
+分 ${areas.length} 个板块（${areas.join(' / ')}）、${plan.directions.length} 个方向推进，由「${plan.lead.role}」总协调。
+${plan.lead.duty}
+
+## 🎯 成功标准
+- 算成功：
+- 不做：
+
+## 🧩 当前卡点
+暂无（刚组建团队）
+
+## 🗺️ 下一步
+- 近期：让各方向的 Agent 先跑一轮探索
+
+## 💡 关键结论
+待探索
+`;
       };
       const apply = (list: ProblemNode[]): ProblemNode[] => {
         const next = list.map(n => n.id === overviewId ? { ...n, assignedAgent: plan.lead.role, fullNote: buildOverviewDoc(), noteUpdatedAt: now } : n);
@@ -1930,6 +1919,23 @@ const App: React.FC = () => {
 
         <div className="mt-6 pt-4 border-t border-slate-800 text-center">
           <button onClick={() => { setIsLoginAsAdmin(!isLoginAsAdmin); setOtpCode(''); setIsOtpSent(false); }} className="text-slate-500 hover:text-white text-sm font-medium">{isLoginAsAdmin ? '返回普通登录' : '管理员入口'}</button>
+        </div>
+
+        {/*
+          ICP 备案信息。《互联网信息服务备案承诺书》第二条要求：上线时在网站主页底部
+          规范标明备案编号并链接至 https://beian.miit.gov.cn。此前站点未标注，属合规缺口，
+          也是微信安全审核会核对的一项，故补上。
+        */}
+        <div className="mt-6 pt-4 border-t border-slate-800 text-center text-[11px] leading-6 text-slate-500">
+          <div>深圳市海探科技有限公司</div>
+          <a
+            href="https://beian.miit.gov.cn"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-slate-300 underline decoration-dotted"
+          >
+            粤ICP备2023000583号-1
+          </a>
         </div>
       </div>
     </div>
@@ -2215,7 +2221,7 @@ const App: React.FC = () => {
 
           <div className="h-full pt-11">
             {selectedNode ? (
-              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
+              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onMentionAgent={mentionAgentInChat} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="text-5xl opacity-40">📂</div>
@@ -2234,7 +2240,7 @@ const App: React.FC = () => {
             <button onClick={() => setRightChatOpen(false)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title="收起"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 17 5-5-5-5M13 17l5-5-5-5"/></svg></button>
           </div>
           <div className="flex-1 overflow-hidden">
-            <TeamChat key={currentProjectId || 'none'} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} />
+            <TeamChat key={currentProjectId || 'none'} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} />
           </div>
         </div>
 
