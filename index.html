@@ -43,7 +43,22 @@
     <link rel="stylesheet" href="/index.css">
 </head>
 <body>
-    <div id="root"></div>
+    <!--
+      #root 内的静态内容是首屏占位，React 挂载后会被替换。
+      这里放主办单位与 ICP 备案号，目的是让**不执行 JavaScript 的抓取程序**
+      （搜索引擎、微信安全扫描等）也能在原始 HTML 里直接读到备案信息 ——
+      《互联网信息服务备案承诺书》第二条要求主页标明备案编号并链接 beian.miit.gov.cn。
+      同样的信息在登录页底部也对真实用户可见（见 App.tsx），二者一致，非隐藏内容。
+    -->
+    <div id="root">
+        <div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
+            <div style="font-size:15px;color:#94a3b8;">HiExplore · AI 自动探究平台 正在加载…</div>
+            <div style="font-size:12px;line-height:2;color:#64748b;text-align:center;">
+                <div>深圳市海探科技有限公司</div>
+                <a href="https://beian.miit.gov.cn" rel="noopener noreferrer" style="color:#64748b;">粤ICP备2023000583号-1</a>
+            </div>
+        </div>
+    </div>
     <script type="module" src="/index.tsx"></script>
 </body>
 </html>
