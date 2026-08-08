@@ -12,8 +12,12 @@
  *   GET  /auth/me                校验令牌
  *   POST /api/chat               体验代理：按额度调用 DeepSeek(藏 Key)
  *   GET  /api/quota              查询当前剩余体验次数
+ *   POST /api/feedback           用户反馈 -> 转邮件发到 FEEDBACK_TO
  *
  * 环境变量(在 FC 函数配置里设置)：
+ *   ── 用户反馈(可选) ──
+ *   FEEDBACK_TO           收反馈的邮箱(不填则该端点返回 503，前端自动降级到 GitHub Issue)
+ *   FEEDBACK_PER_DAY      同一身份每天最多提交条数(默认 5)
  *   RESEND_API_KEY        Resend 邮件 Key(必填，否则验证码只打印日志)
  *   MAIL_FROM             发信地址，如 HiExplore <noreply@hiexplore.com>
  *   AUTH_SECRET           令牌签名密钥(务必改成随机长串)
@@ -50,6 +54,12 @@ const TRIAL_USER_QUOTA = Number(process.env.TRIAL_USER_QUOTA || 30);         // 
 const TRIAL_GLOBAL_CAP = Number(process.env.TRIAL_GLOBAL_DAILY_CAP || 2000); // 全站每天总次数上限
 const TRIAL_IP_PER_MIN = Number(process.env.TRIAL_IP_PER_MIN || 20);         // 每 IP 每分钟限流
 const TRIAL_MAX_TOKENS = Number(process.env.TRIAL_MAX_TOKENS || 2048);       // 单次最大输出 token
+
+// ---- 用户反馈 配置 ----
+// FEEDBACK_TO 不配则该端点返回 503，前端会自动降级成 GitHub Issue，不会白挂一个按钮
+const FEEDBACK_TO = process.env.FEEDBACK_TO || '';
+const FEEDBACK_PER_DAY = Number(process.env.FEEDBACK_PER_DAY || 5);   // 同一身份每天最多提交几条
+const FEEDBACK_MAX_LEN = 4000;                                       // 单条正文上限，防灌
 
 /** email -> { code, exp, lastSent, attempts } */
 const store = new Map();
@@ -99,16 +109,20 @@ function quotaState(ident) {
   return { key, gkey, used, gUsed, remaining: Math.max(0, ident.limit - used) };
 }
 
-async function sendEmail(to, code) {
-  const subject = 'HiExplore 登录验证码';
-  const text = `你的 HiExplore 登录验证码是：${code}（10 分钟内有效）。若非本人操作请忽略。`;
-  if (!RESEND_API_KEY) { console.log(`[DEV] 验证码 -> ${to}: ${code}`); return; }
+/** 通用发信（Resend）。未配 Key 时打印到日志，便于本地开发。 */
+async function sendMail(to, subject, text) {
+  if (!RESEND_API_KEY) { console.log(`[DEV] 邮件 -> ${to} | ${subject}\n${text}`); return; }
   const r = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: MAIL_FROM, to, subject, text }),
   });
   if (!r.ok) throw new Error('邮件发送失败：' + (await r.text().catch(() => r.status)));
+}
+
+async function sendEmail(to, code) {
+  return sendMail(to, 'HiExplore 登录验证码',
+    `你的 HiExplore 登录验证码是：${code}（10 分钟内有效）。若非本人操作请忽略。`);
 }
 
 // ---- 工具：读取 JSON body ----
@@ -191,6 +205,53 @@ const server = http.createServer(async (req, res) => {
       const p = verifyToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
       if (!p) return send2(401, { error: '未登录或登录已过期' });
       return send2(200, { user: { email: p.email, username: p.email.split('@')[0], role: 'user' } });
+    }
+
+    // ---- 用户反馈：转成邮件发到 FEEDBACK_TO ----
+    // 设计取舍：FC 是内存态，冷启动会丢数据，所以不在服务端存反馈，直接投递到邮箱
+    // ——邮箱本身就是持久化，且不引入任何新基础设施（复用已有的 Resend Key）
+    if (req.method === 'POST' && path === '/api/feedback') {
+      if (!FEEDBACK_TO) return send2(503, { error: '反馈服务未开启' });
+      const ip = clientIp(req);
+      if (rateLimited(ip)) return send2(429, { error: '请求过于频繁，请稍后再试' });
+
+      const body = await readJson(req);
+      const kind = ['bug', 'idea', 'confused', 'other'].includes(body.kind) ? body.kind : 'other';
+      const text = String(body.text || '').trim().slice(0, FEEDBACK_MAX_LEN);
+      if (text.length < 5) return send2(400, { error: '再多写几个字吧（至少 5 字）' });
+
+      // 每人每天限量，按登录身份或匿名设备计
+      const ident = identify(req);
+      const fkey = `fb:${ident.scope}:${ident.id}:${today()}`;
+      if ((usage.get(fkey) || 0) >= FEEDBACK_PER_DAY) {
+        return send2(429, { error: '今天的反馈次数已用完，明天再来～' });
+      }
+      usage.set(fkey, (usage.get(fkey) || 0) + 1);
+
+      // 联系方式选填；填了才回得上话
+      const contact = String(body.contact || '').trim().slice(0, 200);
+      const ctx = body.context && typeof body.context === 'object' ? body.context : {};
+      const label = { bug: '🐞 报错', idea: '💡 建议', confused: '😕 没看懂', other: '📝 其他' }[kind];
+
+      const lines = [
+        `类型：${label}`,
+        `身份：${ident.scope === 'user' ? ident.id : '匿名(' + String(ident.id).slice(0, 12) + ')'}`,
+        `联系方式：${contact || '(未填)'}`,
+        '',
+        '--- 用户说 ---',
+        text,
+        '',
+        '--- 诊断上下文（前端自动附带）---',
+        ...Object.entries(ctx).map(([k, v]) => `${k}: ${String(v).slice(0, 200)}`),
+      ];
+
+      try {
+        await sendMail(FEEDBACK_TO, `[HiExplore 反馈] ${label} ${text.slice(0, 30)}`, lines.join('\n'));
+      } catch (e) {
+        usage.set(fkey, Math.max(0, (usage.get(fkey) || 1) - 1)); // 发送失败退回次数
+        return send2(502, { error: '提交失败，请稍后再试' });
+      }
+      return send2(200, { ok: true });
     }
 
     // ---- 体验额度：查询剩余次数 ----

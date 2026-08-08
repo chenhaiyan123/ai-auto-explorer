@@ -9,6 +9,8 @@
  * 配置保存在 localStorage，用户可在「设置 → 模型接入」中修改。
  */
 
+import { trackEvent } from './analytics';
+
 export type LLMProviderType = 'cloud-proxy' | 'openai-compatible' | 'trial';
 
 export interface LLMSettings {
@@ -169,6 +171,9 @@ export async function callLLM(
     if (!response.ok) {
       const err = await response.json().catch(() => ({} as any));
       if (isTrial && (response.status === 402 || response.status === 429)) {
+        // 体验额度耗尽是最关键的流失点：它意味着用户想继续用但被挡住了。
+        // 埋点让你能看出「额度设小了」还是「压根没人用到额度上限」。
+        trackEvent('trial_quota_exhausted', { scope: err.scope || 'unknown' });
         throw new TrialQuotaError(err.error || '体验次数已用完', err.code || 'QUOTA_EXCEEDED', err.scope);
       }
       // 兼容两种错误结构：OpenAI 的 {error:{message}} 与本服务的 {error:"..."}

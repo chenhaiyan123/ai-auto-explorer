@@ -24,6 +24,7 @@ import TeamChat from './components/TeamChat';
 import DownloadModal from './components/DownloadModal';
 const IS_DESKTOP = typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent);
 import SettingsModal from './components/SettingsModal';
+import FeedbackModal from './components/FeedbackModal';
 import { QVSReport } from './services/qvsService';
 import { resolveNodeByTitle } from './services/noteLinks';
 import { exportVaultZip, importMarkdownFiles, saveVaultToDirectory, supportsDirectoryPicker } from './services/vault';
@@ -1073,6 +1074,7 @@ const App: React.FC = () => {
   const [sidebarActiveTab, setSidebarActiveTab] = useState<'butler' | 'agents' | 'research' | 'notes'>('notes');
   const [notesSearch, setNotesSearch] = useState('');
   const [showGraphModal, setShowGraphModal] = useState(false); // 图谱弹出层
+  const [showFeedback, setShowFeedback] = useState(false); // 反馈弹窗
   const [showQuestionBoard, setShowQuestionBoard] = useState(false); // 问题广场
   const [showDownloadModal, setShowDownloadModal] = useState(false); // 下载客户端
   const [teamBusy, setTeamBusy] = useState(false); // AI 组队进行中
@@ -1564,6 +1566,8 @@ const App: React.FC = () => {
     const readme: ProblemNode = { id: readmeId, title: 'README', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], noteType: 'readme', fullNote: readmeTemplate(name), noteUpdatedAt: now };
     const overview: ProblemNode = { id: overviewId, title: '总览', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], noteType: 'overview', fullNote: overviewTemplate(name), noteUpdatedAt: now };
     const p: Project = { id: projId, name, metaProblem: name, createdAt: now, explorationMode: 'research', nodes: [readme, overview] };
+    // 漏斗关键一步：建项目 = 真正开始用了（区分"点进来看看"和"上手了"）
+    trackEvent('project_created', { 已有项目数: projects.length });
     setProjects(prev => [...prev, p]);
     pendingSelectRef.current = overviewId; // 切换后自动打开「项目总览」
     setCurrentProjectId(projId);
@@ -1692,8 +1696,10 @@ ${plan.lead.duty}
       if (projectId === currentProjectId) setNodes(prev => apply(prev));
       else setProjects(prev => prev.map(p => p.id === projectId ? { ...p, nodes: apply(p.nodes || []) } : p));
       setTeamBusy(false);
+      trackEvent('team_built', { 方向数: plan.directions.length });
       const goExplore = window.confirm(`✅ AI 已组建团队：\n· 总协调：${plan.lead.role}\n· ${plan.directions.length} 个关键方向，各配一名 Agent\n\n现在让团队开始自动探索各自方向吗？`);
       if (goExplore) {
+        trackEvent('auto_explore_start');
         if (projectId !== currentProjectId) { pendingSelectRef.current = overview?.id || null; setCurrentProjectId(projectId); }
         setTimeout(() => setIsLooping(true), 300);
       }
@@ -1723,6 +1729,8 @@ ${plan.lead.duty}
     if (!nodes.length) { alert('当前没有笔记可导出。'); return; }
     // 文件夹代表一个项目：以项目名作为顶层文件夹，子节点作为里面的 .md
     exportVaultZip(nodes, (currentProject?.name || 'AI-Explorer') + '-Vault', currentProject?.name);
+    // 导出 = 产出对用户有价值到愿意带走，是最强的留存信号
+    trackEvent('vault_exported', { 笔记数: nodes.length });
   }, [nodes, currentProject]);
 
   // 保存到本地文件夹（File System Access）
@@ -1910,7 +1918,7 @@ ${plan.lead.duty}
         {/* 免注册体验：游客进入，按匿名设备给小额度 */}
         {!isLoginAsAdmin && hasTrialBackend() && (
           <button
-            onClick={() => setUser(auth.loginAsGuest())}
+            onClick={() => { trackEvent('trial_start'); setUser(auth.loginAsGuest()); }}
             className="w-full mt-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold py-3.5 rounded-xl flex items-center justify-center gap-2"
           >
             🎁 先免注册体验一下
@@ -2037,6 +2045,13 @@ ${plan.lead.duty}
             className="px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-amber-400 flex items-center gap-1"
             title="问题广场：筛选有价值的问题"
           >🔥 问题</button>
+
+          {/* 反馈入口：推广期最重要的一个按钮，放在顶栏常驻 */}
+          <button
+            onClick={() => { setShowFeedback(true); trackEvent('feedback_open'); }}
+            className="px-2.5 py-1.5 bg-slate-800 hover:bg-emerald-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-emerald-400 flex items-center gap-1"
+            title="反馈：卡住了、报错了、觉得哪里蠢，都告诉我"
+          >💬 反馈</button>
 
           {/* 主题切换：白天 / 深色 */}
           <button
@@ -2342,6 +2357,21 @@ ${plan.lead.duty}
 
       {/* 问题广场 */}
       {showQuestionBoard && <QuestionBoard userKey={user?.username || 'guest'} onClose={() => setShowQuestionBoard(false)} onStartProject={(text) => handleCreateProject(text)} />}
+
+      {/* 反馈弹窗：带上业务上下文，方便复现用户遇到的问题 */}
+      {showFeedback && (
+        <FeedbackModal
+          onClose={() => setShowFeedback(false)}
+          onTrack={trackEvent}
+          extraContext={{
+            项目数: projects.length,
+            当前项目节点数: nodes.length,
+            模型: activeModel || '(未设置)',
+            接入方式: isTrialMode() ? '体验额度' : '自带模型',
+            身份: user ? (user.role || 'user') : '未登录',
+          }}
+        />
+      )}
 
       {/* 设置：模型接入 / IoT 设备 */}
       {showSettingsModal && <SettingsModal onClose={() => { setShowSettingsModal(false); try { setActiveModel(loadLLMSettings().model || ''); } catch {} }} />}
