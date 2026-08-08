@@ -42,7 +42,9 @@ const TeamChat: React.FC<{
   onOpenNode: (nodeId: string) => void;
   chatHistory?: ChatMessage[];
   onUpdateChatHistory?: (messages: ChatMessage[]) => void;
-}> = ({ project, nodes, selectedNode, onAppendToNote, onOpenNode, chatHistory, onUpdateChatHistory }) => {
+  /** 外部（如项目仪表盘点 Agent）往输入框里塞一段文字；nonce 变化即触发一次 */
+  prefill?: { text: string; nonce: number } | null;
+}> = ({ project, nodes, selectedNode, onAppendToNote, onOpenNode, chatHistory, onUpdateChatHistory, prefill }) => {
   const [msgs, setMsgs] = useState<ChatMsg[]>(() => (chatHistory || []).map(parse));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -59,6 +61,11 @@ const TeamChat: React.FC<{
 
   const mountedRef = useRef(false);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, busy]);
+  // 外部塞入的 @成员：追加到输入框末尾（不覆盖用户已输入的内容）
+  useEffect(() => {
+    if (!prefill?.text) return;
+    setInput(v => (v.includes(prefill.text.trim()) ? v : (v ? v.trimEnd() + ' ' : '') + prefill.text));
+  }, [prefill?.nonce]);
   // 只在用户真正产生新消息后才回写，避免挂载时用初始值覆盖项目已存的记录
   useEffect(() => {
     if (!mountedRef.current) { mountedRef.current = true; return; }

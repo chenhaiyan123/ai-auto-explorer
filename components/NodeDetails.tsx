@@ -5,6 +5,8 @@ import { runAgentTask, identifyNodeTask } from '../services/geminiService';
 import MarkdownView from './MarkdownView';
 import { getOutgoingLinks, getBacklinks, resolveNodeByTitle } from '../services/noteLinks';
 import { downloadNoteMd } from '../services/vault';
+import ProjectDashboard from './ProjectDashboard';
+import { buildDashboard } from '../services/dashboardService';
 
 interface NodeDetailsProps {
   node: ProblemNode | null;
@@ -31,6 +33,8 @@ interface NodeDetailsProps {
   onRecordDecision?: (nodeId: string) => void;
   /** 从某条决策记录 fork 复刻分支 */
   onForkDecision?: (decisionId: string) => void;
+  /** 仪表盘上点某个 Agent → 在团队群聊里 @ta */
+  onMentionAgent?: (agent: string) => void;
 }
 
 const AGENT_MARKETPLACE = [
@@ -44,7 +48,7 @@ const AGENT_MARKETPLACE = [
 const NodeDetails: React.FC<NodeDetailsProps> = ({
   node, isFocused, isWide, onToggleWide, onClose, onSendMessage, onUpdateNotes, onUpdateNodeData, onAppendToSummary, onAddChildNode,
   allNodes = [], onNavigate, onWikiLink, variant = 'panel',
-  decisions = [], onRecordDecision, onForkDecision
+  decisions = [], onRecordDecision, onForkDecision, onMentionAgent
 }) => {
   const isCenter = variant === 'center';
   const [chatInput, setChatInput] = useState('');
@@ -86,24 +90,11 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
     [allNodes]
   );
 
-  // ===== 项目概览（总览笔记上的实时仪表盘，从全部节点算出） =====
-  const overviewData = useMemo(() => {
-    if (!node || node.noteType !== 'overview') return null;
-    const isDir = (n: ProblemNode) => n.noteType === 'direction' || !n.noteType;
-    const dirs = allNodes.filter(isDir);
-    const byId = new Map(allNodes.map(n => [n.id, n]));
-    const parentOf = (n: ProblemNode) => (n.dependencies || []).map(d => byId.get(d)).find(p => p && isDir(p));
-    const main = dirs.filter(n => !parentOf(n));
-    return {
-      total: dirs.length,
-      solved: dirs.filter(n => n.status === NodeStatus.SOLVED).length,
-      exploring: dirs.filter(n => n.status === NodeStatus.EXPLORING).length,
-      unexplored: dirs.filter(n => n.status === NodeStatus.UNEXPLORED).length,
-      problems: dirs.filter(n => n.status === NodeStatus.NEEDS_REVIEW || n.status === NodeStatus.INVALID),
-      main,
-      dirs,
-    };
-  }, [node, allNodes]);
+  // ===== 项目仪表盘（仅「总览」笔记，从全部节点实时算出，见 services/dashboardService） =====
+  const dashboard = useMemo(
+    () => (node && node.noteType === 'overview' ? buildDashboard(allNodes) : null),
+    [node, allNodes]
+  );
 
   useEffect(() => {
     if (node) {
@@ -526,65 +517,13 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
           {node.noteUpdatedAt && <span className="px-2 py-0.5 text-slate-600 ml-auto">更新于 {new Date(node.noteUpdatedAt).toLocaleString()}</span>}
         </div>
 
-        {/* ===== 项目概览仪表盘（仅总览笔记，实时汇总） ===== */}
-        {overviewData && (
-          <section className="bg-slate-900/60 border border-slate-700 rounded-xl p-4 space-y-3">
-            <div className="text-[10px] uppercase tracking-widest text-blue-400 font-bold">📊 项目概览（自动汇总）</div>
-
-            {/* 探索进度 */}
-            <div>
-              <div className="flex justify-between text-[11px] text-slate-300 mb-1">
-                <span>探索进度</span>
-                <span>{overviewData.solved}/{overviewData.total} 完成 · {overviewData.unexplored} 待探索{overviewData.problems.length ? ` · ${overviewData.problems.length} 待复核` : ''}</span>
-              </div>
-              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-500" style={{ width: `${overviewData.total ? Math.round((overviewData.solved / overviewData.total) * 100) : 0}%` }} />
-              </div>
-            </div>
-
-            {/* 主要探索方向 */}
-            <div className="pt-2 border-t border-slate-800">
-              <div className="text-[9px] text-slate-500 font-bold mb-1.5">主要探索方向（{overviewData.main.length}）</div>
-              {overviewData.main.length === 0 ? (
-                <div className="text-[10px] text-slate-600 italic">还没有方向。点项目的 🤝 让 AI 拆解，或 ＋ 手动加。</div>
-              ) : (
-                <div className="space-y-1">
-                  {overviewData.main.map(n => {
-                    const s = statusInfo[n.status] || statusInfo.unexplored;
-                    return (
-                      <button key={n.id} onClick={() => onNavigate && onNavigate(n.id)} className="w-full text-left flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-800 transition-colors">
-                        <span className={`text-[8px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${s.cls}`}>{s.label}</span>
-                        <span className="text-[11px] text-slate-200 truncate">{n.title}</span>
-                        {n.assignedAgent && <span className="text-[8px] text-blue-400 flex-shrink-0">🤖 {n.assignedAgent}</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* 遇到的主要问题 / 待复核 */}
-            {overviewData.problems.length > 0 && (
-              <div className="pt-2 border-t border-slate-800">
-                <div className="text-[9px] text-red-400 font-bold mb-1.5">⚠ 待解决 / 待复核（{overviewData.problems.length}）</div>
-                <div className="space-y-1">
-                  {overviewData.problems.slice(0, 8).map(n => (
-                    <button key={n.id} onClick={() => onNavigate && onNavigate(n.id)} className="w-full text-left text-[10px] text-slate-300 hover:text-white px-2 py-0.5 rounded hover:bg-slate-800 truncate transition-colors">· {n.title}</button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 相关笔记链接 */}
-            <div className="pt-2 border-t border-slate-800">
-              <div className="text-[9px] text-slate-500 font-bold mb-1.5">相关笔记（{overviewData.dirs.length}）</div>
-              <div className="flex flex-wrap gap-1.5">
-                {overviewData.dirs.map(n => (
-                  <button key={n.id} onClick={() => onNavigate && onNavigate(n.id)} className="text-[9px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 hover:border-purple-500/50 hover:text-purple-300 transition-colors truncate max-w-[140px]">{n.title}</button>
-                ))}
-              </div>
-            </div>
-          </section>
+        {/* ===== 项目仪表盘（仅总览笔记，实时汇总，任何一项一次点击直达） ===== */}
+        {dashboard && (
+          <ProjectDashboard
+            data={dashboard}
+            onNavigate={(id) => onNavigate && onNavigate(id)}
+            onMentionAgent={(a) => onMentionAgent && onMentionAgent(a)}
+          />
         )}
 
         {/* ===== 节点笔记：描述这个关键节点的探索现状与后续方向 ===== */}
