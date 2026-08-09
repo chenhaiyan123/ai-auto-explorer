@@ -1280,6 +1280,22 @@ const App: React.FC = () => {
   // 探索重试计数
   const retryCountRef = useRef<Record<string, number>>({});
   const MAX_RETRIES = 3;
+  /**
+   * 跨节点的连续失败计数。
+   * 原来的重试只按「单个节点」计数：后端整体挂掉时，循环会把每个节点各重试 3 次、
+   * 标记待人工、再换下一个继续，持续模式还会每 8 秒自主提新方向造出新的失败目标——
+   * 等于对着一个已经死掉的后端做永动机。（实测 24 小时打出 2973 次全失败调用。）
+   * 连续失败达到阈值就判定为「链路问题」，直接停循环。
+   */
+  const consecutiveFailRef = useRef(0);
+  const MAX_CONSECUTIVE_FAILS = 3;
+
+  /** 判断错误是否属于「重试也没用」的链路级故障 */
+  const isInfraFailure = (e: any): boolean => {
+    if (e?.name === 'TrialQuotaError') return true;
+    const msg = String(e?.message || e);
+    return /Failed to fetch|NetworkError|ERR_|AccessDenied|欠费|HTTP (401|402|403|429|5\d\d)/i.test(msg);
+  };
 
   // 持续模式下：探索完现有节点后，让 AI 自主提出一个新关键方向（加为待探索节点）
   const proposeNewDirection = useCallback(async () => {
@@ -1488,14 +1504,45 @@ const App: React.FC = () => {
 
       // 成功后重置重试计数
       retryCountRef.current[cid] = 0;
-      
-    } catch (e) { 
+      consecutiveFailRef.current = 0;
+
+    } catch (e) {
       console.error('探索出错:', e);
-      
-      // 重试机制
+
+      // ① 链路级故障（额度用尽 / 鉴权失败 / 网络不通 / 服务端 5xx）：重试没有意义，立刻停循环。
+      //    不停的话会持续对着坏掉的后端空转，既刷爆调用量也烧钱。
+      if (isInfraFailure(e)) {
+        updateNode(cid, { status: NodeStatus.UNEXPLORED });
+        setIsLooping(false);
+        isProcessingRef.current = false;
+        const isQuota = (e as any)?.name === 'TrialQuotaError';
+        addNotification(
+          'warning',
+          isQuota ? '⚠️ 体验额度已用完' : '⚠️ 模型服务连不上，已暂停探索',
+          isQuota
+            ? '自动探索已暂停。可在右上角设置里换成你自己的模型（Ollama / DeepSeek / 任何 OpenAI 兼容接口）继续。'
+            : `自动探索已暂停，避免空转。错误：${(e as Error).message}`,
+        );
+        trackEvent('explore_halted', { reason: isQuota ? 'quota' : 'infra' });
+        return;
+      }
+
+      // ② 跨节点连续失败：单看每个节点都"只失败了一两次"，但整体已经连败多轮，同样判定为链路问题
+      consecutiveFailRef.current += 1;
+      if (consecutiveFailRef.current >= MAX_CONSECUTIVE_FAILS) {
+        updateNode(cid, { status: NodeStatus.UNEXPLORED });
+        setIsLooping(false);
+        isProcessingRef.current = false;
+        addNotification('warning', '⚠️ 连续失败，已暂停探索',
+          `连续 ${MAX_CONSECUTIVE_FAILS} 个节点都失败了，先停下来避免空转。最后一个错误：${(e as Error).message}`);
+        trackEvent('explore_halted', { reason: 'consecutive' });
+        return;
+      }
+
+      // ③ 单节点问题：按原逻辑重试
       const retryCount = (retryCountRef.current[cid] || 0) + 1;
       retryCountRef.current[cid] = retryCount;
-      
+
       if (retryCount < MAX_RETRIES) {
         // 还可以重试，保持UNEXPLORED状态，继续探索
         updateNode(cid, { status: NodeStatus.UNEXPLORED });
