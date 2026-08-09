@@ -1290,6 +1290,20 @@ const App: React.FC = () => {
   const consecutiveFailRef = useRef(0);
   const MAX_CONSECUTIVE_FAILS = 3;
 
+  /**
+   * 无人看管预算。
+   * 成本核查发现：2026-07 函数计算执行了约 83 小时（约合一两万次模型调用），
+   * 而同期只有 40 个访客——这些调用绝大多数是 7×24 循环在没人看结果时自己跑出来的。
+   * 钱花在了「真实但无人查看」的探索上，这是最大的一笔浪费。
+   *
+   * 做法不是砍掉 7×24（那是产品卖点），而是给它一个预算：
+   * 连续跑够 N 次探索且期间没有任何用户操作，就暂停并询问是否继续。
+   * 用户只要动一下（点节点、切项目等）计数就归零，正常使用完全不受影响。
+   */
+  const unattendedRef = useRef(0);
+  const UNATTENDED_BUDGET = 30;
+  const [unattendedPrompt, setUnattendedPrompt] = useState(false);
+
   /** 判断错误是否属于「重试也没用」的链路级故障 */
   const isInfraFailure = (e: any): boolean => {
     if (e?.name === 'TrialQuotaError') return true;
@@ -1392,6 +1406,15 @@ const App: React.FC = () => {
       return;
     }
     
+    // 无人看管预算：跑够额度就停下来问一句，避免整夜空跑烧钱
+    if (unattendedRef.current >= UNATTENDED_BUDGET) {
+      setIsLooping(false);
+      setUnattendedPrompt(true);
+      trackEvent('explore_halted', { reason: 'unattended_budget' });
+      return;
+    }
+    unattendedRef.current += 1;
+
     isProcessingRef.current = true;
     const cid = unexplored.id;
     const nodeTitle = unexplored.title;
@@ -2037,7 +2060,11 @@ ${plan.lead.duty}
   );
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-200 overflow-hidden" onClick={() => setContextMenu(null)}>
+    <div
+      className="flex flex-col h-screen w-screen bg-slate-950 text-slate-200 overflow-hidden"
+      onClick={() => { setContextMenu(null); unattendedRef.current = 0; }}
+      onKeyDown={() => { unattendedRef.current = 0; }}
+    >
       <header className="relative h-14 border-b border-slate-800 flex items-center justify-between px-3 sm:px-6 bg-slate-900/50 backdrop-blur-md z-50">
         <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-fit"><div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white shadow-lg">A</div><h1 className="text-lg font-semibold hidden lg:block">Explorer</h1></div>
@@ -2444,6 +2471,30 @@ ${plan.lead.duty}
 
       {/* 问题广场 */}
       {showQuestionBoard && <QuestionBoard userKey={user?.username || 'guest'} onClose={() => setShowQuestionBoard(false)} onStartProject={(text) => handleCreateProject(text)} />}
+
+      {/* 无人看管预算用尽：停下来确认一次，避免整夜空跑 */}
+      {unattendedPrompt && (
+        <div className="fixed inset-0 z-[115] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-7 text-center">
+            <div className="text-3xl mb-3">☕</div>
+            <h3 className="text-base font-bold text-white mb-2">已连续探索 {UNATTENDED_BUDGET} 轮，先停一下</h3>
+            <p className="text-[12px] text-slate-400 leading-6">
+              这段时间没有检测到你的操作。自动探索每一轮都会真实调用模型并产生费用，
+              所以到这里先暂停，确认你还在看。
+            </p>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => { setUnattendedPrompt(false); }}
+                className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm font-bold"
+              >先停着</button>
+              <button
+                onClick={() => { unattendedRef.current = 0; setUnattendedPrompt(false); setIsLooping(true); trackEvent('unattended_resume'); }}
+                className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold"
+              >继续探索</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 反馈弹窗：带上业务上下文，方便复现用户遇到的问题 */}
       {showFeedback && (

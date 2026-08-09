@@ -54,6 +54,19 @@ const TRIAL_USER_QUOTA = Number(process.env.TRIAL_USER_QUOTA || 30);         // 
 const TRIAL_GLOBAL_CAP = Number(process.env.TRIAL_GLOBAL_DAILY_CAP || 2000); // 全站每天总次数上限
 const TRIAL_IP_PER_MIN = Number(process.env.TRIAL_IP_PER_MIN || 20);         // 每 IP 每分钟限流
 const TRIAL_MAX_TOKENS = Number(process.env.TRIAL_MAX_TOKENS || 2048);       // 单次最大输出 token
+/**
+ * 上游超时。FC 按「执行时长」计费(vCPU·秒 + 内存·秒)，函数等待上游 HTTP 响应的
+ * 整段时间都在计费。原来这个 fetch 没有超时，上游挂起时会一直等到函数
+ * 执行超时(60 秒)才结束 —— 单次调用的最坏成本因此被放大到上限。
+ */
+const UPSTREAM_TIMEOUT_MS = Number(process.env.UPSTREAM_TIMEOUT_MS || 40000);
+/**
+ * 熔断。上游连续失败时，直接廉价拒绝一段时间，而不是每次都去等一遍超时。
+ * 这是对「客户端不停重试」这种模式的服务端兜底 —— 前端修复只对加载了新版本
+ * 的浏览器有效，已经打开的旧标签页仍会按老逻辑重试。
+ */
+const BREAKER_FAILS = Number(process.env.BREAKER_FAILS || 3);        // 连续失败几次后熔断
+const BREAKER_COOLDOWN_MS = Number(process.env.BREAKER_COOLDOWN_MS || 60000);
 
 // ---- 用户反馈 配置 ----
 // FEEDBACK_TO 不配则该端点返回 503，前端会自动降级成 GitHub Issue，不会白挂一个按钮
@@ -65,6 +78,8 @@ const FEEDBACK_MAX_LEN = 4000;                                       // 单条�
 const store = new Map();
 const usage = new Map();   // `${scope}:${id}:${date}` -> 次数；`g:${date}` -> 全站次数
 const ipHits = new Map();  // ip -> { count, windowStart }
+/** 上游熔断状态：连续失败计数 + 熔断到期时间戳 */
+const breaker = { fails: 0, openUntil: 0 };
 const isEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 const gen6 = () => String(Math.floor(100000 + Math.random() * 900000));
 
@@ -267,6 +282,14 @@ const server = http.createServer(async (req, res) => {
       const ident = identify(req);
       if (ident.scope === 'anon' && ident.id === 'nodev') return send2(400, { error: '缺少设备标识' });
       if (rateLimited(clientIp(req))) return send2(429, { error: '请求过于频繁，请稍后再试' });
+      // 熔断中：不去碰上游，直接廉价返回（省的是 FC 的等待时长）
+      if (Date.now() < breaker.openUntil) {
+        return send2(503, {
+          code: 'UPSTREAM_DOWN',
+          error: '模型服务暂时不可用，请稍后再试，或在设置里换成你自己的模型',
+          retryAfter: Math.ceil((breaker.openUntil - Date.now()) / 1000),
+        });
+      }
       const q = quotaState(ident);
       if (q.gUsed >= TRIAL_GLOBAL_CAP) return send2(429, { error: '今日体验名额已满，请明天再来，或在设置里填入你自己的模型 Key', code: 'GLOBAL_CAP' });
       if (q.remaining <= 0) {
@@ -295,18 +318,40 @@ const server = http.createServer(async (req, res) => {
           temperature: typeof bodyIn.temperature === 'number' ? bodyIn.temperature : 0.7,
         };
         if (bodyIn.jsonMode || bodyIn.response_format) dsBody.response_format = { type: 'json_object' };
-        const r = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(dsBody),
-        });
+        // 超时必须显式设置：FC 计费到「等待结束」为止，没有超时就等于把
+        // 单次最坏成本交给上游决定（最长到函数执行超时 60 秒）
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), UPSTREAM_TIMEOUT_MS);
+        let r;
+        try {
+          r = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(dsBody),
+            signal: ac.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
         const data = await r.json().catch(() => ({}));
-        if (!r.ok) { refund(); return send2(502, { error: data?.error?.message || '上游模型调用失败' }); }
+        if (!r.ok) {
+          refund();
+          breaker.fails += 1;
+          if (breaker.fails >= BREAKER_FAILS) breaker.openUntil = Date.now() + BREAKER_COOLDOWN_MS;
+          return send2(502, { error: data?.error?.message || '上游模型调用失败' });
+        }
+        breaker.fails = 0;   // 成功即复位
         const remaining = Math.max(0, ident.limit - (usage.get(q.key) || 0));
         return send2(200, { ...data, _trial: { scope: ident.scope, remaining, limit: ident.limit } });
       } catch (e) {
         refund();
-        return send2(502, { error: e?.message || '体验调用失败' });
+        breaker.fails += 1;
+        if (breaker.fails >= BREAKER_FAILS) breaker.openUntil = Date.now() + BREAKER_COOLDOWN_MS;
+        const aborted = e?.name === 'AbortError';
+        return send2(504, {
+          code: aborted ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_ERROR',
+          error: aborted ? `模型响应超时(${UPSTREAM_TIMEOUT_MS / 1000}秒)，请重试或换用自己的模型` : (e?.message || '体验调用失败'),
+        });
       }
     }
 
