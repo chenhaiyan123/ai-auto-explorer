@@ -1,4 +1,4 @@
-import { ProblemNode } from '../types';
+import { ProblemNode, LAYER_LABEL } from '../types';
 
 /**
  * 本地 Markdown 库（Vault）工具：把笔记节点与 .md 文件互相转换，
@@ -21,7 +21,28 @@ export const noteToMarkdown = (n: ProblemNode): string => {
   if (n.noteUpdatedAt) fm.push(`updated: ${new Date(n.noteUpdatedAt).toISOString()}`);
   fm.push('---', '');
   const body = (n.fullNote && n.fullNote.trim()) ? n.fullNote : (n.notes || '');
-  return fm.join('\n') + body + '\n';
+  // 假设与证据写进**正文**而不是 frontmatter：
+  // 导出到 Obsidian 后，最重要的东西必须能直接看见，塞进 frontmatter 就被折叠了。
+  return fm.join('\n') + body + hypothesisSection(n) + '\n';
+};
+
+/** 把「当前赌注」渲染成一段 Markdown，附在正文末尾 */
+export const hypothesisSection = (n: ProblemNode): string => {
+  const h = n.hypothesis;
+  if (!h || !h.statement) return '';
+  const belief = h.belief === 'high' ? '高' : h.belief === 'low' ? '低' : '中';
+  const lines = ['', '', '## 🎯 当前赌注', '', `> ${h.statement}`, '', `- 信念：${belief}`];
+  if (h.unknown) lines.push(`- 最大未知量：${h.unknown}`);
+  if (n.validationReason) lines.push(`- 待验证原因：${n.validationReason}`);
+  if (h.evidence && h.evidence.length) {
+    lines.push('', '### 证据', '');
+    for (const e of h.evidence) {
+      const mark = e.stance === 'refute' ? '✗' : '✓';
+      const from = e.origin === 'ai' ? 'AI 推理' : e.origin === 'probe' ? '探针' : '人工';
+      lines.push(`- ${mark} \`${LAYER_LABEL[e.layer]}\` ${e.claim}${e.source ? ` —— ${e.source}` : ''}（${from}）`);
+    }
+  }
+  return lines.join('\n');
 };
 
 /** 节点 → 在库中的相对路径，如 "研究方向/材料/某问题.md" */

@@ -1,4 +1,5 @@
-import { ProblemNode, ChatMessage, Project } from "../types";
+import { v4 as uuidv4 } from "uuid";
+import { ProblemNode, ChatMessage, Project, Hypothesis, Evidence } from "../types";
 import { monitor } from "./monitoringService";
 import { callLLM } from "./llmProvider";
 import { buildIoTSystemPrompt, executeIoTCommandsInText, formatIoTResults } from "./iotService";
@@ -92,8 +93,14 @@ ${context ? `相关节点：${context}` : ''}
 
 请返回 JSON：
 {
-  "notes": "结构化的探索笔记（Markdown，400-800字）。请包含这几部分：\\n## 探索现状（目前了解到什么、关键事实）\\n## 关键发现 / 洞见（2-4 条，尽量具体）\\n## 方法与思路（怎么继续推进、可用的方法或实验）\\n## 后续探索方向（列出要继续追的点）",
-  "confidence": 0.8,
+  "notes": "结构化的探索笔记（Markdown，300-500字）。请包含这几部分：\\n## 探索现状（目前了解到什么、关键事实）\\n## 关键发现 / 洞见（2-4 条，尽量具体）\\n## 方法与思路（怎么继续推进）",
+  "hypothesis": "这个节点目前赌的是什么——一句可证伪的判断",
+  "belief": "high|medium|low",
+  "unknown": "最大未知量：你没法靠推理知道、必须去问现实的那一件事",
+  "evidence": [
+    {"stance": "support", "claim": "支持该判断的一条依据", "source": "来自哪里"},
+    {"stance": "refute", "claim": "反对该判断的一条依据", "source": "来自哪里"}
+  ],
   "subProblems": [
     {"title": "子问题1"},
     {"title": "子问题2"}
@@ -102,9 +109,12 @@ ${context ? `相关节点：${context}` : ''}
 }
 
 要求：
-1. notes 要言之有物、具体（避免空泛套话），用 Markdown 小标题分段，400-800 字。
-2. subProblems 是这个节点下最值得继续深入的 0-3 个子问题（宁缺毋滥，没有就给空数组）；标题必须极简，是名词短语、不超过 10 个字，不要写成一整句问句。
-3. taskType 从 research/code/web/image 中选最贴切的一个。`;
+1. notes 要言之有物、具体（避免空泛套话），用 Markdown 小标题分段，300-500 字。
+2. hypothesis 必须是**可以被现实推翻**的一句话（"用户更在意导航而不是翻译"这种），不要写成"需要进一步研究"这类无法证伪的话。
+3. evidence 至少要有 1 条 refute（反对自己的依据）。找不到就写"暂无反证，这本身就是风险"。**不要为了凑数编造事实或数据。**
+4. unknown 要具体到"去问谁、看什么数据能知道"，不要写"还需要更多研究"。
+5. subProblems 是这个节点下最值得继续深入的 0-3 个子问题（宁缺毋滥，没有就给空数组）；标题必须极简，是名词短语、不超过 10 个字，不要写成一整句问句。
+6. taskType 从 research/code/web/image 中选最贴切的一个。`;
 
   try {
     const result = await callGemini([{ role: "user", content: prompt }], undefined, "application/json");
@@ -113,7 +123,7 @@ ${context ? `相关节点：${context}` : ''}
     const a = clean.indexOf('{'); const b = clean.lastIndexOf('}');
     if (a > 0 || b < clean.length - 1) { if (a >= 0 && b > a) clean = clean.slice(a, b + 1); }
     const parsed = JSON.parse(clean);
-    
+
     // 过滤掉没有有效title的子问题
     const validSubProblems = (parsed.subProblems || [])
       .filter((sp: any) => sp && sp.title && sp.title.trim())
@@ -122,20 +132,63 @@ ${context ? `相关节点：${context}` : ''}
         title: sp.title.trim().replace(/^(如何|怎么|怎样|为什么|什么是|关于)/u, '').replace(/[？?。.！!，,]+$/u, '').slice(0, 12),
         initialNotes: sp.initialNotes || ''
       }));
-    
+
     return {
       notes: parsed.notes || '分析完成',
       confidence: parsed.confidence || 0.7,
       triggerDecision: false,
       decisionContext: '',
       subProblems: validSubProblems,
-      taskType: parsed.taskType || 'research'
+      taskType: parsed.taskType || 'research',
+      hypothesis: buildAIHypothesis(parsed, node.hypothesis),
     };
   } catch (e: any) {
     console.error("解析失败:", e.message);
-    return { notes: `待分析: ${node.title}`, confidence: 0.3, triggerDecision: false, decisionContext: "", subProblems: [], taskType: 'research' };
+    return { notes: `待分析: ${node.title}`, confidence: 0.3, triggerDecision: false, decisionContext: "", subProblems: [], taskType: 'research', hypothesis: undefined };
   }
 };
+
+/**
+ * 把模型返回的假设/证据整理成 Hypothesis。
+ *
+ * ⚠️ 关键：模型产生的证据一律强制 origin='ai' + layer='stated'，**不让模型自己填层级**。
+ * 否则它会把自己的推理标成 market/outcome，五层证据分级立刻失效，
+ * 验证触发器（weak_evidence）也就永远不会命中——整套现实反馈闭环等于白做。
+ * 只有人工回填和探针结果才能写更高的层级。
+ *
+ * 已有的人工/探针证据会被保留（AI 只能往上加，不能抹掉现实证据）。
+ */
+export function buildAIHypothesis(parsed: any, prev?: Hypothesis): Hypothesis | undefined {
+  const statement = typeof parsed?.hypothesis === 'string' ? parsed.hypothesis.trim() : '';
+  if (!statement) return prev;
+
+  const belief: Hypothesis['belief'] =
+    parsed?.belief === 'high' || parsed?.belief === 'low' ? parsed.belief : 'medium';
+
+  const aiEvidence: Evidence[] = (Array.isArray(parsed?.evidence) ? parsed.evidence : [])
+    .filter((e: any) => e && typeof e.claim === 'string' && e.claim.trim())
+    .slice(0, 6)
+    .map((e: any) => ({
+      id: uuidv4(),
+      stance: e.stance === 'refute' ? 'refute' : 'support',
+      layer: 'stated' as const,   // 强制：AI 说的只能是语言层
+      claim: String(e.claim).trim().slice(0, 200),
+      source: typeof e.source === 'string' ? e.source.trim().slice(0, 80) : undefined,
+      origin: 'ai' as const,      // 强制：不接受模型自称是人/探针
+      createdAt: Date.now(),
+    }));
+
+  // 保留此前由人工 / 探针写入的现实证据，只替换掉上一轮的 AI 推理证据
+  const realEvidence = (prev?.evidence || []).filter(e => e.origin !== 'ai');
+
+  return {
+    statement: statement.slice(0, 200),
+    belief,
+    evidence: [...realEvidence, ...aiEvidence],
+    unknown: typeof parsed?.unknown === 'string' ? parsed.unknown.trim().slice(0, 200) : prev?.unknown,
+    updatedAt: Date.now(),
+  };
+}
 
 export const runAgentTask = async (node: ProblemNode, agentType: string): Promise<string> => {
   const bg = (node.fullNote || node.notes || '').slice(0, 600);

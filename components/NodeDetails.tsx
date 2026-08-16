@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ProblemNode, NodeStatus, ChatMessage, AgentResult, DecisionRecord } from '../types';
+import { ProblemNode, NodeStatus, ChatMessage, AgentResult, DecisionRecord, Probe, ExplorationRoute } from '../types';
 import { TRIGGER_LABEL } from '../services/decisionService';
 import { runAgentTask, identifyNodeTask } from '../services/geminiService';
 import MarkdownView from './MarkdownView';
@@ -7,6 +7,10 @@ import { getOutgoingLinks, getBacklinks, resolveNodeByTitle } from '../services/
 import { downloadNoteMd } from '../services/vault';
 import ProjectDashboard from './ProjectDashboard';
 import { buildDashboard } from '../services/dashboardService';
+import HypothesisPanel from './HypothesisPanel';
+import ProbePanel from './ProbePanel';
+import { probesOf } from '../services/probeService';
+import RouteMap from './RouteMap';
 
 interface NodeDetailsProps {
   node: ProblemNode | null;
@@ -35,6 +39,23 @@ interface NodeDetailsProps {
   onForkDecision?: (decisionId: string) => void;
   /** 仪表盘上点某个 Agent → 在团队群聊里 @ta */
   onMentionAgent?: (agent: string) => void;
+  /** 探针（现实验证）：本项目的全部探针，组件内按当前节点过滤 */
+  probes?: Probe[];
+  /** AI 设计出的探针加入项目 */
+  onAddProbes?: (probes: Probe[]) => void;
+  /** 更新一条探针（开始执行 / 回填结果 / 跳过） */
+  onUpdateProbe?: (probe: Probe) => void;
+  /** 假设被现实推翻 → 打开决策记录弹窗留痕 */
+  onContradicted?: (nodeId: string) => void;
+  /** 项目目标，设计探针时作为上下文 */
+  projectGoal?: string;
+  /** 探索路线（只在总览笔记上渲染） */
+  route?: ExplorationRoute;
+  routeBusy?: string;
+  onPlanRoute?: () => void;
+  onSettleAnchor?: (anchorId: string, verdict: 'pass' | 'fail' | 'unclear', summary: string) => void;
+  onSkipAnchor?: (anchorId: string) => void;
+  onDesignAnchorProbes?: (anchorId: string) => void;
 }
 
 const AGENT_MARKETPLACE = [
@@ -48,7 +69,9 @@ const AGENT_MARKETPLACE = [
 const NodeDetails: React.FC<NodeDetailsProps> = ({
   node, isFocused, isWide, onToggleWide, onClose, onSendMessage, onUpdateNotes, onUpdateNodeData, onAppendToSummary, onAddChildNode,
   allNodes = [], onNavigate, onWikiLink, variant = 'panel',
-  decisions = [], onRecordDecision, onForkDecision, onMentionAgent
+  decisions = [], onRecordDecision, onForkDecision, onMentionAgent,
+  probes = [], onAddProbes, onUpdateProbe, onContradicted, projectGoal,
+  route, routeBusy, onPlanRoute, onSettleAnchor, onSkipAnchor, onDesignAnchorProbes
 }) => {
   const isCenter = variant === 'center';
   const [chatInput, setChatInput] = useState('');
@@ -68,13 +91,16 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
   const [folderInput, setFolderInput] = useState(node?.folder || '');
   const [agentInput, setAgentInput] = useState(node?.assignedAgent || '');
   // 笔记属性/功能模块：默认不展开任何模块，正常只看笔记本身
-  const [activeModule, setActiveModule] = useState<null | 'links' | 'task' | 'results' | 'chat' | 'props' | 'decision'>(null);
+  const [activeModule, setActiveModule] = useState<null | 'links' | 'task' | 'results' | 'chat' | 'props' | 'decision' | 'probe'>(null);
 
   // 当前节点的决策记录（决策节点持久化）
   const nodeDecisions = useMemo(
     () => decisions.filter(d => d.nodeId === node?.id).sort((a, b) => b.createdAt - a.createdAt),
     [decisions, node?.id]
   );
+
+  // 当前节点的探针（现实验证）
+  const nodeProbes = useMemo(() => probesOf(probes, node?.id || ''), [probes, node?.id]);
 
   // ===== 双向链接（Obsidian 式）=====
   const outgoingLinks = useMemo(
@@ -92,8 +118,8 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
 
   // ===== 项目仪表盘（仅「总览」笔记，从全部节点实时算出，见 services/dashboardService） =====
   const dashboard = useMemo(
-    () => (node && node.noteType === 'overview' ? buildDashboard(allNodes) : null),
-    [node, allNodes]
+    () => (node && node.noteType === 'overview' ? buildDashboard(allNodes, Date.now(), probes) : null),
+    [node, allNodes, probes]
   );
 
   useEffect(() => {
@@ -414,11 +440,23 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
             ))}
           </div>
         );
+      case 'probe':
+        return (
+          <ProbePanel
+            node={node}
+            probes={nodeProbes}
+            goal={projectGoal}
+            onAddProbes={ps => onAddProbes?.(ps)}
+            onUpdateProbe={pr => onUpdateProbe?.(pr)}
+            onUpdateNodeData={onUpdateNodeData}
+            onContradicted={onContradicted}
+          />
+        );
       default: return null;
     }
   };
 
-  const moduleTitle: Record<string, string> = { links: '🔗 关联笔记', task: '🤖 任务执行建议', results: '📊 记录成果', chat: '💬 咨询对话', props: 'ℹ️ 属性 · 负责Agent / 文件夹 / 标签 / 导出', decision: '⚖️ 决策记录 · 可 fork 复刻' };
+  const moduleTitle: Record<string, string> = { links: '🔗 关联笔记', task: '🤖 任务执行建议', results: '📊 记录成果', chat: '💬 咨询对话', props: 'ℹ️ 属性 · 负责Agent / 文件夹 / 标签 / 导出', decision: '⚖️ 决策记录 · 可 fork 复刻', probe: '🔬 现实验证 · 探针' };
 
   const statusInfo: Record<string, { label: string; cls: string }> = {
     unexplored: { label: '待探索', cls: 'text-slate-400 bg-slate-700/40 border-slate-600' },
@@ -426,6 +464,8 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
     solved: { label: '已完成', cls: 'text-emerald-400 bg-emerald-900/30 border-emerald-500/40' },
     invalid: { label: '已失效', cls: 'text-red-400 bg-red-900/30 border-red-500/40' },
     needs_review: { label: '待决策', cls: 'text-red-400 bg-red-900/30 border-red-500/40' },
+    validating: { label: '等现实验证', cls: 'text-purple-300 bg-purple-900/30 border-purple-500/40' },
+    contradicted: { label: '被现实推翻', cls: 'text-pink-300 bg-pink-900/30 border-pink-500/40' },
   };
   const st = statusInfo[node.status] || statusInfo.unexplored;
   const typeLabel = node.noteType === 'readme' ? 'README' : node.noteType === 'overview' ? '项目总览' : '关键方向';
@@ -456,6 +496,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
               { key: 'task' as const, icon: '🤖', label: '任务执行建议', badge: (node.agentResults || []).length },
               { key: 'results' as const, icon: '📊', label: '记录成果', badge: node.manualResults ? 1 : 0 },
               { key: 'chat' as const, icon: '💬', label: '咨询对话', badge: (node.chatHistory || []).length },
+              { key: 'probe' as const, icon: '🔬', label: '现实验证 · 探针', badge: nodeProbes.filter(p => p.status === 'draft' || p.status === 'running').length },
               { key: 'decision' as const, icon: '⚖️', label: '决策记录（可 fork 复刻）', badge: nodeDecisions.length },
               { key: 'props' as const, icon: 'ℹ️', label: '属性 · 文件夹 / 标签 / 导出', badge: 0 },
             ].map(m => (
@@ -511,11 +552,34 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
           {(node.agentResults || []).length > 0 && <button onClick={() => setActiveModule('task')} className="px-2 py-0.5 rounded-full border border-slate-700 text-emerald-400 hover:border-emerald-500/40 transition-colors" title="任务成果">📊 成果{node.agentResults!.length}</button>}
           {(node.chatHistory || []).length > 0 && <button onClick={() => setActiveModule('chat')} className="px-2 py-0.5 rounded-full border border-slate-700 text-sky-400 hover:border-sky-500/40 transition-colors" title="咨询对话">💬 {node.chatHistory!.length}</button>}
           {node.forkOfDecisionId && <button onClick={() => setActiveModule('decision')} className="px-2 py-0.5 rounded-full border border-purple-500/40 text-purple-300 bg-purple-900/20" title="这是从一条决策记录 fork 出来的分支">⑂ fork 分支</button>}
+          {nodeProbes.length > 0 && <button onClick={() => setActiveModule('probe')} className="px-2 py-0.5 rounded-full border border-slate-700 text-purple-300 hover:border-purple-500/40 transition-colors" title="现实验证探针">🔬 {nodeProbes.filter(p => p.status === 'done').length}/{nodeProbes.length}</button>}
           {nodeDecisions.length > 0 && <button onClick={() => setActiveModule('decision')} className="px-2 py-0.5 rounded-full border border-slate-700 text-amber-400 hover:border-amber-500/40 transition-colors" title="决策记录">⚖️ {nodeDecisions.length}</button>}
           {node.folder && <span className="px-2 py-0.5 text-slate-500">📁 {node.folder}</span>}
           {(node.tags || []).map(t => <span key={t} className="px-2 py-0.5 rounded-full bg-purple-900/30 border border-purple-500/30 text-purple-300">#{t}</span>)}
           {node.noteUpdatedAt && <span className="px-2 py-0.5 text-slate-600 ml-auto">更新于 {new Date(node.noteUpdatedAt).toLocaleString()}</span>}
         </div>
+
+        {/* ===== 当前赌注：这个节点在赌什么、凭什么、最大的未知是什么 ===== */}
+        <HypothesisPanel
+          node={node}
+          onUpdateNodeData={onUpdateNodeData}
+          onOpenProbes={() => setActiveModule('probe')}
+          onContradicted={onContradicted}
+        />
+
+        {/* ===== 探索路线（仅总览笔记）：先看"要去哪、下一个必须问现实的点是什么" ===== */}
+        {dashboard && onPlanRoute && (
+          <RouteMap
+            route={route}
+            nodes={allNodes}
+            busy={routeBusy}
+            onPlan={onPlanRoute}
+            onSettle={(id, v, sum) => onSettleAnchor?.(id, v, sum)}
+            onSkip={id => onSkipAnchor?.(id)}
+            onDesignProbes={id => onDesignAnchorProbes?.(id)}
+            onNavigate={onNavigate}
+          />
+        )}
 
         {/* ===== 项目仪表盘（仅总览笔记，实时汇总，任何一项一次点击直达） ===== */}
         {dashboard && (

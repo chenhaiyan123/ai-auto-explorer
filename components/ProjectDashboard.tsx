@@ -22,16 +22,27 @@ const ST: Record<string, { label: string; dot: string; text: string }> = {
   solved: { label: '已完成', dot: 'bg-emerald-400', text: 'text-emerald-400' },
   invalid: { label: '已失效', dot: 'bg-red-500', text: 'text-red-400' },
   needs_review: { label: '待复核', dot: 'bg-red-500', text: 'text-red-400' },
+  validating: { label: '等现实', dot: 'bg-purple-400', text: 'text-purple-300' },
+  contradicted: { label: '被推翻', dot: 'bg-pink-500', text: 'text-pink-400' },
 };
 const st = (s: NodeStatus) => ST[s] || ST.unexplored;
+
+const BELIEF_LABEL: Record<string, string> = { low: '低', medium: '中', high: '高' };
+const BELIEF_CLS: Record<string, string> = {
+  low: 'text-slate-300 bg-slate-700/50 border-slate-600',
+  medium: 'text-amber-300 bg-amber-900/30 border-amber-500/40',
+  high: 'text-emerald-300 bg-emerald-900/30 border-emerald-500/40',
+};
 
 const ALERT_STYLE: Record<string, string> = {
   review: 'text-red-200 bg-red-900/30 border-red-500/50 hover:bg-red-900/60',
   stalled: 'text-amber-200 bg-amber-900/30 border-amber-500/50 hover:bg-amber-900/60',
   no_agent: 'text-sky-200 bg-sky-900/30 border-sky-500/50 hover:bg-sky-900/60',
   empty: 'text-slate-300 bg-slate-800 border-slate-600 hover:bg-slate-700',
+  validating: 'text-purple-200 bg-purple-900/30 border-purple-500/50 hover:bg-purple-900/60',
+  contradicted: 'text-pink-200 bg-pink-900/30 border-pink-500/50 hover:bg-pink-900/60',
 };
-const ALERT_ICON: Record<string, string> = { review: '⚠', stalled: '⏳', no_agent: '🙋', empty: '○' };
+const ALERT_ICON: Record<string, string> = { review: '⚠', stalled: '⏳', no_agent: '🙋', empty: '○', validating: '🟡', contradicted: '🔴' };
 
 const barColor = (p: number) => (p >= 80 ? 'bg-emerald-500' : p >= 30 ? 'bg-blue-500' : 'bg-slate-500');
 
@@ -128,23 +139,73 @@ const ProjectDashboard: React.FC<Props> = ({ data, onNavigate, onMentionAgent })
 
   return (
     <section className="bg-slate-900/60 border border-slate-700 rounded-2xl divide-y divide-slate-800 overflow-hidden">
-      {/* ① 项目简介 + 整体进度 */}
-      <div className="p-4 flex items-center gap-5">
-        <div className="flex-shrink-0 text-center">
-          <div className="text-[34px] font-bold text-slate-100 tabular-nums leading-none">{data.progress}<span className="text-[16px] text-slate-500">%</span></div>
-          <div className="text-[10px] text-slate-600 mt-1">整体进度</div>
-        </div>
-        <div className="flex-1 min-w-0">
-          {data.intro && <p className="text-[13px] text-slate-300 leading-relaxed mb-2 line-clamp-2">{data.intro}</p>}
-          <div className="h-2 bg-slate-800 rounded-full overflow-hidden mb-2">
-            <div className={`h-full ${barColor(data.progress)} transition-all`} style={{ width: `${data.progress}%` }} />
+      {/* ① 现在在赌什么 —— 顶部不再是单纯的进度条。
+           进度只说明"做了多少"，主假设和最大未知量才说明"离真相多近"。 */}
+      <div className="p-4 space-y-3">
+        {data.intro && <p className="text-[13px] text-slate-300 leading-relaxed line-clamp-2">{data.intro}</p>}
+
+        {data.mainHypothesis ? (
+          <button onClick={() => onNavigate?.(data.mainHypothesis!.nodeId)}
+            className={`w-full text-left rounded-xl border p-3 transition-colors ${
+              data.mainHypothesis.status === NodeStatus.CONTRADICTED
+                ? 'border-pink-500/40 bg-pink-950/20 hover:border-pink-400'
+                : data.mainHypothesis.status === NodeStatus.VALIDATING
+                  ? 'border-purple-500/40 bg-purple-950/20 hover:border-purple-400'
+                  : 'border-slate-700 bg-slate-950/40 hover:border-slate-500'}`}>
+            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              <span className="text-[10px] font-bold text-slate-400">
+                {data.mainHypothesis.status === NodeStatus.CONTRADICTED ? '🔴 主假设已被现实推翻'
+                  : data.mainHypothesis.status === NodeStatus.VALIDATING ? '🟡 现在在赌 · 等现实验证'
+                  : '🎯 现在在赌'}
+              </span>
+              <span className={`px-1.5 py-0.5 rounded-full border text-[10px] ${BELIEF_CLS[data.mainHypothesis.belief]}`}>
+                信念 {BELIEF_LABEL[data.mainHypothesis.belief]}
+              </span>
+              <span className="text-[10px] text-slate-500 tabular-nums">
+                支持 {data.mainHypothesis.support} · 反对 {data.mainHypothesis.refute} · 现实证据{' '}
+                <span className={data.mainHypothesis.real ? 'text-emerald-400' : 'text-red-400'}>{data.mainHypothesis.real}</span>
+              </span>
+              <span className="text-[10px] text-slate-600 ml-auto truncate max-w-[140px]">{data.mainHypothesis.nodeTitle}</span>
+            </div>
+            <div className="text-[13px] text-slate-100 leading-relaxed">{data.mainHypothesis.statement}</div>
+          </button>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-700 p-3 text-[11px] text-slate-600">
+            还没有任何可证伪的假设 —— 跑一轮探索，AI 会给每个方向写下它在赌什么。
           </div>
-          <div className="flex items-center gap-3 text-[11px] flex-wrap tabular-nums">
-            <span className="text-emerald-400">完成 {data.solved}</span>
-            <span className="text-amber-400">进行 {data.exploring}</span>
-            <span className="text-slate-500">待探 {data.unexplored}</span>
-            {data.review > 0 && <span className="text-red-400">待复核 {data.review}</span>}
-            <span className="text-slate-600 ml-auto">🤖 {data.agentCount} 位 · 📄 {data.noteCount} 篇 · 📊 {data.resultCount} 项</span>
+        )}
+
+        {data.biggestUnknown && (
+          <button onClick={() => onNavigate?.(data.biggestUnknown!.nodeId)}
+            className="w-full text-left text-[11px] text-slate-300 hover:text-white transition-colors">
+            <span className="text-slate-500">❓ 最大未知量：</span>{data.biggestUnknown.text}
+          </button>
+        )}
+
+        <div className="flex items-center gap-4">
+          <div className="flex-shrink-0 text-center">
+            <div className="text-[28px] font-bold text-slate-100 tabular-nums leading-none">{data.progress}<span className="text-[14px] text-slate-500">%</span></div>
+            <div className="text-[9px] text-slate-600 mt-0.5">推理进度</div>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="h-2 bg-slate-800 rounded-full overflow-hidden mb-2">
+              <div className={`h-full ${barColor(data.progress)} transition-all`} style={{ width: `${data.progress}%` }} />
+            </div>
+            <div className="flex items-center gap-3 text-[11px] flex-wrap tabular-nums">
+              <span className="text-emerald-400">完成 {data.solved}</span>
+              <span className="text-amber-400">进行 {data.exploring}</span>
+              <span className="text-slate-500">待探 {data.unexplored}</span>
+              {data.awaitingReality > 0 && <span className="text-purple-300">🟡 等现实 {data.awaitingReality}</span>}
+              {data.contradicted > 0 && <span className="text-pink-400">🔴 被推翻 {data.contradicted}</span>}
+              {data.review > 0 && <span className="text-red-400">待复核 {data.review}</span>}
+            </div>
+            <div className="flex items-center gap-3 text-[10px] text-slate-600 mt-1 tabular-nums">
+              <span title="现实证据 / 全部证据。全靠推理撑着的话这个数会是 0">
+                证据 <span className={data.evidenceReal ? 'text-emerald-500' : 'text-red-400'}>{data.evidenceReal}</span>/{data.evidenceTotal} 来自现实
+              </span>
+              {data.probesPending > 0 && <span className="text-purple-400">🔬 待执行探针 {data.probesPending}</span>}
+              <span className="ml-auto">🤖 {data.agentCount} 位 · 📄 {data.noteCount} 篇 · 📊 {data.resultCount} 项</span>
+            </div>
           </div>
         </div>
       </div>

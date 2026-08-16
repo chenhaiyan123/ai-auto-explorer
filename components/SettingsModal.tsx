@@ -11,6 +11,7 @@ import {
 } from '../services/llmProvider';
 import {
   IoTDevice, IoTAction, loadDevices, upsertDevice, removeDevice, invokeDeviceAction, loadLogs, IoTCallLog,
+  actionMode, ParamLimit,
 } from '../services/iotService';
 
 interface SettingsModalProps {
@@ -24,7 +25,7 @@ const labelCls = 'text-[11px] font-bold text-slate-400 uppercase tracking-wider 
 
 const newAction = (): IoTAction => ({
   id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-  name: '', method: 'GET', path: '/', description: '', bodyTemplate: '',
+  name: '', method: 'GET', path: '/', description: '', bodyTemplate: '', mode: 'read', limits: [],
 });
 
 const newDevice = (): IoTDevice => ({
@@ -261,6 +262,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 <input value={editing.authHeader || ''} onChange={e => setEditing({ ...editing, authHeader: e.target.value })} placeholder="Bearer xxx" className={inputCls} />
               </div>
 
+              {/* 安全设置：设备会真的动，默认按最保守的来 */}
+              <div className="border border-amber-600/30 bg-amber-950/10 rounded-xl p-3 space-y-2">
+                <div className="text-[11px] font-bold text-amber-300">🛡 安全</div>
+                <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
+                  <input type="checkbox" checked={editing.requireConfirm !== false}
+                    onChange={e => setEditing({ ...editing, requireConfirm: e.target.checked })} />
+                  写操作必须我点确认后才执行（强烈建议保持勾选）
+                </label>
+                {editing.requireConfirm === false && (
+                  <div className="text-[10px] text-red-300">
+                    ⚠️ 已关闭确认：AI 可以直接让这台设备动起来。只有在这台设备烧不坏也伤不到人时才这么设。
+                  </div>
+                )}
+                <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                  <span>每分钟最多调用</span>
+                  <input type="number" min={1} max={600} value={editing.maxCallsPerMin ?? 30}
+                    onChange={e => setEditing({ ...editing, maxCallsPerMin: Math.max(1, Math.min(600, Number(e.target.value) || 30)) })}
+                    className="w-20 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white" />
+                  <span>次（挡住失控循环）</span>
+                </div>
+              </div>
+
               <div className="space-y-3">
                 <label className={labelCls}>操作列表（AI 可调用的指令）</label>
                 {editing.actions.map((a, i) => (
@@ -275,6 +298,40 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         className="px-2 text-red-400 hover:text-red-300 text-xs">✕</button>
                     </div>
                     <input value={a.description} onChange={e => { const acts = [...editing.actions]; acts[i] = { ...a, description: e.target.value }; setEditing({ ...editing, actions: acts }); }} placeholder="说明：何时使用、参数含义" className={inputCls} />
+
+                    {/* 读写分级：只读的才允许被自动实验反复调用 */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <select value={actionMode(a)}
+                        onChange={e => { const acts = [...editing.actions]; acts[i] = { ...a, mode: e.target.value as 'read' | 'write' }; setEditing({ ...editing, actions: acts }); }}
+                        className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-white">
+                        <option value="read">只读采集（可被自动实验调用）</option>
+                        <option value="write">⚠️ 写操作（会改变物理世界）</option>
+                      </select>
+                      <span className="text-[10px] text-slate-600">
+                        {actionMode(a) === 'read' ? 'AI 与设备探针可以随时调用' : 'AI 调用时会排队等你确认'}
+                      </span>
+                    </div>
+
+                    {/* 参数限值：越界的调用根本不会发出去 */}
+                    <div className="space-y-1">
+                      {(a.limits || []).map((lim, li) => (
+                        <div key={li} className="flex items-center gap-1.5">
+                          <input value={lim.name} placeholder="参数名"
+                            onChange={e => { const acts = [...editing.actions]; const ls = [...(a.limits || [])]; ls[li] = { ...lim, name: e.target.value }; acts[i] = { ...a, limits: ls }; setEditing({ ...editing, actions: acts }); }}
+                            className="w-28 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-white" />
+                          <input type="number" value={lim.min ?? ''} placeholder="最小"
+                            onChange={e => { const acts = [...editing.actions]; const ls = [...(a.limits || [])]; ls[li] = { ...lim, min: e.target.value === '' ? undefined : Number(e.target.value) }; acts[i] = { ...a, limits: ls }; setEditing({ ...editing, actions: acts }); }}
+                            className="w-20 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-white" />
+                          <input type="number" value={lim.max ?? ''} placeholder="最大"
+                            onChange={e => { const acts = [...editing.actions]; const ls = [...(a.limits || [])]; ls[li] = { ...lim, max: e.target.value === '' ? undefined : Number(e.target.value) }; acts[i] = { ...a, limits: ls }; setEditing({ ...editing, actions: acts }); }}
+                            className="w-20 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-white" />
+                          <button onClick={() => { const acts = [...editing.actions]; acts[i] = { ...a, limits: (a.limits || []).filter((_, x) => x !== li) }; setEditing({ ...editing, actions: acts }); }}
+                            className="text-red-400 hover:text-red-300 text-xs px-1">✕</button>
+                        </div>
+                      ))}
+                      <button onClick={() => { const acts = [...editing.actions]; acts[i] = { ...a, limits: [...(a.limits || []), { name: '' } as ParamLimit] }; setEditing({ ...editing, actions: acts }); }}
+                        className="text-[10px] text-slate-500 hover:text-blue-300">+ 参数限值（如 temp 4~60，越界直接拒绝）</button>
+                    </div>
                     {(a.method === 'POST' || a.method === 'PUT') && (
                       <input value={a.bodyTemplate || ''} onChange={e => { const acts = [...editing.actions]; acts[i] = { ...a, bodyTemplate: e.target.value }; setEditing({ ...editing, actions: acts }); }} placeholder='请求体模板，如 {"target_temp": "{{temp}}"}' className={`${inputCls} font-mono text-xs`} />
                     )}

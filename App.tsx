@@ -2,7 +2,7 @@ import { UserStats, KnowledgeCard, ResearchFinding } from './types';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import MessageBoard from './components/MessageBoard';
 import { v4 as uuidv4 } from 'uuid';
-import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage, DecisionOption, DecisionTrigger } from './types';
+import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage, DecisionOption, DecisionTrigger, Probe } from './types';
 import { DecisionRecordModal, DecisionTimelineModal, DecisionDraft } from './components/DecisionCenter';
 import { captureSubtree, createDecision, forkFromDecision } from './services/decisionService';
 import { trackEvent, identifyChatUser } from './services/analytics';
@@ -29,6 +29,15 @@ import { QVSReport } from './services/qvsService';
 import { resolveNodeByTitle } from './services/noteLinks';
 import { exportVaultZip, importMarkdownFiles, saveVaultToDirectory, supportsDirectoryPicker } from './services/vault';
 import { buildTeamPlan } from './services/teamService';
+import { checkTriggers, summarizeHits, isContradictedByReality, isBlockedOnReality, realityQueue } from './services/validationTrigger';
+import { pendingProbeCount, designProbes } from './services/probeService';
+import DeviceGuard from './components/DeviceGuard';
+import {
+  currentAnchor, explorableNodes, legReady, reachAnchor, settleAnchor, skipAnchor,
+  mergeRevision, anchorEvidence, anchorBrief, isWaitingAtAnchor, nodesOfAnchor,
+  planRoute, planLegDirections, reviseRoute,
+} from './services/routeService';
+import { ExplorationRoute, RouteAnchor, ANCHOR_METHOD_LABEL } from './types';
 import { loadLLMSettings, isTrialMode, getTrialQuota, hasTrialBackend } from './services/llmProvider';
 import { getWithMigration, idbSet } from './services/storage';
 
@@ -1146,6 +1155,19 @@ const App: React.FC = () => {
   const solvedSinceOverviewRef = useRef(0);
   const OVERVIEW_REFRESH_EVERY = 3; // 每解决 3 个节点刷新一次总览
 
+  // ===== 验证触发器：判断「什么时候该停止推理、去问现实」=====
+  // recentTitlesRef 记录已出现过的节点标题，用来发现 AI 在原地打转（新方向都是老调重弹）
+  const recentTitlesRef = useRef<string[]>([]);
+  const emptyRoundsRef = useRef(0);          // 连续多少轮没产出新子问题
+  const realityPromptedRef = useRef(false);  // 「剩下的全在等现实」这句话不重复刷屏
+  // 假设被现实推翻 → 打开决策记录弹窗。用 ref 是因为探索循环定义在决策相关逻辑之前。
+  const contradictedDecisionRef = useRef<((nodeId: string) => void) | null>(null);
+  // 探索路线：循环要读它来决定"现在允许跑哪一段"，也要在到点时把锚点转成等待
+  const routeRef = useRef<ExplorationRoute | undefined>(undefined);
+  const reachAnchorRef = useRef<((anchorId: string) => void) | null>(null);
+  const anchorPromptedRef = useRef<string | null>(null);   // 同一个锚点只提醒一次
+  const settleAnchorRef = useRef<((id: string, v: 'pass' | 'fail' | 'unclear', s: string, o?: 'human' | 'probe') => void) | null>(null);
+
   // 加载会员状态
   useEffect(() => {
     if (user) {
@@ -1266,14 +1288,14 @@ const App: React.FC = () => {
   const criticalNodes = useMemo(() => nodes.filter(n => n.isCritical), [nodes]);
 
   useEffect(() => { if (user && projects.length > 0) idbSet(`exploration_projects_${user.username}`, projects).catch(e => console.warn('[HiExplore] 保存项目失败', e)); }, [projects, user?.username]);
-  useEffect(() => { const p = projects.find(x => x.id === currentProjectId); if (p) { setSelectedNodeId(pendingSelectRef.current); pendingSelectRef.current = null; setFocusedNodeId(null); setDecision(null); setNodes(p.nodes || []); setIsLooping(false); setKnowledgeCards((p as any).knowledgeCards || []); setResearchFindings((p as any).researchFindings || []); setResearchReport(null); setAgentTeamState((p as any).agentTeamState || initialAgentTeamState); } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id); }, [currentProjectId, projects.length]);
+  useEffect(() => { const p = projects.find(x => x.id === currentProjectId); if (p) { setSelectedNodeId(pendingSelectRef.current); pendingSelectRef.current = null; setFocusedNodeId(null); setDecision(null); setNodes(p.nodes || []); setIsLooping(false); recentTitlesRef.current = (p.nodes || []).map(n => n.title).slice(-60); emptyRoundsRef.current = 0; realityPromptedRef.current = false; setKnowledgeCards((p as any).knowledgeCards || []); setResearchFindings((p as any).researchFindings || []); setResearchReport(null); setAgentTeamState((p as any).agentTeamState || initialAgentTeamState); } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id); }, [currentProjectId, projects.length]);
   useEffect(() => { if (currentProjectId && nodes.length > 0) setProjects(prev => { const i = prev.findIndex(p => p.id === currentProjectId); if (i === -1 || prev[i].nodes === nodes) return prev; const n = [...prev]; n[i] = { ...n[i], nodes }; return n; }); }, [nodes, currentProjectId]);
   useEffect(() => { if (currentProjectId && currentProject?.explorationMode === 'research') setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, knowledgeCards, researchFindings } as any : p)); }, [knowledgeCards, researchFindings, currentProjectId]);
   
   // 保存Agent团队状态到项目
   useEffect(() => { if (currentProjectId && agentTeamState) setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, agentTeamState } as any : p)); }, [agentTeamState, currentProjectId]);
 
-  const addNode = useCallback((title: string, deps: string[] = [], notes = "") => { const n: ProblemNode = { id: uuidv4(), title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: deps, notes, chatHistory: [], agentResults: [] }; setNodes(prev => [...prev, n]); return n; }, []);
+  const addNode = useCallback((title: string, deps: string[] = [], notes = "", anchorId?: string) => { const n: ProblemNode = { id: uuidv4(), title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: deps, notes, chatHistory: [], agentResults: [], anchorId }; setNodes(prev => [...prev, n]); return n; }, []);
   const updateNode = useCallback((id: string, u: Partial<ProblemNode>) => setNodes(prev => prev.map(n => n.id === id ? { ...n, ...u } : n)), []);
   const createProjectWithMode = useCallback((input: string, mode: ExplorationMode, analysis?: IntentAnalysis) => { const p: Project = { id: uuidv4(), name: analysis?.suggestedTitle || input.slice(0, 15), metaProblem: input, createdAt: Date.now(), explorationMode: mode, intentAnalysis: analysis, nodes: [{ id: uuidv4(), title: input, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: "", chatHistory: [], agentResults: [] }] }; setProjects(prev => [...prev, p]); setCurrentProjectId(p.id); setPendingIntent(null); setMetaInput(''); setShowMetaModal(false); }, []);
 
@@ -1326,7 +1348,8 @@ const App: React.FC = () => {
       try { const a = cleaned.indexOf('{'), b = cleaned.lastIndexOf('}'); title = JSON.parse(a >= 0 && b > a ? cleaned.slice(a, b + 1) : cleaned).title; } catch {}
       title = String(title || '').trim().replace(/^(如何|怎么|怎样|为什么|什么是|关于)/u, '').replace(/[？?。.！!]+$/u, '').slice(0, 12);
       if (title && !nodes.some(n => n.title === title)) {
-        addNode(title, overview ? [overview.id] : []);
+        // 自主提的新方向也要挂在当前这一段上，不然它会绕过路线闸门
+        addNode(title, overview ? [overview.id] : [], '', currentAnchor(routeRef.current)?.id);
         addNotification('discovery', '🧭 自主提出新方向', title);
       }
     } catch { /* 提方向失败就下次再试 */ }
@@ -1346,6 +1369,8 @@ const App: React.FC = () => {
       s === NodeStatus.SOLVED ? '已完成'
       : s === NodeStatus.EXPLORING ? '探索中'
       : s === NodeStatus.NEEDS_REVIEW ? '待人工复核'
+      : s === NodeStatus.VALIDATING ? '等现实验证'
+      : s === NodeStatus.CONTRADICTED ? '已被现实推翻'
       : s === NodeStatus.INVALID ? '已终止' : '待探索';
     const directions = nodes
       .filter(n => n.noteType === 'direction' || (!n.noteType))
@@ -1389,10 +1414,51 @@ const App: React.FC = () => {
       return nodes.find(n => desc.has(n.id) && n.status === NodeStatus.UNEXPLORED); 
     })() : undefined;
     
-    if (!unexplored) unexplored = nodes.find(n => n.status === NodeStatus.UNEXPLORED);
-    
+    // 有路线时只允许跑当前段——这就是"到锚点自动暂停"：
+    // 后面几段的节点还没被创建，当前段又探完了，循环自然没得跑。
+    const route = routeRef.current;
+    const allowed = explorableNodes(nodes, route);
+    if (unexplored && route && !allowed.some(n => n.id === unexplored!.id)) unexplored = undefined;
+    if (!unexplored) unexplored = allowed[0];
+
     if (!unexplored) {
       if (!nodes.some(n => n.status === NodeStatus.EXPLORING)) {
+        // ① 到路标了：这一段推理做完了，接下来必须由现实说话
+        const cur = currentAnchor(route);
+        if (cur && legReady(nodes, cur) && cur.status === 'pending') {
+          reachAnchorRef.current?.(cur.id);
+          setIsLooping(false);
+          addNotification('warning', `📍 到达路标：${cur.title}`,
+            `${cur.question}\n需要：${anchorBrief(cur)}`);
+          trackEvent('anchor_reached');
+          return;
+        }
+        // ② 已经在等这个路标的结果了，别空转
+        const waiting = isWaitingAtAnchor(route);
+        if (waiting) {
+          setIsLooping(false);
+          if (anchorPromptedRef.current !== waiting.id) {
+            anchorPromptedRef.current = waiting.id;
+            addNotification('warning', `📍 卡在路标：${waiting.title}`, `还在等：${anchorBrief(waiting)}`);
+          }
+          return;
+        }
+        // 推理这条路走到头了：剩下的节点全都在等现实反馈 → 这时候才该叫人。
+        // （单个节点命中触发器不停循环，见下面；只有"全员卡在现实"才值得打断用户）
+        if (isBlockedOnReality(nodes)) {
+          const queue = realityQueue(nodes);
+          setIsLooping(false);
+          if (!realityPromptedRef.current) {
+            realityPromptedRef.current = true;
+            addNotification(
+              'warning',
+              `🟡 需要现实反馈（${queue.length} 项）`,
+              `推理已经到头了，继续想下去也不会更准。待验证：${queue.slice(0, 3).map(q => q.title).join('、')}${queue.length > 3 ? ' 等' : ''}`,
+            );
+          }
+          trackEvent('explore_halted', { reason: 'awaiting_reality' });
+          return;
+        }
         // 持续模式：现有节点都探索完了 → 自主提一个新方向，循环继续（7×24）
         if (continuousModeRef.current && nodes.filter(n => n.noteType === 'direction' || !n.noteType).length < MAX_AUTO_NODES) {
           if (!isProposingRef.current) proposeNewDirection();
@@ -1450,7 +1516,15 @@ const App: React.FC = () => {
       
       // 简化：不再单独调用 identifyNodeTask，直接使用结果中的 taskType
       const taskType = result.taskType || 'research';
-      
+
+      // ===== 验证触发器：这一轮到底有没有产生新信息？=====
+      const newTitles: string[] = (result.subProblems || []).map((sp: any) => sp.title).filter(Boolean);
+      if (newTitles.length === 0) emptyRoundsRef.current += 1;
+      else emptyRoundsRef.current = 0;
+      const recentTitles = recentTitlesRef.current.slice();
+      // 记下本轮标题（含当前节点），供后续查重；只留最近 60 条，避免无限增长
+      recentTitlesRef.current = [...recentTitles, nodeTitle, ...newTitles].slice(-60);
+
       if (result.subProblems?.length) {
         console.log('[探索] 创建子节点, 父节点ID:', cid, '子问题数:', result.subProblems.length);
         
@@ -1477,6 +1551,8 @@ const App: React.FC = () => {
               notes: sp.initialNotes || "", 
               chatHistory: [], 
               agentResults: [],
+              // 子问题跟着父节点走同一段路，否则路线会漏掉它们
+              anchorId: unexplored!.anchorId,
               // 第2层及以上节点默认折叠
               isCollapsed: childLevel >= 2
             };
@@ -1516,7 +1592,50 @@ const App: React.FC = () => {
         setIsLooping(false);
         addNotification('warning', '⚠️ 需要您的决策', `「${nodeTitle}」遇到了分支点，请做出选择`);
       } else {
-        updateNode(cid, { status: NodeStatus.SOLVED, confidence: result.confidence, notes: result.notes, taskType });
+        // ===== 该标记「已完成」，还是「该去问现实了」？=====
+        // research 模式的 exploreResearchNode 不产出假设 → 沿用节点上已有的（可能含人工回填的现实证据）
+        const hypothesis = result.hypothesis || unexplored.hypothesis;
+        const candidate: ProblemNode = { ...unexplored, hypothesis, noteUpdatedAt: Date.now() };
+        const hits = checkTriggers(candidate, nodes, {
+          recentTitles,
+          newTitles,
+          emptyRounds: emptyRoundsRef.current,
+        });
+        // 被现实反驳只可能由外部证据造成——AI 靠纯推理不能宣布自己错了，否则会来回横跳
+        const contradicted = isContradictedByReality(hypothesis);
+        // ⚠️ updateNode 是 {...n, ...u} 的浅合并：显式传 hypothesis: undefined 会把已有假设**抹掉**。
+        // research 模式的 exploreResearchNode 不产出 hypothesis，若无条件带上这个 key，
+        // 用户辛苦回填的现实证据会被一轮探索清空。所以只在真的有值时才写。
+        const withHyp = (u: Partial<ProblemNode>): Partial<ProblemNode> =>
+          hypothesis ? { ...u, hypothesis } : u;
+
+        if (contradicted) {
+          updateNode(cid, withHyp({
+            status: NodeStatus.CONTRADICTED, confidence: result.confidence, notes: result.notes, taskType,
+            validationReason: '现实证据与假设冲突，需要转向',
+            noteUpdatedAt: Date.now(),
+          }));
+          addNotification('warning', '🔴 假设被现实推翻', `「${nodeTitle}」的判断与现实证据冲突，先记一笔再转向`);
+          trackEvent('hypothesis_contradicted');
+          // 转向是这个系统里最值得留痕的时刻：记下来之后随时可以 fork 回到旧路线
+          setTimeout(() => contradictedDecisionRef.current?.(cid), 400);
+        } else if (hits.length) {
+          // 注意：这里**不要** setIsLooping(false)。
+          // 单个节点该验证了不代表整个探索该停——挂起它，循环继续跑别的节点，
+          // 等到「剩下的全在等现实」时（见上面 isBlockedOnReality）才叫人。
+          updateNode(cid, withHyp({
+            status: NodeStatus.VALIDATING, confidence: result.confidence, notes: result.notes, taskType,
+            validationReason: summarizeHits(hits),
+            noteUpdatedAt: Date.now(),
+          }));
+          addNotification('info', '🟡 需要现实验证', `「${nodeTitle}」：${hits[0].label} —— ${hits[0].detail}`);
+          trackEvent('validation_triggered', { reason: hits[0].reason });
+        } else {
+          updateNode(cid, withHyp({
+            status: NodeStatus.SOLVED, confidence: result.confidence, notes: result.notes, taskType,
+            validationReason: undefined, noteUpdatedAt: Date.now(),
+          }));
+        }
         // 「总览优先」：每解决若干节点，自动刷新一次项目总览，让用户随时看到最新进展
         solvedSinceOverviewRef.current += 1;
         if (solvedSinceOverviewRef.current >= OVERVIEW_REFRESH_EVERY) {
@@ -1606,7 +1725,13 @@ const App: React.FC = () => {
 
   // 「总览优先」：一开始探索，就第一时间把项目总览写出来（用户基本先看总览）
   useEffect(() => {
-    if (isLooping) { const t = setTimeout(() => refreshOverviewRef.current?.('start'), 200); return () => clearTimeout(t); }
+    if (isLooping) {
+      // 重新开跑：允许再次提示「需要现实反馈」，并重置原地打转计数
+      realityPromptedRef.current = false;
+      emptyRoundsRef.current = 0;
+      const t = setTimeout(() => refreshOverviewRef.current?.('start'), 200);
+      return () => clearTimeout(t);
+    }
   }, [isLooping]);
 
   const handleDecisionChoice = (action: 'continue' | 'add_subproblem' | 'terminate', subTitle?: string) => { if (!decision) return; if (action === 'terminate') updateNode(decision.nodeId, { status: NodeStatus.INVALID, pendingDecision: undefined }); else if (action === 'add_subproblem' && subTitle) addNode(subTitle, [decision.nodeId]); else if (action === 'continue') updateNode(decision.nodeId, { status: NodeStatus.SOLVED, pendingDecision: undefined }); setDecision(null); setIsLooping(true); };
@@ -1815,6 +1940,239 @@ ${plan.lead.duty}
   // ===== 决策节点持久化（重点功能）=====
   const projectDecisions = useMemo(() => currentProject?.decisions || [], [currentProject]);
 
+  // ===== 探针（现实验证）=====
+  // 和 decisions 一样挂在 Project 上，走现有的 idbSet 自动持久化，不新增任何后端。
+  const projectProbes = useMemo(() => currentProject?.probes || [], [currentProject]);
+  const handleAddProbes = useCallback((ps: Probe[]) => {
+    if (!currentProjectId || !ps.length) return;
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, probes: [...(p.probes || []), ...ps] } : p));
+    trackEvent('design_probes', { count: ps.length });
+  }, [currentProjectId]);
+  const handleUpdateProbe = useCallback((probe: Probe) => {
+    if (!currentProjectId) return;
+    setProjects(prev => prev.map(p => p.id === currentProjectId
+      ? { ...p, probes: (p.probes || []).map(x => x.id === probe.id ? probe : x) }
+      : p));
+    if (probe.status === 'done' && probe.result) {
+      trackEvent('probe_result', { stance: probe.result.stance, layer: probe.result.layer });
+      // 这个探针如果是挂在某个正在等结果的路标上的，直接把路标也结算了——
+      // 用户跑完设备实验就不用再去路线图上手抄一遍结论。
+      const anchor = routeRef.current?.anchors.find(a => a.status === 'waiting' && (a.probeIds || []).includes(probe.id));
+      if (anchor) {
+        const verdict = probe.result.stance === 'support' ? 'pass' : probe.result.stance === 'refute' ? 'fail' : 'unclear';
+        setTimeout(() => settleAnchorRef.current?.(anchor.id, verdict, probe.result!.summary, 'probe'), 300);
+      }
+    }
+  }, [currentProjectId]);
+
+  // ===== 探索路线与锚点路标 =====
+  const projectRoute = useMemo(() => currentProject?.route, [currentProject]);
+  useEffect(() => { routeRef.current = projectRoute; }, [projectRoute]);
+
+  const writeRoute = useCallback((updater: (r: ExplorationRoute) => ExplorationRoute) => {
+    if (!currentProjectId) return;
+    setProjects(prev => prev.map(p => (p.id === currentProjectId && p.route) ? { ...p, route: updater(p.route) } : p));
+  }, [currentProjectId]);
+
+  const [routeBusy, setRouteBusy] = useState('');
+
+  /** 为当前锚点这一段规划方向并创建节点（每跨过一个路标就做一次） */
+  const openLeg = useCallback(async (route: ExplorationRoute, anchor: RouteAnchor) => {
+    const goal = currentProject?.metaProblem || currentProject?.name || route.goal;
+    const overview = nodes.find(n => n.noteType === 'overview');
+    const done = nodes.map(n => n.title);
+    setRouteBusy(`正在规划「${anchor.title}」这一段…`);
+    try {
+      const dirs = await planLegDirections(goal, anchor, done);
+      if (!dirs.length) return false;
+      const now = Date.now();
+      setNodes(prev => [...prev, ...dirs.map(d => ({
+        id: uuidv4(), title: d.title, status: NodeStatus.UNEXPLORED, confidence: 0,
+        dependencies: overview ? [overview.id] : [], notes: d.why, chatHistory: [], agentResults: [],
+        noteType: 'direction' as const, anchorId: anchor.id,
+        fullNote: `# ${d.title}\n\n> 为到达路标「${anchor.title}」而探索\n\n${d.why}\n\n## 探索现状\n（待探索）\n`,
+        noteUpdatedAt: now,
+      }))]);
+      addNotification('info', `🧭 进入「${anchor.title}」这一段`, `新增 ${dirs.length} 个方向：${dirs.map(d => d.title).join('、')}`);
+      return true;
+    } finally {
+      setRouteBusy('');
+    }
+  }, [nodes, currentProject, addNotification]);
+
+  /** 规划一条新路线（总览里点「规划路线」） */
+  const handlePlanRoute = useCallback(async () => {
+    if (!currentProjectId || routeBusy) return;
+    const goal = currentProject?.metaProblem || currentProject?.name || '';
+    const overview = nodes.find(n => n.noteType === 'overview');
+    setRouteBusy('正在规划探索路线…');
+    try {
+      const route = await planRoute(goal, currentProject?.name || '项目', overview?.fullNote || overview?.notes);
+      if (!route) { addNotification('warning', '路线规划失败', '模型没给出可用的路线，换个模型或稍后再试。'); return; }
+      const first = route.anchors[0];
+      // 已有的方向节点归到第一段，免得它们绕过闸门
+      setNodes(prev => prev.map(n =>
+        (n.noteType === 'direction' || !n.noteType) && !n.anchorId ? { ...n, anchorId: first.id } : n));
+      setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, route } : p));
+      routeRef.current = route;
+      anchorPromptedRef.current = null;
+      trackEvent('plan_route', { anchors: route.anchors.length });
+      addNotification('info', '🗺️ 路线已规划', `${route.anchors.length} 个路标，第一站：${first.title}`);
+      // 第一段还没有节点的话，顺手规划出来
+      if (!nodes.some(n => (n.noteType === 'direction' || !n.noteType))) await openLeg(route, first);
+    } catch (e: any) {
+      addNotification('warning', '路线规划失败', e?.message || '未知错误');
+    } finally {
+      setRouteBusy('');
+    }
+  }, [currentProjectId, currentProject, nodes, routeBusy, addNotification, openLeg]);
+
+  /** 锚点到点：转成「等现实」 */
+  const handleReachAnchor = useCallback((anchorId: string) => {
+    writeRoute(r => reachAnchor(r, anchorId));
+  }, [writeRoute]);
+  useEffect(() => { reachAnchorRef.current = handleReachAnchor; }, [handleReachAnchor]);
+
+  /**
+   * 结算一个锚点：现实给了结果 → 写成证据 → 通过就往下走，不通过就留痕改线。
+   * 这是整条路线上唯一由真实数据驱动的地方。
+   */
+  const handleSettleAnchor = useCallback(async (
+    anchorId: string,
+    verdict: 'pass' | 'fail' | 'unclear',
+    summary: string,
+    origin: 'human' | 'probe' = 'human',
+  ) => {
+    const route = routeRef.current;
+    const anchor = route?.anchors.find(a => a.id === anchorId);
+    if (!route || !anchor || routeBusy) return;
+
+    const settled = settleAnchor(route, anchorId, { verdict, summary, origin });
+    const newAnchor = settled.anchors.find(a => a.id === anchorId)!;
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, route: settled } : p));
+    routeRef.current = settled;
+
+    if (verdict === 'unclear') {
+      addNotification('info', '结果还不明确', '路标继续等待更好的数据。');
+      return;
+    }
+
+    // ① 结果落成证据，挂到这一段的所有节点上——跟探针结果走同一套统计
+    const ev = anchorEvidence(newAnchor);
+    if (ev) {
+      const legNodeIds = new Set(nodesOfAnchor(nodes, anchorId).map(n => n.id));
+      setNodes(prev => prev.map(n => {
+        if (!legNodeIds.has(n.id) || !n.hypothesis) return n;
+        return {
+          ...n,
+          hypothesis: { ...n.hypothesis, evidence: [...n.hypothesis.evidence, { ...ev, id: uuidv4() }], updatedAt: Date.now() },
+          noteUpdatedAt: Date.now(),
+        };
+      }));
+    }
+    trackEvent('anchor_settled', { verdict });
+
+    // ② 没通过 = 现实把这条路否了，这是最值得留痕的时刻
+    if (verdict === 'fail') {
+      const legNodes = nodesOfAnchor(nodes, anchorId);
+      if (legNodes.length) setTimeout(() => contradictedDecisionRef.current?.(legNodes[0].id), 400);
+      addNotification('warning', `🔴 路标未通过：${anchor.title}`, `${summary.slice(0, 80)} —— 正在据此重规划后面的路`);
+    } else {
+      addNotification('info', `✅ 路标通过：${anchor.title}`, summary.slice(0, 80));
+    }
+
+    // ③ 用真实结果重规划后面的路（已走过的冻结）
+    setRouteBusy('正在根据真实结果调整路线…');
+    let next = settled;
+    try {
+      const revised = await reviseRoute(settled, newAnchor, nodes);
+      if (revised) {
+        next = mergeRevision(settled, anchorId, revised.anchors, {
+          anchorId, anchorTitle: anchor.title,
+          reason: `${verdict === 'pass' ? '通过' : '未通过'}：${summary.slice(0, 80)}`,
+          note: revised.note,
+        });
+        setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, route: next } : p));
+        routeRef.current = next;
+        addNotification('info', '🗺️ 路线已调整', revised.note);
+      }
+    } catch { /* 改线失败就沿用原路线，不阻塞 */ }
+    finally { setRouteBusy(''); }
+
+    // ④ 进入下一段并续跑
+    const nextAnchor = currentAnchor(next);
+    anchorPromptedRef.current = null;
+    if (nextAnchor) {
+      const ok = await openLeg(next, nextAnchor);
+      if (ok) setTimeout(() => setIsLooping(true), 500);
+    } else {
+      addNotification('info', '🏁 路线走完了', '所有路标都已结算，可以生成研究报告。');
+    }
+  }, [currentProjectId, nodes, routeBusy, addNotification, openLeg]);
+
+  useEffect(() => { settleAnchorRef.current = handleSettleAnchor; }, [handleSettleAnchor]);
+
+  /**
+   * 为某个正在等结果的路标设计验证方案。
+   * 探针挂到这一段的某个节点上，同时把 probeId 记到锚点里——
+   * 探针一出结果，锚点自动结算（见 handleUpdateProbe）。
+   */
+  const handleDesignAnchorProbes = useCallback(async (anchorId: string) => {
+    const route = routeRef.current;
+    const anchor = route?.anchors.find(a => a.id === anchorId);
+    if (!route || !anchor || !currentProjectId || routeBusy) return;
+    const legNodes = nodesOfAnchor(nodes, anchorId);
+    const host = legNodes[0] || nodes.find(n => n.noteType === 'overview');
+    if (!host) return;
+
+    setRouteBusy(`正在为「${anchor.title}」设计验证方案…`);
+    try {
+      // 把路标要验的东西塞进节点上下文，让 AI 直接照着这个路标设计
+      const ctxNode: ProblemNode = {
+        ...host,
+        title: anchor.title,
+        hypothesis: {
+          statement: anchor.question,
+          belief: 'medium',
+          evidence: host.hypothesis?.evidence || [],
+          unknown: anchor.needs,
+          updatedAt: Date.now(),
+        },
+        validationReason: `路标判定标准：通过=${anchor.passIf}；不通过=${anchor.failIf}`,
+      };
+      const list = await designProbes(ctxNode, currentProject?.metaProblem || currentProject?.name);
+      if (!list.length) { addNotification('warning', '没设计出方案', '换个模型或稍后再试。'); return; }
+      const bound = list.map(p => ({ ...p, nodeId: host.id }));
+      setProjects(prev => prev.map(p => p.id === currentProjectId
+        ? {
+          ...p,
+          probes: [...(p.probes || []), ...bound],
+          route: p.route ? {
+            ...p.route,
+            anchors: p.route.anchors.map(a => a.id === anchorId
+              ? { ...a, probeIds: [...(a.probeIds || []), ...bound.map(b => b.id)] } : a),
+          } : p.route,
+        }
+        : p));
+      addNotification('info', `🔬 已为「${anchor.title}」设计 ${bound.length} 个方案`, `在笔记「${host.title}」的 🔬 面板里执行；出结果后路标会自动结算。`);
+    } catch (e: any) {
+      addNotification('warning', '设计失败', e?.message || '未知错误');
+    } finally {
+      setRouteBusy('');
+    }
+  }, [nodes, currentProject, currentProjectId, routeBusy, addNotification]);
+
+  const handleSkipAnchor = useCallback(async (anchorId: string) => {
+    const route = routeRef.current;
+    if (!route) return;
+    const next = skipAnchor(route, anchorId);
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, route: next } : p));
+    routeRef.current = next;
+    anchorPromptedRef.current = null;
+    const na = currentAnchor(next);
+    if (na) { const ok = await openLeg(next, na); if (ok) setTimeout(() => setIsLooping(true), 500); }
+  }, [currentProjectId, currentProjectId, openLeg]);
+
   /** 打开决策记录弹窗（打开时就对节点子树做快照，保证删除/失效前的状态被留存） */
   const openDecisionRecorder = useCallback((nodeId: string, trigger: DecisionTrigger, opts?: { pendingAction?: 'delete' | 'invalidate'; presetQuestion?: string; presetOptions?: { label: string; chosen: boolean }[]; skippable?: boolean }) => {
     const node = nodes.find(n => n.id === nodeId);
@@ -1834,6 +2192,25 @@ ${plan.lead.duty}
     if (draft.pendingAction === 'delete') handleDeleteNode(draft.nodeId);
     else if (draft.pendingAction === 'invalidate') updateNode(draft.nodeId, { status: NodeStatus.INVALID });
   }, [handleDeleteNode, updateNode]);
+
+  /**
+   * 假设被现实推翻 → 弹决策记录（可跳过）。
+   * 这才是决策中心最该出现的时刻：现实打脸 → 留痕 → 以后能 fork 回到旧路线对比。
+   */
+  const handleContradicted = useCallback((nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    const st = node.hypothesis?.statement;
+    openDecisionRecorder(nodeId, 'contradicted', {
+      presetQuestion: st ? `「${st}」被现实推翻了，接下来怎么走？` : `「${node.title}」的假设被现实推翻了，接下来怎么走？`,
+      presetOptions: [
+        { label: '换一个假设，继续探索这个方向', chosen: true },
+        { label: '这个方向作废，把力气转到别处', chosen: false },
+      ],
+      skippable: true, // 跳过 = 不留记录，节点状态已经改了
+    });
+  }, [nodes, openDecisionRecorder]);
+  useEffect(() => { contradictedDecisionRef.current = handleContradicted; }, [handleContradicted]);
 
   const handleSaveDecision = useCallback((question: string, options: DecisionOption[]) => {
     if (!decisionDraft || !currentProjectId) return;
@@ -2153,6 +2530,21 @@ ${plan.lead.duty}
             title="决策时间线：记录每个决策的过程与理由，可随时回来 fork 复刻"
           >⚖️ 决策{projectDecisions.length > 0 && <span className="text-[9px] opacity-70">{projectDecisions.length}</span>}</button>
 
+          {/* 设备安全：待确认的写操作 + 急停（没注册设备时整条不渲染） */}
+          <DeviceGuard />
+
+          {/* 现实验证欠账：有待执行的探针就提醒一下，点进去落到那个节点 */}
+          {pendingProbeCount(projectProbes) > 0 && (
+            <button
+              onClick={() => {
+                const p = projectProbes.find(x => x.status === 'draft' || x.status === 'running');
+                if (p) setSelectedNodeId(p.nodeId);
+              }}
+              className="px-2.5 py-1.5 bg-purple-900/40 hover:bg-purple-600 hover:text-white border border-purple-500/40 rounded-full transition-colors text-[11px] font-bold text-purple-300 flex items-center gap-1"
+              title="待执行的现实验证探针——推理停在这里了，等你去问现实"
+            >🔬 待验证<span className="text-[9px] opacity-70">{pendingProbeCount(projectProbes)}</span></button>
+          )}
+
           {/* 问题广场：筛选有价值的问题 */}
           <button
             onClick={() => setShowQuestionBoard(true)}
@@ -2350,7 +2742,7 @@ ${plan.lead.duty}
 
           <div className="h-full pt-11">
             {selectedNode ? (
-              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onMentionAgent={mentionAgentInChat} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
+              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onMentionAgent={mentionAgentInChat} probes={projectProbes} onAddProbes={handleAddProbes} onUpdateProbe={handleUpdateProbe} onContradicted={handleContradicted} projectGoal={currentProject?.metaProblem || currentProject?.name} route={projectRoute} routeBusy={routeBusy} onPlanRoute={handlePlanRoute} onSettleAnchor={handleSettleAnchor} onSkipAnchor={handleSkipAnchor} onDesignAnchorProbes={handleDesignAnchorProbes} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="text-5xl opacity-40">📂</div>

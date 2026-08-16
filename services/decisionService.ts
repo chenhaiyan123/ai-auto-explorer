@@ -92,4 +92,5 @@ export const TRIGGER_LABEL: Record<DecisionTrigger, string> = {
   invalidate: '设为无效前',
   explore: '探索方向',
   fork: '分支复刻',
+  contradicted: '假设被现实推翻',
 };

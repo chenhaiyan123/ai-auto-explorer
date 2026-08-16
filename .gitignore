@@ -27,3 +27,6 @@ explorer-vault/
 
 # 登录后端本地启动脚本（含 Resend Key），不入库
 server/start-auth.sh
+
+*.pptx
+docs/推广/
