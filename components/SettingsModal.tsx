@@ -13,6 +13,7 @@ import {
   IoTDevice, IoTAction, loadDevices, upsertDevice, removeDevice, invokeDeviceAction, loadLogs, IoTCallLog,
   actionMode, ParamLimit,
 } from '../services/iotService';
+import { isChatEnabled, isChatDismissed, setChatDismissed } from '../services/analytics';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -170,6 +171,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   {saved ? '✅ 已保存' : '保存设置'}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* 客服按钮找回入口：ChatLauncher 上的 ✕ 是持久关闭，这里是唯一的还原口 */}
+          {tab === 'llm' && isChatEnabled() && isChatDismissed() && (
+            <div className="mt-4 flex items-center gap-3 border border-slate-800 rounded-xl px-3 py-2.5">
+              <span className="text-[11px] text-slate-400 flex-1">客服按钮已被你关闭</span>
+              <button onClick={() => { setChatDismissed(false); onClose(); }}
+                className="px-3 py-1.5 text-[11px] font-bold rounded-lg bg-slate-800 border border-slate-700 text-blue-300 hover:text-white hover:bg-blue-600">
+                重新显示
+              </button>
             </div>
           )}
 

@@ -32,6 +32,7 @@ import { buildTeamPlan } from './services/teamService';
 import { checkTriggers, summarizeHits, isContradictedByReality, isBlockedOnReality, realityQueue } from './services/validationTrigger';
 import { pendingProbeCount, designProbes } from './services/probeService';
 import DeviceGuard from './components/DeviceGuard';
+import ChatLauncher from './components/ChatLauncher';
 import {
   currentAnchor, explorableNodes, legReady, reachAnchor, settleAnchor, skipAnchor,
   mergeRevision, anchorEvidence, anchorBrief, isWaitingAtAnchor, nodesOfAnchor,
@@ -2803,6 +2804,9 @@ ${plan.lead.duty}
       </div>}
 
       {/* 决策记录弹窗（手动 + 关键时机） */}
+      {/* 客服入口：可拖动、可关闭（关掉后在设置里能找回） */}
+      <ChatLauncher />
+
       {decisionDraft && (
         <DecisionRecordModal
           draft={decisionDraft}

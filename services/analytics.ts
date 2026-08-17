@@ -32,12 +32,28 @@ export function trackEvent(name: string, data?: Record<string, string | number>)
   } catch { /* 忽略 */ }
 }
 
-/** Tawk.to 聊天挂件：右下角气泡，用户可实时找到你；离线自动转留言，手机 App 可收消息 */
+/** 是否配置了聊天挂件（没配就整个功能不存在，界面上也不出现按钮） */
+export const isChatEnabled = (): boolean => !!env('VITE_TAWK_PROPERTY_ID');
+
+/**
+ * Tawk.to 聊天挂件。
+ *
+ * 这里刻意**把 Tawk 自带的气泡藏起来**，改由我们自己的 <ChatLauncher> 当入口。
+ * 原因：Tawk 的气泡是固定在右下角的 iframe，位置写死、也没有关闭按钮，
+ * 会长期压住界面右下角的内容，用户既挪不走也关不掉。
+ * 自己做一个按钮就能既可拖动、又可关闭，点它再调 maximize() 打开真正的聊天窗。
+ */
 export function initChatWidget(): void {
   const propertyId = env('VITE_TAWK_PROPERTY_ID');
-  if (!propertyId || (window as any).Tawk_API) return;
+  if (!propertyId || (window as any).Tawk_API?.__hiexplore) return;
   const widgetId = env('VITE_TAWK_WIDGET_ID') || 'default';
-  (window as any).Tawk_API = (window as any).Tawk_API || {};
+  const api = (window as any).Tawk_API || {};
+  api.__hiexplore = true;
+  // 加载完先藏起来；聊天窗关掉后也藏回去，桌面上只留我们自己的按钮
+  api.onLoad = () => { try { (window as any).Tawk_API?.hideWidget?.(); } catch { /* 忽略 */ } };
+  api.onChatMinimized = () => { try { (window as any).Tawk_API?.hideWidget?.(); } catch { /* 忽略 */ } };
+  api.onChatWindowClosed = () => { try { (window as any).Tawk_API?.hideWidget?.(); } catch { /* 忽略 */ } };
+  (window as any).Tawk_API = api;
   (window as any).Tawk_LoadStart = new Date();
   const s = document.createElement('script');
   s.async = true;
@@ -45,6 +61,34 @@ export function initChatWidget(): void {
   s.charset = 'UTF-8';
   s.setAttribute('crossorigin', '*');
   document.head.appendChild(s);
+}
+
+/** 打开聊天窗（由我们自己的按钮触发）。返回 false 表示挂件还没加载好。 */
+export function openChat(): boolean {
+  try {
+    const api = (window as any).Tawk_API;
+    if (!api?.maximize) return false;
+    api.showWidget?.();
+    api.maximize();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---- 客服按钮的显示状态（关掉之后能在设置里找回来）----
+const CHAT_HIDDEN_KEY = 'hiexplore_chat_hidden';
+
+export const isChatDismissed = (): boolean => {
+  try { return localStorage.getItem(CHAT_HIDDEN_KEY) === '1'; } catch { return false; }
+};
+
+export function setChatDismissed(hidden: boolean): void {
+  try {
+    if (hidden) localStorage.setItem(CHAT_HIDDEN_KEY, '1');
+    else localStorage.removeItem(CHAT_HIDDEN_KEY);
+    window.dispatchEvent(new CustomEvent('chat-visibility'));
+  } catch { /* 忽略 */ }
 }
 
 /** 登录后把用户名同步给聊天挂件，方便你知道在跟谁说话 */

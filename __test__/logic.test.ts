@@ -15,6 +15,7 @@ import {
   mergeRevision, anchorEvidence, isSettled, isWaitingAtAnchor, routeProgress,
   nodesOfAnchor, normalizeAnchor,
 } from '../services/routeService';
+import { renderMarkdown, joinSoftLines } from '../services/markdown';
 
 let pass = 0, fail = 0;
 const t = (name: string, fn: () => void) => {
@@ -876,6 +877,187 @@ t('normalizeAnchor：没标题的丢掉，缺判定标准会被明确标出来',
 t('normalizeAnchor：第一个是确定的，之后默认暂定', () => {
   no(normalizeAnchor({ title: 'a' }, 1)!.tentative);
   ok(normalizeAnchor({ title: 'b' }, 2)!.tentative);
+});
+
+
+// ===================== 笔记排版 =====================
+const md = (src: string, large = true) => renderMarkdown(src, undefined, large);
+const count = (html: string, tag: string) => (html.match(new RegExp(`<${tag}[\\s>]`, 'g')) || []).length;
+
+console.log('\n== 段落合并：连续多行是一段，不是一行一个 <p> ==');
+t('三行中文合并成一个段落', () => {
+  const html = md('这是第一行\n这是第二行\n这是第三行');
+  eq(count(html, 'p'), 1);
+  ok(html.includes('这是第一行这是第二行这是第三行'), '中文之间不该插空格');
+});
+t('空行分段：两段就是两个 <p>', () => {
+  eq(count(md('第一段\n\n第二段'), 'p'), 2);
+});
+t('多个连续空行不会造出空段落', () => {
+  eq(count(md('第一段\n\n\n\n第二段'), 'p'), 2);
+});
+t('不再产生占位 div（间距交给 margin，避免忽大忽小）', () => {
+  no(md('甲\n\n乙').includes('h-3'));
+  no(md('甲\n\n乙', false).includes('h-2'));
+});
+
+console.log('\n== joinSoftLines：中文不插空格，中英之间插 ==');
+t('中文↔中文：不插空格', () => { eq(joinSoftLines(['探索路线', '锚点路标']), '探索路线锚点路标'); });
+t('英文↔英文：插空格', () => { eq(joinSoftLines(['hello', 'world']), 'hello world'); });
+t('中↔英 / 英↔中：插空格', () => {
+  eq(joinSoftLines(['温度是', '37.2℃']), '温度是 37.2℃');
+  eq(joinSoftLines(['HiExplore', '是一个工具']), 'HiExplore 是一个工具');
+});
+t('单行原样返回；空数组不炸', () => {
+  eq(joinSoftLines(['只有一行']), '只有一行');
+  eq(joinSoftLines([]), '');
+});
+
+console.log('\n== 表格：总览模板里就有，之前会被当成普通文字 ==');
+const TABLE = '| 方向 | 负责 Agent | 状态 |\n| --- | --- | --- |\n| 用户需求 | 行业分析师 | 探索中 |\n| 电池续航 | 工程师 | 已完成 |';
+t('渲染成真正的 table 而不是段落', () => {
+  const html = md(TABLE);
+  ok(html.includes('<table'));
+  eq(count(html, 'th'), 3);
+  eq(count(html, 'td'), 6);
+  no(html.includes('<p class'), '表格行不该掉进段落');
+});
+t('单元格里的行内语法照常生效', () => {
+  ok(md('| a | b |\n| - | - |\n| **粗** | `码` |').includes('<strong'));
+});
+t('缺列的行会补空单元格，不会串列', () => {
+  const html = md('| a | b | c |\n| - | - | - |\n| 只有一个 |');
+  eq(count(html, 'td'), 3);
+});
+t('只有一行竖线、没有分隔行 → 不当表格处理', () => {
+  no(md('| 这其实是正文 |').includes('<table'));
+});
+
+console.log('\n== 列表 ==');
+t('连续项在同一个 <ul> 里', () => {
+  const html = md('- 甲\n- 乙\n- 丙');
+  eq(count(html, 'ul'), 1);
+  eq(count(html, 'li'), 3);
+});
+t('有序列表用 <ol>', () => {
+  const html = md('1. 甲\n2. 乙');
+  eq(count(html, 'ol'), 1); eq(count(html, 'li'), 2);
+});
+t('无序换有序时会另起一个列表', () => {
+  const html = md('- 甲\n1. 乙');
+  eq(count(html, 'ul'), 1); eq(count(html, 'ol'), 1);
+});
+t('缩进产生嵌套列表', () => {
+  const html = md('- 甲\n  - 甲一\n  - 甲二\n- 乙');
+  eq(count(html, 'ul'), 2, '应该有外层和内层两个 ul');
+  eq(count(html, 'li'), 4);
+});
+t('嵌套结束后回到外层，标签成对', () => {
+  const html = md('- 甲\n  - 子\n- 乙');
+  eq((html.match(/<ul/g) || []).length, (html.match(/<\/ul>/g) || []).length);
+});
+t('任务列表渲染成勾选框', () => {
+  const html = md('- [ ] 没做\n- [x] 做完了');
+  eq(count(html, 'input'), 2);
+  ok(html.includes('checked'));
+  ok(html.includes('line-through'), '已完成项应有删除线');
+});
+
+console.log('\n== 引用 / 代码 / 分隔线 ==');
+t('连续引用行合并成一个块，不是一行一个框', () => {
+  const html = md('&gt; 第一行\n&gt; 第二行'.replace(/&gt;/g, '>'));
+  eq((html.match(/border-l/g) || []).length, 1);
+});
+t('代码块内部不被当成 Markdown 解析', () => {
+  const html = md('```\n- 这不是列表\n# 这不是标题\n```');
+  eq(count(html, 'li'), 0);
+  ok(html.includes('<pre'));
+});
+t('代码块没闭合时也能收尾，不吞掉后面的内容', () => {
+  ok(md('```\nconst a = 1').includes('</pre>'));
+});
+t('三种分隔线写法都认', () => {
+  ok(md('---').includes('<hr'));
+  ok(md('***').includes('<hr'));
+  ok(md('___').includes('<hr'));
+});
+
+console.log('\n== 标题与折叠 ==');
+t('大号阅读区把标题做成可折叠区块', () => {
+  const html = md('# 标题\n正文');
+  ok(html.includes('<details'));
+  ok(html.includes('<summary'));
+});
+t('小号（侧栏/聊天）不折叠，避免气泡里出现三角', () => {
+  const html = md('# 标题\n正文', false);
+  no(html.includes('<details'));
+});
+t('多个标题是平铺的，不会层层缩进', () => {
+  const html = md('# 一\n正文\n## 二\n正文\n### 三\n正文');
+  eq((html.match(/<details/g) || []).length, 3);
+  eq((html.match(/<\/details>/g) || []).length, 3);
+});
+t('标题上间距大于下间距，层级立得住', () => {
+  const html = md('## 标题');
+  ok(/mt-8[^"]*mb-3/.test(html), `标题类名应为上大下小，实际：${html.slice(0, 200)}`);
+});
+
+console.log('\n== 行内语法与安全 ==');
+t('HTML 被转义，笔记内容不能注入脚本', () => {
+  const html = md('<img src=x onerror=alert(1)>');
+  no(html.includes('<img'));
+  ok(html.includes('&lt;img'));
+});
+t('粗体/行内码/删除线', () => {
+  ok(md('**粗**').includes('<strong'));
+  ok(md('`code`').includes('<code'));
+  ok(md('~~删~~').includes('<del'));
+});
+t('粗体不会被斜体规则拆坏', () => {
+  const html = md('**加粗**');
+  ok(html.includes('<strong'));
+  no(html.includes('<em'));
+});
+t('wiki 链接带上跳转属性', () => {
+  ok(md('见 [[用户需求]]').includes('data-wikilink="用户需求"'));
+});
+t('外链渲染成 <a> 且带 noopener', () => {
+  const html = md('[文档](https://example.com)');
+  ok(html.includes('rel="noopener noreferrer"'));
+});
+
+console.log('\n== 真实笔记：整篇不该塌成一坨 ==');
+t('总览模板渲染出标题/表格/列表，且段落分明', () => {
+  const note = [
+    '# 项目总览', '',
+    '> 一句话说清这个项目在做什么。', '',
+    '## 📌 这是什么',
+    '这是一个很长的说明，',
+    '在源文件里被折行写成了好几行，',
+    '但它本来就是同一段话。', '',
+    '## 🎯 成功标准',
+    '- 算成功：拿到 20 个真实用户反馈',
+    '- 不做：先做完整产品', '',
+    '## 关键方向',
+    '| 方向 | 负责 Agent | 状态 |',
+    '| --- | --- | --- |',
+    '| 用户需求 | 行业分析师 | 探索中 |', '',
+    '## 🗺️ 下一步',
+    '1. 近期：跑第一个路标',
+    '2. 中期：接入设备实测',
+  ].join('\n');
+  const html = md(note);
+  ok(html.includes('<table'), '表格要成表');
+  eq(count(html, 'ul'), 1);
+  eq(count(html, 'ol'), 1);
+  eq((html.match(/<details/g) || []).length, 5, '五个标题五个区块');
+  ok(html.includes('这是一个很长的说明，在源文件里被折行写成了好几行，但它本来就是同一段话。'),
+    '折行的一段话要合成一个段落');
+});
+t('空输入 / 只有空白 不炸', () => {
+  eq(md(''), '');
+  eq(md('   \n\n  ').trim(), '');
+  eq(renderMarkdown(undefined as any), '');
 });
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`);
