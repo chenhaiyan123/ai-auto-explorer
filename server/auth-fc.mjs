@@ -76,6 +76,32 @@ const FEEDBACK_MAX_LEN = 4000;                                       // 单条�
 
 /** email -> { code, exp, lastSent, attempts } */
 const store = new Map();
+/**
+ * 现实反馈收件箱（手机端 App 用）：`${scope}:${id}` -> { items, replies, at }
+ *
+ * ⚠️ 和上面的 usage 一样是内存态，冷启动会清空。这是**有意为之**：
+ * 给 FC 加持久化会引入新基础设施和成本，而这份数据的价值窗口只有几分钟到几小时。
+ * 客户端按「电脑持续重推完整待办 + 手机回填留底直到收到 ack」来对冲丢失，
+ * 所以服务端被清空最多让一次同步晚几十秒，不会丢掉用户填的东西。
+ */
+const inbox = new Map();
+const INBOX_MAX_ITEMS = 50;
+const INBOX_MAX_REPLIES = 100;
+const INBOX_TTL_MS = 24 * 3600 * 1000;
+
+const inboxKey = (ident) => `${ident.scope}:${ident.id}`;
+function inboxOf(ident) {
+  const k = inboxKey(ident);
+  const now = Date.now();
+  let box = inbox.get(k);
+  if (!box || now - box.at > INBOX_TTL_MS) { box = { items: [], replies: [], at: now }; inbox.set(k, box); }
+  box.at = now;
+  // 顺手清掉过期的别人的箱子，别让内存无限涨
+  if (inbox.size > 500) {
+    for (const [key, v] of inbox) if (now - v.at > INBOX_TTL_MS) inbox.delete(key);
+  }
+  return box;
+}
 const usage = new Map();   // `${scope}:${id}:${date}` -> 次数；`g:${date}` -> 全站次数
 const ipHits = new Map();  // ip -> { count, windowStart }
 /** 上游熔断状态：连续失败计数 + 熔断到期时间戳 */
@@ -220,6 +246,68 @@ const server = http.createServer(async (req, res) => {
       const p = verifyToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
       if (!p) return send2(401, { error: '未登录或登录已过期' });
       return send2(200, { user: { email: p.email, username: p.email.split('@')[0], role: 'user' } });
+    }
+
+    // ================= 现实反馈收件箱（手机 App） =================
+    // 只中转「等你给现实答案」的那几条待办和回填结果，不碰笔记正文，
+    // 单次 payload 很小；身份沿用 identify()（登录用邮箱，没登录用设备 id）。
+
+    // 电脑端推送完整待办（覆盖式：这一份就是当前全部，服务端不做合并）
+    if (req.method === 'POST' && path === '/api/inbox/push') {
+      const ip = clientIp(req);
+      if (rateLimited(ip)) return send2(429, { error: '请求过于频繁' });
+      const body = await readJson(req);
+      const items = Array.isArray(body.items) ? body.items.slice(0, INBOX_MAX_ITEMS) : [];
+      const box = inboxOf(identify(req));
+      box.items = items;
+      return send2(200, { ok: true, count: items.length, replies: box.replies.length });
+    }
+
+    // 手机端拉待办
+    if (req.method === 'GET' && path === '/api/inbox') {
+      const box = inboxOf(identify(req));
+      return send2(200, { items: box.items, at: box.at });
+    }
+
+    // 手机端回填（可批量、可重复提交——客户端在收到 ack 前会一直重发）
+    if (req.method === 'POST' && path === '/api/inbox/reply') {
+      const ip = clientIp(req);
+      if (rateLimited(ip)) return send2(429, { error: '请求过于频繁' });
+      const body = await readJson(req);
+      const incoming = Array.isArray(body.replies) ? body.replies.slice(0, 30) : [];
+      const box = inboxOf(identify(req));
+      const accepted = [];
+      for (const r of incoming) {
+        const id = String(r?.id || '').slice(0, 80);
+        const verdict = String(r?.verdict || '').slice(0, 16);
+        if (!id || !verdict) continue;
+        const rec = {
+          id, verdict,
+          summary: String(r?.summary || '').slice(0, 500),
+          at: Number.isFinite(r?.at) ? r.at : Date.now(),
+        };
+        // 同一条只留最新的一份，避免重发把队列撑爆
+        const i = box.replies.findIndex((x) => x.id === id);
+        if (i >= 0) box.replies[i] = rec; else box.replies.push(rec);
+        accepted.push(id);
+      }
+      if (box.replies.length > INBOX_MAX_REPLIES) box.replies = box.replies.slice(-INBOX_MAX_REPLIES);
+      return send2(200, { ok: true, accepted });
+    }
+
+    // 电脑端拉回填
+    if (req.method === 'GET' && path === '/api/inbox/replies') {
+      const box = inboxOf(identify(req));
+      return send2(200, { replies: box.replies });
+    }
+
+    // 电脑端确认已消费（不 ack 就会一直重复收到，这是刻意的——宁可重复也不要丢）
+    if (req.method === 'POST' && path === '/api/inbox/ack') {
+      const body = await readJson(req);
+      const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
+      const box = inboxOf(identify(req));
+      box.replies = box.replies.filter((r) => !ids.includes(r.id));
+      return send2(200, { ok: true, remaining: box.replies.length });
     }
 
     // ---- 用户反馈：转成邮件发到 FEEDBACK_TO ----

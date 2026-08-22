@@ -16,6 +16,12 @@ import {
   nodesOfAnchor, normalizeAnchor,
 } from '../services/routeService';
 import { renderMarkdown, joinSoftLines } from '../services/markdown';
+import { buildInbox, normalizeReplies, parseItemId, isValidVerdict, inboxDigest } from '../services/inbox';
+import { nextPollDelay } from '../services/inboxSync';
+import {
+  computeVisitEvents, computeMilestone, furthestStage, dayKey, daysBetween,
+  emptyState, MILESTONES,
+} from '../services/funnel';
 
 let pass = 0, fail = 0;
 const t = (name: string, fn: () => void) => {
@@ -1058,6 +1064,241 @@ t('空输入 / 只有空白 不炸', () => {
   eq(md(''), '');
   eq(md('   \n\n  ').trim(), '');
   eq(renderMarkdown(undefined as any), '');
+});
+
+
+// ===================== 手机端现实反馈收件箱 =====================
+const proj = (o: any = {}): any => ({
+  id: 'p1', name: '眼镜项目', metaProblem: 'g', createdAt: NOW, nodes: [], ...o,
+});
+const pcall = (o: any = {}): any => ({
+  id: 'c1', deviceId: 'd1', deviceName: '培养箱', actionId: 'a1', actionName: '设定温度',
+  params: { temp: '37' }, source: 'ai', reason: '写操作需确认', createdAt: NOW, ...o,
+});
+
+console.log('\n== buildInbox：只推"离开电脑才能解决"的那几条 ==');
+t('等现实的路标会进收件箱，且判定标准原样带上', () => {
+  const p = proj({ route: route([anc({ id: 'A', status: 'waiting', title: '付费意愿', passIf: '≥8 人留资', failIf: '<3 人留资' })]) });
+  const box = buildInbox([p], [], NOW);
+  eq(box.length, 1);
+  eq(box[0].kind, 'anchor');
+  eq(box[0].id, 'anchor:A');
+  ok(box[0].criteria.includes('≥8 人留资') && box[0].criteria.includes('<3 人留资'));
+});
+t('还没到点的路标不推——推了只会干扰', () => {
+  eq(buildInbox([proj({ route: route([anc({ status: 'pending' })]) })], [], NOW).length, 0);
+});
+t('已结算的路标不推', () => {
+  eq(buildInbox([proj({ route: route([anc({ status: 'passed' })]) })], [], NOW).length, 0);
+});
+t('待执行的人工探针会推', () => {
+  const p = proj({
+    nodes: [node({ id: 'n1', title: '用户需求' })],
+    probes: [{ id: 'pr1', nodeId: 'n1', kind: 'manual', hypothesis: 'h', method: '找 20 个用户', cost: 'low', expectedSignal: '少于 8 人算反对', status: 'draft', createdAt: NOW }],
+  });
+  const box = buildInbox([p], [], NOW);
+  eq(box.length, 1); eq(box[0].kind, 'probe'); eq(box[0].title, '用户需求');
+});
+t('设备型探针不推——电脑上自动跑，不该麻烦人', () => {
+  const p = proj({
+    nodes: [node({ id: 'n1' })],
+    probes: [{ id: 'pr1', nodeId: 'n1', kind: 'device', hypothesis: 'h', method: 'm', cost: 'low', expectedSignal: 's', status: 'draft', createdAt: NOW }],
+  });
+  eq(buildInbox([p], [], NOW).length, 0);
+});
+t('已完成/已跳过的探针不推', () => {
+  const mk = (status: string) => proj({
+    nodes: [node({ id: 'n1' })],
+    probes: [{ id: 'pr1', nodeId: 'n1', kind: 'manual', hypothesis: 'h', method: 'm', cost: 'low', expectedSignal: 's', status, createdAt: NOW }],
+  });
+  eq(buildInbox([mk('done')], [], NOW).length, 0);
+  eq(buildInbox([mk('skipped')], [], NOW).length, 0);
+});
+t('被拦下的设备写操作会推，并带上具体参数', () => {
+  const box = buildInbox([], [pcall()], NOW);
+  eq(box.length, 1);
+  eq(box[0].kind, 'device_call');
+  ok(box[0].needs!.includes('temp=37'), '参数必须看得见，否则没法判断该不该确认');
+});
+t('最近的排最前面', () => {
+  const box = buildInbox([], [pcall({ id: 'old', createdAt: 1 }), pcall({ id: 'new', createdAt: 9 })], NOW);
+  eq(box.map(b => b.sourceId), ['new', 'old']);
+});
+t('空项目 / 空入参不炸', () => {
+  eq(buildInbox([], [], NOW).length, 0);
+  eq(buildInbox([proj()], [], NOW).length, 0);
+});
+
+console.log('\n== id 解析与判定校验 ==');
+t('parseItemId 认得三种类型；带冒号的源 id 也不会截错', () => {
+  eq(parseItemId('anchor:abc'), { kind: 'anchor', sourceId: 'abc' });
+  eq(parseItemId('probe:a:b:c'), { kind: 'probe', sourceId: 'a:b:c' });
+  eq(parseItemId('乱写'), null);
+  eq(parseItemId('unknown:x'), null);
+  eq(parseItemId('anchor:'), null);
+});
+t('判定值必须匹配类型——设备确认不能填"通过"', () => {
+  ok(isValidVerdict('anchor', 'pass'));
+  ok(isValidVerdict('device_call', 'approve'));
+  no(isValidVerdict('device_call', 'pass'));
+  no(isValidVerdict('anchor', 'approve'));
+  no(isValidVerdict('probe', '随便'));
+});
+
+console.log('\n== normalizeReplies：后端是内存态，重复到达是常态 ==');
+t('同一条重复提交只保留最新的', () => {
+  const out = normalizeReplies([
+    { id: 'anchor:A', verdict: 'pass', summary: '旧', at: 1 },
+    { id: 'anchor:A', verdict: 'fail', summary: '新', at: 9 },
+  ]);
+  eq(out.length, 1); eq(out[0].summary, '新'); eq(out[0].verdict, 'fail');
+});
+t('判定非法 / id 认不出的一律丢掉，不猜', () => {
+  eq(normalizeReplies([{ id: 'anchor:A', verdict: 'approve', summary: 'x', at: 1 }]).length, 0);
+  eq(normalizeReplies([{ id: '???', verdict: 'pass', summary: 'x', at: 1 }]).length, 0);
+  eq(normalizeReplies([null, undefined, 'x'] as any).length, 0);
+});
+t('路标/探针没写说明就不算数——没有正文等于没验证', () => {
+  eq(normalizeReplies([{ id: 'anchor:A', verdict: 'pass', summary: '   ', at: 1 }]).length, 0);
+});
+t('设备拒绝可以不写理由', () => {
+  eq(normalizeReplies([{ id: 'device_call:c1', verdict: 'reject', summary: '', at: 1 }]).length, 1);
+});
+t('按时间升序返回，先填的先落地', () => {
+  const out = normalizeReplies([
+    { id: 'anchor:B', verdict: 'pass', summary: 'b', at: 9 },
+    { id: 'anchor:A', verdict: 'pass', summary: 'a', at: 1 },
+  ]);
+  eq(out.map(r => r.id), ['anchor:A', 'anchor:B']);
+});
+t('非数组输入返回空数组', () => { eq(normalizeReplies(null as any).length, 0); });
+
+console.log('\n== 省 FC 调用：指纹去重 + 自适应轮询 ==');
+t('待办没变化时指纹一致（不重复推送）', () => {
+  const a = buildInbox([], [pcall()], NOW);
+  const b = buildInbox([], [pcall()], NOW);
+  eq(inboxDigest(a), inboxDigest(b));
+});
+t('待办变了指纹就变', () => {
+  const a = buildInbox([], [pcall()], NOW);
+  const b = buildInbox([], [pcall(), pcall({ id: 'c2' })], NOW);
+  no(inboxDigest(a) === inboxDigest(b));
+});
+t('顺序不同但内容相同 → 指纹相同', () => {
+  const a = buildInbox([], [pcall({ id: 'x', createdAt: 1 }), pcall({ id: 'y', createdAt: 2 })], NOW);
+  const b = buildInbox([], [pcall({ id: 'y', createdAt: 2 }), pcall({ id: 'x', createdAt: 1 })], NOW);
+  eq(inboxDigest(a), inboxDigest(b));
+});
+t('没待办时轮询退到 10 分钟——这是烧不烧钱的关键', () => {
+  eq(nextPollDelay(0, 0), 600000);
+  eq(nextPollDelay(0, 99), 600000);
+});
+t('有待办时 20 秒起，长时间没动静逐步退避到 5 分钟封顶', () => {
+  eq(nextPollDelay(2, 0), 20000);
+  eq(nextPollDelay(2, 1), 40000);
+  ok(nextPollDelay(2, 99) <= 300000);
+});
+
+
+// ===================== 留存与漏斗埋点 =====================
+// 本地时区的某一天上午 10 点，避开跨时区把"第二天"算错
+const at = (y: number, m: number, d: number, h = 10) => new Date(y, m - 1, d, h).getTime();
+
+console.log('\n== 自然日计算：留存要按人的直觉，不是 24 小时 ==');
+t('dayKey 用本地自然日', () => { eq(dayKey(at(2026, 8, 22)), '2026-08-22'); });
+t('daysBetween 按日历天算', () => {
+  eq(daysBetween('2026-08-22', '2026-08-23'), 1);
+  eq(daysBetween('2026-08-22', '2026-08-29'), 7);
+  eq(daysBetween('2026-08-22', '2026-08-22'), 0);
+});
+t('跨月跨年也对', () => {
+  eq(daysBetween('2026-08-31', '2026-09-01'), 1);
+  eq(daysBetween('2026-12-31', '2027-01-01'), 1);
+});
+t('晚上 23:50 和次日 00:10 算两天（这才符合"第二天回来"的直觉）', () => {
+  eq(daysBetween(dayKey(at(2026, 8, 22, 23)), dayKey(at(2026, 8, 23, 0))), 1);
+});
+
+console.log('\n== computeVisitEvents：首访 / 同日重开 / 回访 ==');
+t('第一次来只发 landed，不发留存事件', () => {
+  const r = computeVisitEvents(null, at(2026, 8, 22));
+  eq(r.events, ['funnel_landed']);
+  eq(r.next.firstDay, '2026-08-22');
+  eq(r.next.activeDays, 1);
+});
+t('同一天重复打开：不发任何事件、活跃天数不涨', () => {
+  const a = computeVisitEvents(null, at(2026, 8, 22));
+  const b = computeVisitEvents(a.next, at(2026, 8, 22, 20));
+  eq(b.events, []);
+  eq(b.next.activeDays, 1);
+});
+t('第二天回来 → return_d1', () => {
+  const a = computeVisitEvents(null, at(2026, 8, 22));
+  const b = computeVisitEvents(a.next, at(2026, 8, 23));
+  ok(b.events.includes('return_d1'));
+  eq(b.next.activeDays, 2);
+});
+t('return_d1 只发一次，第三天回来不会重复发', () => {
+  let st = computeVisitEvents(null, at(2026, 8, 22)).next;
+  st = computeVisitEvents(st, at(2026, 8, 23)).next;
+  const c = computeVisitEvents(st, at(2026, 8, 24));
+  no(c.events.includes('return_d1'));
+});
+t('第 7 天回来同时补发 d1 和 d7（中间没来过也算留下来了）', () => {
+  const a = computeVisitEvents(null, at(2026, 8, 22));
+  const b = computeVisitEvents(a.next, at(2026, 8, 29));
+  ok(b.events.includes('return_d1'));
+  ok(b.events.includes('return_d7'));
+  no(b.events.includes('return_d30'));
+});
+t('第 30 天回来发 d30', () => {
+  const a = computeVisitEvents(null, at(2026, 8, 1));
+  const b = computeVisitEvents(a.next, at(2026, 8, 31));
+  ok(b.events.includes('return_d30'));
+});
+t('累计活跃 3 天 / 7 天各发一次', () => {
+  let st = computeVisitEvents(null, at(2026, 8, 1)).next;
+  st = computeVisitEvents(st, at(2026, 8, 2)).next;
+  const third = computeVisitEvents(st, at(2026, 8, 3));
+  ok(third.events.includes('active_3_days'));
+  st = third.next;
+  for (const d of [4, 5, 6]) st = computeVisitEvents(st, at(2026, 8, d)).next;
+  const seventh = computeVisitEvents(st, at(2026, 8, 7));
+  ok(seventh.events.includes('active_7_days'));
+  no(seventh.events.includes('active_3_days'), '已经发过就不再发');
+});
+
+console.log('\n== computeMilestone：一辈子只发一次（否则重度用户会把分子刷爆）==');
+t('第一次标记会发，第二次不发', () => {
+  const a = computeMilestone(null, 'funnel_project_created', at(2026, 8, 22));
+  eq(a.event, 'funnel_project_created');
+  const b = computeMilestone(a.next, 'funnel_project_created', at(2026, 8, 23));
+  eq(b.event, null);
+});
+t('不同里程碑互不影响', () => {
+  const a = computeMilestone(null, 'funnel_project_created');
+  const b = computeMilestone(a.next, 'funnel_reality_evidence');
+  eq(b.event, 'funnel_reality_evidence');
+});
+t('没有历史状态时也能标记（不会因为没访问过就丢事件）', () => {
+  eq(computeMilestone(null, 'funnel_entered_app').event, 'funnel_entered_app');
+});
+
+console.log('\n== furthestStage：这台机器走到漏斗第几步 ==');
+t('只打开过 = 第 0 步', () => {
+  eq(furthestStage({ ...emptyState('2026-08-22'), fired: ['funnel_landed'] }), 0);
+});
+t('回填过现实证据 = 走到最后一步', () => {
+  eq(furthestStage({ ...emptyState('2026-08-22'), fired: [...MILESTONES] }), MILESTONES.length - 1);
+});
+t('取最远的一步，不看填的顺序', () => {
+  const st = { ...emptyState('2026-08-22'), fired: ['funnel_reality_evidence', 'funnel_landed'] };
+  eq(furthestStage(st), MILESTONES.length - 1);
+});
+t('没有状态返回 -1，不会误报成第 0 步', () => { eq(furthestStage(null), -1); });
+t('漏斗顺序就是用户实际走的路径，aha 在最后一步', () => {
+  eq(MILESTONES[0], 'funnel_landed');
+  eq(MILESTONES[MILESTONES.length - 1], 'funnel_reality_evidence');
 });
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`);

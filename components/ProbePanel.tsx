@@ -3,6 +3,7 @@ import { ProblemNode, Probe, ProbeResult, EvidenceLayer, LAYER_LABEL, PROBE_COST
 import { designProbes, applyProbeResult } from '../services/probeService';
 import { runDeviceProbe, judgeSamples, summarizeRun, METRIC_LABEL } from '../services/deviceProbe';
 import { isEmergencyStopped } from '../services/iotService';
+import { markMilestone } from '../services/funnel';
 import DeviceProbeForm from './DeviceProbeForm';
 
 /**
@@ -82,6 +83,8 @@ const ProbePanel: React.FC<{
         samples: outcome.samples,
         metricValue: judged.metricValue ?? undefined,
       };
+      // 设备实测出了有效结论 = 一条现实证据（unclear 不算，那是没测出来）
+      if (judged.stance !== 'unclear') markMilestone('funnel_reality_evidence');
       const applied = applyProbeResult(node, { ...p, status: 'running' }, result);
       onUpdateProbe(applied.probe);
       if (Object.keys(applied.updates).length) onUpdateNodeData(node.id, applied.updates);
@@ -98,6 +101,7 @@ const ProbePanel: React.FC<{
 
   const submit = (p: Probe) => {
     if (!summary.trim()) return;
+    if (stance !== 'unclear') markMilestone('funnel_reality_evidence');
     const { updates, probe, contradicted } = applyProbeResult(node, p, {
       summary: summary.trim(), stance, layer, at: Date.now(),
     });

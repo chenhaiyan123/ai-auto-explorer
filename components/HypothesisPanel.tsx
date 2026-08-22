@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { ProblemNode, NodeStatus, Evidence, EvidenceLayer, Hypothesis, LAYER_LABEL } from '../types';
 import { statEvidence, isContradictedByReality } from '../services/validationTrigger';
+import { markMilestone } from '../services/funnel';
 
 /**
  * 「当前赌注」面板：把这个节点在赌什么、凭什么、最大的未知是什么，摆到明面上。
@@ -61,6 +62,8 @@ const HypothesisPanel: React.FC<{
       origin: 'human',        // 人回填的才算现实证据
       createdAt: Date.now(),
     };
+    // ★ aha：有人真的把现实的答案填了回来（这是整个产品成败的那条线）
+    markMilestone('funnel_reality_evidence');
     const next: Hypothesis = { ...h, evidence: [...(h.evidence || []), ev], updatedAt: Date.now() };
     // 现实反证压过现实支持 → 直接判定为「被推翻」，该转向了
     const nowContradicted = isContradictedByReality(next);

@@ -30,3 +30,14 @@ server/start-auth.sh
 
 *.pptx
 docs/推广/
+
+# Capacitor 原生工程：由 `npx cap add android/ios` 生成
+# 生成物很大且平台相关，签名文件更不能进仓库。
+# 想让 CI 能构建的话，把 android/ 提交进来（去掉下面这行），
+# 但 keystore / google-services.json / GoogleService-Info.plist 永远不要提交。
+android/
+ios/
+*.keystore
+*.jks
+google-services.json
+GoogleService-Info.plist

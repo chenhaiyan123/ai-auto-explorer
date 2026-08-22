@@ -6,6 +6,7 @@ import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage, DecisionO
 import { DecisionRecordModal, DecisionTimelineModal, DecisionDraft } from './components/DecisionCenter';
 import { captureSubtree, createDecision, forkFromDecision } from './services/decisionService';
 import { trackEvent, identifyChatUser } from './services/analytics';
+import { markMilestone } from './services/funnel';
 import GraphVisualization from './components/GraphVisualization';
 import NodeDetails from './components/NodeDetails';
 import DecisionModal from './components/DecisionModal';
@@ -30,9 +31,12 @@ import { resolveNodeByTitle } from './services/noteLinks';
 import { exportVaultZip, importMarkdownFiles, saveVaultToDirectory, supportsDirectoryPicker } from './services/vault';
 import { buildTeamPlan } from './services/teamService';
 import { checkTriggers, summarizeHits, isContradictedByReality, isBlockedOnReality, realityQueue } from './services/validationTrigger';
-import { pendingProbeCount, designProbes } from './services/probeService';
+import { pendingProbeCount, designProbes, applyProbeResult } from './services/probeService';
 import DeviceGuard from './components/DeviceGuard';
 import ChatLauncher from './components/ChatLauncher';
+import { buildInbox, parseItemId, InboxReply } from './services/inbox';
+import { pushInbox, pullReplies, ackReplies, nextPollDelay, hasSyncBackend } from './services/inboxSync';
+import { loadPending, approvePending, dropPending } from './services/iotService';
 import {
   currentAnchor, explorableNodes, legReady, reachAnchor, settleAnchor, skipAnchor,
   mergeRevision, anchorEvidence, anchorBrief, isWaitingAtAnchor, nodesOfAnchor,
@@ -1276,7 +1280,7 @@ const App: React.FC = () => {
     })();
     return () => { cancelled = true; };
   }, [user?.username]);
-  useEffect(() => { if (user) { monitor.incrementSession(); const i = setInterval(() => monitor.updateHeartbeat(), 10000); return () => clearInterval(i); } }, [user]);
+  useEffect(() => { if (user) { markMilestone('funnel_entered_app'); monitor.incrementSession(); const i = setInterval(() => monitor.updateHeartbeat(), 10000); return () => clearInterval(i); } }, [user]);
   // 登录后：把用户身份同步给聊天挂件 + 记一次登录事件（未配置统计/聊天时均为空操作）
   useEffect(() => { if (user) { identifyChatUser(user.username, user.email); trackEvent('login'); } }, [user?.username]);
 
@@ -1298,7 +1302,7 @@ const App: React.FC = () => {
 
   const addNode = useCallback((title: string, deps: string[] = [], notes = "", anchorId?: string) => { const n: ProblemNode = { id: uuidv4(), title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: deps, notes, chatHistory: [], agentResults: [], anchorId }; setNodes(prev => [...prev, n]); return n; }, []);
   const updateNode = useCallback((id: string, u: Partial<ProblemNode>) => setNodes(prev => prev.map(n => n.id === id ? { ...n, ...u } : n)), []);
-  const createProjectWithMode = useCallback((input: string, mode: ExplorationMode, analysis?: IntentAnalysis) => { const p: Project = { id: uuidv4(), name: analysis?.suggestedTitle || input.slice(0, 15), metaProblem: input, createdAt: Date.now(), explorationMode: mode, intentAnalysis: analysis, nodes: [{ id: uuidv4(), title: input, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: "", chatHistory: [], agentResults: [] }] }; setProjects(prev => [...prev, p]); setCurrentProjectId(p.id); setPendingIntent(null); setMetaInput(''); setShowMetaModal(false); }, []);
+  const createProjectWithMode = useCallback((input: string, mode: ExplorationMode, analysis?: IntentAnalysis) => { markMilestone('funnel_project_created'); const p: Project = { id: uuidv4(), name: analysis?.suggestedTitle || input.slice(0, 15), metaProblem: input, createdAt: Date.now(), explorationMode: mode, intentAnalysis: analysis, nodes: [{ id: uuidv4(), title: input, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: "", chatHistory: [], agentResults: [] }] }; setProjects(prev => [...prev, p]); setCurrentProjectId(p.id); setPendingIntent(null); setMetaInput(''); setShowMetaModal(false); }, []);
 
   // 探索重试计数
   const retryCountRef = useRef<Record<string, number>>({});
@@ -1432,6 +1436,7 @@ const App: React.FC = () => {
           addNotification('warning', `📍 到达路标：${cur.title}`,
             `${cur.question}\n需要：${anchorBrief(cur)}`);
           trackEvent('anchor_reached');
+          markMilestone('funnel_anchor_reached');
           return;
         }
         // ② 已经在等这个路标的结果了，别空转
@@ -1727,6 +1732,7 @@ const App: React.FC = () => {
   // 「总览优先」：一开始探索，就第一时间把项目总览写出来（用户基本先看总览）
   useEffect(() => {
     if (isLooping) {
+      markMilestone('funnel_exploration_started');
       // 重新开跑：允许再次提示「需要现实反馈」，并重置原地打转计数
       realityPromptedRef.current = false;
       emptyRoundsRef.current = 0;
@@ -1754,6 +1760,7 @@ const App: React.FC = () => {
 
   // 新建项目（一个项目=一个文件夹，像代码仓库：自带 README + 项目总览主文件）
   const handleCreateProject = useCallback((presetName?: string) => {
+    markMilestone('funnel_project_created');
     const name = (presetName || notesSearch || '').trim().slice(0, 40) || '新项目';
     const projId = uuidv4();
     const readmeId = uuidv4();
@@ -2018,6 +2025,7 @@ ${plan.lead.duty}
       routeRef.current = route;
       anchorPromptedRef.current = null;
       trackEvent('plan_route', { anchors: route.anchors.length });
+      markMilestone('funnel_route_planned');
       addNotification('info', '🗺️ 路线已规划', `${route.anchors.length} 个路标，第一站：${first.title}`);
       // 第一段还没有节点的话，顺手规划出来
       if (!nodes.some(n => (n.noteType === 'direction' || !n.noteType))) await openLeg(route, first);
@@ -2061,6 +2069,8 @@ ${plan.lead.duty}
     // ① 结果落成证据，挂到这一段的所有节点上——跟探针结果走同一套统计
     const ev = anchorEvidence(newAnchor);
     if (ev) {
+      // ★ 这是整个产品的 aha 时刻：有人真的把现实的答案填了回来
+      markMilestone('funnel_reality_evidence');
       const legNodeIds = new Set(nodesOfAnchor(nodes, anchorId).map(n => n.id));
       setNodes(prev => prev.map(n => {
         if (!legNodeIds.has(n.id) || !n.hypothesis) return n;
@@ -2112,6 +2122,103 @@ ${plan.lead.duty}
   }, [currentProjectId, nodes, routeBusy, addNotification, openLeg]);
 
   useEffect(() => { settleAnchorRef.current = handleSettleAnchor; }, [handleSettleAnchor]);
+
+  // ===== 手机端「现实反馈」同步 =====
+  //
+  // 只同步当前项目的待办：路标、待执行的人工探针、被拦下的设备写操作。
+  // 不传笔记正文、不传图谱——手机上要解决的只有"给现实答案"这一件事。
+  //
+  // ⚠️ 后端是 FC 内存态，冷启动会清空，所以这里**持续重推完整待办**（覆盖式），
+  // 靠 inboxDigest 去重避免没变化也发。轮询间隔是自适应的：没待办时 10 分钟一次，
+  // 避免像以前那样把 FC 调用量白白烧掉。
+  const inboxItems = useMemo(
+    () => (currentProject ? buildInbox([{ ...currentProject, nodes, probes: projectProbes, route: projectRoute }], loadPending()) : []),
+    [currentProject, nodes, projectProbes, projectRoute, notifications.length],
+  );
+
+  useEffect(() => {
+    if (!hasSyncBackend() || !user) return;
+    const t = setTimeout(() => { pushInbox(inboxItems).catch(() => { /* 网络问题下次再推 */ }); }, 1500);
+    return () => clearTimeout(t);
+  }, [inboxItems, user]);
+
+  /** 把手机上填的一条结果落到本地状态里 */
+  const applyInboxReply = useCallback(async (r: InboxReply) => {
+    const parsed = parseItemId(r.id);
+    if (!parsed) return;
+    const { kind, sourceId } = parsed;
+
+    if (kind === 'anchor') {
+      const v = r.verdict === 'pass' ? 'pass' : r.verdict === 'fail' ? 'fail' : 'unclear';
+      markMilestone('funnel_reality_evidence');
+      await handleSettleAnchor(sourceId, v as any, r.summary || '（手机端未填写说明）', 'human');
+      addNotification('info', '📱 手机回填已生效', `路标结算：${r.summary.slice(0, 60)}`);
+      return;
+    }
+
+    if (kind === 'probe') {
+      const probe = projectProbes.find(p => p.id === sourceId);
+      const node = probe && nodes.find(n => n.id === probe.nodeId);
+      if (!probe || !node) return;
+      const stance = r.verdict === 'pass' ? 'support' : r.verdict === 'fail' ? 'refute' : 'unclear';
+      const applied = applyProbeResult(node, probe, {
+        summary: r.summary || '（手机端未填写说明）',
+        stance: stance as any,
+        layer: 'behavior',           // 手机上人工回填的，按行为层算；设备实测走的是另一条路
+        at: r.at,
+      });
+      if (stance !== 'unclear') markMilestone('funnel_reality_evidence');
+      handleUpdateProbe(applied.probe);
+      if (Object.keys(applied.updates).length) updateNode(node.id, applied.updates);
+      // 走 ref：handleContradicted 定义在本函数之后（决策相关逻辑在文件更下面）
+      if (applied.contradicted) contradictedDecisionRef.current?.(node.id);
+      addNotification('info', '📱 手机回填已生效', `${node.title}：${r.summary.slice(0, 60)}`);
+      return;
+    }
+
+    if (kind === 'device_call') {
+      // 设备在电脑这一侧的局域网里，所以确认动作也必须在电脑上执行
+      if (r.verdict === 'approve') {
+        const out = await approvePending(sourceId);
+        addNotification(out.ok ? 'info' : 'warning', out.ok ? '📱 手机确认，已执行' : '📱 手机确认，但执行失败', out.response.slice(0, 80));
+      } else {
+        dropPending(sourceId);
+        addNotification('info', '📱 手机已拒绝该写操作', '未执行');
+      }
+    }
+  }, [projectProbes, nodes, handleSettleAnchor, handleUpdateProbe, updateNode, addNotification]);
+
+  const applyInboxReplyRef = useRef(applyInboxReply);
+  useEffect(() => { applyInboxReplyRef.current = applyInboxReply; }, [applyInboxReply]);
+
+  const inboxCountRef = useRef(0);
+  useEffect(() => { inboxCountRef.current = inboxItems.length; }, [inboxItems.length]);
+
+  useEffect(() => {
+    if (!hasSyncBackend() || !user) return;
+    let stopped = false;
+    let empties = 0;
+    let timer: any;
+
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const replies = await pullReplies();
+        if (replies.length) {
+          empties = 0;
+          for (const r of replies) await applyInboxReplyRef.current(r);
+          // 落地成功才 ack；ack 之前重复收到是预期行为，宁可重复也不要丢
+          await ackReplies(replies.map(r => r.id));
+        } else {
+          empties += 1;
+        }
+      } catch { empties += 1; }
+      if (!stopped) timer = setTimeout(tick, nextPollDelay(inboxCountRef.current, empties));
+    };
+
+    timer = setTimeout(tick, 5000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [user]);
 
   /**
    * 为某个正在等结果的路标设计验证方案。

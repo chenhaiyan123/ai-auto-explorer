@@ -14,6 +14,8 @@ import {
   actionMode, ParamLimit,
 } from '../services/iotService';
 import { isChatEnabled, isChatDismissed, setChatDismissed } from '../services/analytics';
+import { hasSyncBackend, pairCode } from '../services/inboxSync';
+import { isTrackingDisabled, setTrackingDisabled, funnelState, furthestStage, MILESTONES } from '../services/funnel';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -170,6 +172,37 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-bold disabled:opacity-50">
                   {saved ? '✅ 已保存' : '保存设置'}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* 统计：把自己从数据里剔掉。分母只有几十的时候，自己刷十次就把结论毁了 */}
+          {tab === 'llm' && (
+            <div className="mt-4 border border-slate-800 rounded-xl px-3 py-3 space-y-2">
+              <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
+                <input type="checkbox" defaultChecked={isTrackingDisabled()}
+                  onChange={e => setTrackingDisabled(e.target.checked)} />
+                不把本机计入访问统计（自己人请勾上）
+              </label>
+              <div className="text-[10px] text-slate-600 leading-relaxed">
+                本机进度：第 {furthestStage(funnelState()) + 1} / {MILESTONES.length} 步
+                {funnelState() && ` · 首访 ${funnelState()!.firstDay} · 活跃 ${funnelState()!.activeDays} 天`}
+              </div>
+            </div>
+          )}
+
+          {/* 手机端「现实反馈」App：把配对码和入口摆出来 */}
+          {tab === 'llm' && hasSyncBackend() && (
+            <div className="mt-4 border border-slate-800 rounded-xl px-3 py-3 space-y-2">
+              <div className="text-[11px] font-bold text-blue-300">📱 手机端 · 现实反馈</div>
+              <div className="text-[10px] text-slate-500 leading-relaxed">
+                探索卡在路标、或有设备写操作等确认时，会推到手机上让你当场回答。
+                手机浏览器打开本站 <span className="text-slate-300">/#/m</span>，用 Safari/Chrome 的「添加到主屏幕」装成 App。
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-500">本机配对码</span>
+                <code className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-emerald-400 tracking-widest text-xs">{pairCode()}</code>
+                <span className="text-[10px] text-slate-600">登录同一账号则不用配对码</span>
               </div>
             </div>
           )}

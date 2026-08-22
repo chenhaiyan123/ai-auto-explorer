@@ -13,10 +13,28 @@
 
 const env = (k: string): string => ((import.meta as any).env?.[k] || '').trim();
 
+/**
+ * 是否不统计本机。
+ * 开发机（localhost）自动排除；线上访问一次 `?notrack=1` 就把自己永久排除。
+ * 自己开发时每天开十几次页面，会把本来就只有几十的分母冲得没法看。
+ * （实现放在这里而不是 funnel.ts，是为了让 initAnalytics 不依赖 funnel 模块。）
+ */
+function noTrack(): boolean {
+  try {
+    if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return true;
+    if (new URLSearchParams(location.search).get('notrack') === '1') {
+      localStorage.setItem('hiexplore_no_track', '1');
+    }
+    return localStorage.getItem('hiexplore_no_track') === '1';
+  } catch {
+    return false;
+  }
+}
+
 /** Umami：无 cookie、匿名、轻量（~2KB），符合隐私要求，不用弹 cookie 提示 */
 export function initAnalytics(): void {
   const websiteId = env('VITE_UMAMI_WEBSITE_ID');
-  if (!websiteId || document.querySelector('script[data-website-id]')) return;
+  if (!websiteId || noTrack() || document.querySelector('script[data-website-id]')) return;
   const s = document.createElement('script');
   s.async = true;
   s.defer = true;
@@ -25,9 +43,10 @@ export function initAnalytics(): void {
   document.head.appendChild(s);
 }
 
-/** 自定义事件埋点（Umami 未启用时静默忽略） */
+/** 自定义事件埋点（Umami 未启用、或本机已排除时静默忽略） */
 export function trackEvent(name: string, data?: Record<string, string | number>): void {
   try {
+    if (noTrack()) return;
     (window as any).umami?.track?.(name, data);
   } catch { /* 忽略 */ }
 }
