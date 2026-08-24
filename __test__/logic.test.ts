@@ -32,6 +32,12 @@ import {
   specToMarkdown, paramValues as specParams, SimSpec, MAX_STEPS,
 } from '../services/simSpec';
 import { simulationSection } from '../services/vault';
+import {
+  parseOutline, editItem, dropItem, restoreItem, addItem, moveItem, setStart, setUserNote,
+  keptItems, droppedItems, confirmOutline, outlineProgress, outlineToMarkdown, isStub,
+  normTitle, MAX_ITEMS, plainProgress,
+} from '../services/outline';
+import { Outline } from '../types';
 
 let pass = 0, fail = 0;
 const t = (name: string, fn: () => void) => {
@@ -1745,6 +1751,239 @@ t('仿真笔记不改变任何节点状态', () => {
   // 仿真笔记没有 hypothesis，触发器不该把它当成"缺证据"的推理节点来处理
   eq(n.hypothesis, undefined);
   no(isBlockedOnReality([n]), '仿真笔记不该让循环误以为在等现实');
+});
+
+
+
+// ==================== 框架先行 ====================
+// 要解决的是节奏问题：产出的速度一旦超过理解的速度，多出来的那部分就不是资产，是噪音。
+
+const RAW_OUTLINE = {
+  items: [
+    { title: '谁会付钱', question: '愿意每月付 30 块的是哪一类人', why: '定价的前提' },
+    { title: '现在慢在哪', question: '现有方案的瓶颈在哪一步' },
+    { title: '最小可验证', question: '花一天能验掉哪个假设' },
+  ],
+};
+const mkOutline = (): Outline => parseOutline(RAW_OUTLINE, '做一个探索工具', NOW).outline!;
+
+console.log('\n== parseOutline：框架必须便宜到用户愿意读完并改 ==');
+t('正常的框架能解析出来，默认第一篇是起点', () => {
+  const { outline, problems } = parseOutline(RAW_OUTLINE, '做一个探索工具', NOW);
+  ok(outline, problems.join('；'));
+  eq(outline!.items.length, 3);
+  eq(outline!.status, 'draft');
+  eq(outline!.startId, outline!.items[0].id);
+  ok(outline!.items.every(i => i.state === 'keep'));
+});
+t('标题和问题都有长度上限——框架一旦写成正文，这一步就白设了', () => {
+  const o = parseOutline({ items: [
+    { title: '标'.repeat(100), question: '问'.repeat(300) },
+    { title: 'b', question: 'q' },
+  ] }, 'g', NOW).outline!;
+  ok(o.items[0].title.length <= 24);
+  ok(o.items[0].question.length <= 60);
+});
+t('重复标题被丢掉并说明', () => {
+  const r = parseOutline({ items: [
+    { title: '谁会付钱', question: 'a' },
+    { title: '谁会付钱！', question: 'b' },
+    { title: '别的', question: 'c' },
+  ] }, 'g', NOW);
+  eq(r.outline!.items.length, 2);
+  ok(r.problems.length);
+});
+t('超过上限的部分被截断并说明', () => {
+  const many = Array.from({ length: 20 }, (_, i) => ({ title: `第${i}篇`, question: 'q' }));
+  const r = parseOutline({ items: many }, 'g', NOW);
+  eq(r.outline!.items.length, MAX_ITEMS);
+  ok(r.problems.some(x => x.includes('只保留')));
+});
+t('没写「要回答什么」时用标题兜底，不为这一条整篇作废', () => {
+  const o = parseOutline({ items: [{ title: 'A' }, { title: 'B' }] }, 'g', NOW).outline!;
+  ok(o.items[0].question.includes('A'));
+});
+t('有效方向少于两条 → 这次没拟出可用框架', () => {
+  no(parseOutline({ items: [{ title: '只有一条', question: 'q' }] }, 'g', NOW).outline);
+  no(parseOutline({ items: [] }, 'g', NOW).outline);
+  no(parseOutline(null, 'g', NOW).outline);
+});
+t('normTitle 忽略标点和大小写', () => {
+  eq(normTitle('谁会付钱？'), normTitle('谁会付钱'));
+  eq(normTitle('A-B'), normTitle('ab'));
+});
+
+console.log('\n== 用户在框架阶段的操作：要让人敢下手 ==');
+t('改标题会打上「用户改过」的标记', () => {
+  const o = mkOutline();
+  const n = editItem(o, o.items[0].id, { title: '谁真的会付钱' });
+  eq(n.items[0].title, '谁真的会付钱');
+  ok(n.items[0].edited);
+});
+t('改成空字符串不会把标题清掉', () => {
+  const o = mkOutline();
+  eq(editItem(o, o.items[0].id, { title: '   ' }).items[0].title, '谁会付钱');
+});
+t('「不关心」是划掉不是删除，可以撤销', () => {
+  const o = mkOutline();
+  const dropped = dropItem(o, o.items[1].id);
+  eq(keptItems(dropped).length, 2);
+  eq(droppedItems(dropped).length, 1);
+  eq(dropped.items.length, 3, '记录要留着——用户明确说过不要，这本身是信息');
+  eq(keptItems(restoreItem(dropped, o.items[1].id)).length, 3);
+});
+t('划掉的正好是起点时，起点自动挪到下一条保留项', () => {
+  const o = mkOutline();
+  const n = dropItem(o, o.startId!);
+  eq(n.startId, o.items[1].id);
+});
+t('自己加一条排在末尾并标记为「你加的」', () => {
+  const o = addItem(mkOutline(), '竞品怎么做的', '别人是怎么解决这一步的', NOW);
+  eq(keptItems(o).length, 4);
+  ok(o.items[3].byUser);
+});
+t('重名和超上限时加不进去（不静默产生重复项）', () => {
+  const o = mkOutline();
+  eq(addItem(o, '谁会付钱', '', NOW).items.length, 3);
+  eq(addItem(o, '   ', '', NOW).items.length, 3);
+  let full = o;
+  for (let i = 0; i < 20; i++) full = addItem(full, `补${i}`, '', NOW);
+  eq(keptItems(full).length, MAX_ITEMS);
+});
+t('上移下移只在保留项之间发生，划掉的原地不动', () => {
+  let o = mkOutline();
+  const [a, b, c] = o.items.map(i => i.id);
+  o = dropItem(o, b);
+  o = moveItem(o, c, -1);
+  eq(keptItems(o).map(i => i.id), [c, a]);
+  eq(o.items[1].id, b, '被划掉的那条不参与排序');
+});
+t('移到头/尾之外是空操作', () => {
+  const o = mkOutline();
+  eq(moveItem(o, o.items[0].id, -1), o);
+  eq(moveItem(o, o.items[2].id, 1), o);
+});
+t('起点只能设成保留着的那几条之一', () => {
+  let o = mkOutline();
+  const b = o.items[1].id;
+  o = dropItem(o, b);
+  eq(setStart(o, b).startId, o.startId, '划掉的不能当起点');
+  eq(setStart(o, o.items[2].id).startId, o.items[2].id);
+});
+t('用户补的那句话有长度上限，空的存 undefined', () => {
+  const o = setUserNote(mkOutline(), '读者是没有技术背景的投资人');
+  eq(o.userNote, '读者是没有技术背景的投资人');
+  eq(setUserNote(o, '   ').userNote, undefined);
+});
+
+console.log('\n== 确认框架：这一步一篇正文都不生成 ==');
+t('确认后每条保留项落成一个空壳节点', () => {
+  const { outline, nodes } = confirmOutline(mkOutline(), 'root', NOW);
+  eq(nodes.length, 3);
+  eq(outline.status, 'confirmed');
+  ok(nodes.every(n => n.status === NodeStatus.UNEXPLORED));
+  ok(nodes.every(n => !n.notes), '空壳就是空壳，不许预先塞正文');
+  ok(nodes.every(n => n.dependencies.includes('root')));
+  ok(nodes.every(n => isStub(n)));
+});
+t('划掉的不会落成节点', () => {
+  const base = mkOutline();
+  const o = dropItem(base, base.items[1].id);
+  const { nodes } = confirmOutline(o, 'root', NOW);
+  eq(nodes.length, keptItems(o).length);
+});
+t('每条都记住自己落成了哪个节点（后面按框架顺序写要用）', () => {
+  const { outline, nodes } = confirmOutline(mkOutline(), 'root', NOW);
+  eq(keptItems(outline).map(i => i.nodeId), nodes.map(n => n.id));
+  ok(nodes.every(n => !!n.outlineItemId));
+});
+t('空壳正文一眼能看出是「待写」，不像已经写完了', () => {
+  const { nodes } = confirmOutline(mkOutline(), 'root', NOW);
+  ok(nodes[0].fullNote!.includes('还没开始写'));
+  ok(nodes[0].fullNote!.includes('这一篇要回答'));
+});
+
+console.log('\n== 一篇一篇：下一篇该写谁 ==');
+const confirmed = () => confirmOutline(mkOutline(), 'root', NOW);
+t('一篇没写时，下一篇是起点那一篇', () => {
+  const { outline, nodes } = confirmed();
+  const p = outlineProgress(outline, nodes);
+  eq(p.total, 3);
+  eq(p.written, 0);
+  eq(p.next!.nodeId, nodes[0].id);
+});
+t('写完一篇后，下一篇顺延', () => {
+  const { outline, nodes } = confirmed();
+  const written = nodes.map((n, i) => (i === 0 ? { ...n, status: NodeStatus.SOLVED, notes: '写好了' } : n));
+  const p = outlineProgress(outline, written);
+  eq(p.written, 1);
+  eq(p.next!.nodeId, nodes[1].id);
+});
+t('用户挑了「先写第三篇」，就从第三篇开始轮，轮完回头补前面的', () => {
+  const { outline, nodes } = confirmed();
+  const o2 = setStart(outline, outline.items[2].id);
+  eq(outlineProgress(o2, nodes).next!.nodeId, nodes[2].id);
+  const w = nodes.map((n, i) => (i === 2 ? { ...n, status: NodeStatus.SOLVED, notes: 'x' } : n));
+  eq(outlineProgress(o2, w).next!.nodeId, nodes[0].id, '轮完最后一篇要绕回开头');
+});
+t('全写完时没有下一篇', () => {
+  const { outline, nodes } = confirmed();
+  const all = nodes.map(n => ({ ...n, status: NodeStatus.SOLVED, notes: 'x' }));
+  const p = outlineProgress(outline, all);
+  eq(p.written, 3);
+  eq(p.next, undefined);
+});
+t('用户自己写了正文的那篇不算「待写」', () => {
+  const { outline, nodes } = confirmed();
+  const mine = nodes.map((n, i) => (i === 0 ? { ...n, notes: '我自己写的' } : n));
+  eq(outlineProgress(outline, mine).next!.nodeId, nodes[1].id);
+  no(isStub(mine[0]));
+});
+t('等现实验证 / 被推翻的也算写过了，不会被反复重写', () => {
+  const { outline, nodes } = confirmed();
+  const v = nodes.map((n, i) => (i === 0 ? { ...n, status: NodeStatus.VALIDATING } : n));
+  eq(outlineProgress(outline, v).next!.nodeId, nodes[1].id);
+});
+t('没有框架时进度是空的，不会崩', () => {
+  eq(outlineProgress(undefined, []), { total: 0, written: 0 });
+});
+t('没走框架流程的老项目也能说出「还剩几篇、下一篇是谁」', () => {
+  const mk = (id: string, st: NodeStatus, notes = ''): ProblemNode => ({
+    id, title: id, status: st, confidence: 0, dependencies: [], notes,
+    chatHistory: [], agentResults: [], noteType: 'direction',
+  });
+  const ns = [mk('a', NodeStatus.SOLVED, '写好了'), mk('b', NodeStatus.UNEXPLORED), mk('c', NodeStatus.UNEXPLORED)];
+  const p = plainProgress(ns);
+  eq(p.total, 3);
+  eq(p.written, 1);
+  eq(p.next!.nodeId, 'b');
+});
+t('README / 总览 / 仿真笔记不算进待写的篇数', () => {
+  const base = { confidence: 0, dependencies: [], notes: '', chatHistory: [], agentResults: [] };
+  const ns: ProblemNode[] = [
+    { id: 'r', title: 'README', status: NodeStatus.SOLVED, noteType: 'readme', ...base },
+    { id: 'o', title: '总览', status: NodeStatus.SOLVED, noteType: 'overview', ...base },
+    { id: 's', title: '仿真', status: NodeStatus.UNEXPLORED, noteType: 'simulation', ...base },
+    { id: 'd', title: '方向', status: NodeStatus.UNEXPLORED, noteType: 'direction', ...base },
+  ];
+  eq(plainProgress(ns).total, 1);
+  eq(plainProgress(ns).next!.nodeId, 'd');
+});
+
+console.log('\n== 框架写进总览：「说好要写哪几篇」得有个地方可查 ==');
+t('总览里带双链、带已写/待写标记、带用户补充', () => {
+  const { outline, nodes } = confirmed();
+  const o2 = setUserNote(outline, '读者是投资人');
+  const md = outlineToMarkdown(o2, nodes);
+  ok(md.includes('[[谁会付钱]]'), '要能点进去');
+  ok(md.includes('○'), '待写要标出来');
+  ok(md.includes('读者是投资人'));
+});
+t('划掉的那几条也写在总览里——商量过什么，半年后要查得到', () => {
+  const base = mkOutline();
+  const o = dropItem(base, base.items[1].id);
+  const { outline, nodes } = confirmOutline(o, 'root', NOW);
+  ok(outlineToMarkdown(outline, nodes).includes('先不写'));
 });
 
 

@@ -36,6 +36,10 @@ import DeviceGuard from './components/DeviceGuard';
 import ChatLauncher from './components/ChatLauncher';
 import SimPreview from './components/SimPreview';
 import { designSimulation } from './services/simService';
+import OutlinePlanner from './components/OutlinePlanner';
+import StepBar from './components/StepBar';
+import { proposeOutline } from './services/outlineService';
+import { confirmOutline, outlineProgress, outlineToMarkdown, keptItems, plainProgress } from './services/outline';
 import { buildInbox, parseItemId, InboxReply } from './services/inbox';
 import { pushInbox, pullReplies, ackReplies, nextPollDelay, hasSyncBackend } from './services/inboxSync';
 import { loadPending, approvePending, dropPending } from './services/iotService';
@@ -44,7 +48,7 @@ import {
   mergeRevision, anchorEvidence, anchorBrief, isWaitingAtAnchor, nodesOfAnchor,
   planRoute, planLegDirections, reviseRoute,
 } from './services/routeService';
-import { ExplorationRoute, RouteAnchor, ANCHOR_METHOD_LABEL } from './types';
+import { ExplorationRoute, RouteAnchor, ANCHOR_METHOD_LABEL, Outline, ExplorationPace } from './types';
 import { loadLLMSettings, isTrialMode, getTrialQuota, hasTrialBackend } from './services/llmProvider';
 import { getWithMigration, idbSet } from './services/storage';
 
@@ -1170,6 +1174,15 @@ const App: React.FC = () => {
   // 假设被现实推翻 → 打开决策记录弹窗。用 ref 是因为探索循环定义在决策相关逻辑之前。
   const contradictedDecisionRef = useRef<((nodeId: string) => void) | null>(null);
   // 探索路线：循环要读它来决定"现在允许跑哪一段"，也要在到点时把锚点转成等待
+  // 框架与节奏：探索循环要按用户排好的顺序走、写完一篇要停下来，都靠这两个 ref
+  const outlineRef = useRef<Outline | undefined>(undefined);
+  const paceRef = useRef<ExplorationPace>('step');
+  /** 项目列表的最新快照（回调里读它，避免把 projects 加进依赖导致回调每次重建） */
+  const projectsRef = useRef<Project[]>([]);
+  /** 用户点了某一篇的「▶ 写这一篇」：下一轮优先写它，写完即清空 */
+  const forceNodeRef = useRef<string | null>(null);
+  const proposeOutlineRef = useRef<((projId?: string, goal?: string) => void) | null>(null);
+
   const routeRef = useRef<ExplorationRoute | undefined>(undefined);
   const reachAnchorRef = useRef<((anchorId: string) => void) | null>(null);
   const anchorPromptedRef = useRef<string | null>(null);   // 同一个锚点只提醒一次
@@ -1304,7 +1317,10 @@ const App: React.FC = () => {
 
   const addNode = useCallback((title: string, deps: string[] = [], notes = "", anchorId?: string) => { const n: ProblemNode = { id: uuidv4(), title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: deps, notes, chatHistory: [], agentResults: [], anchorId }; setNodes(prev => [...prev, n]); return n; }, []);
   const updateNode = useCallback((id: string, u: Partial<ProblemNode>) => setNodes(prev => prev.map(n => n.id === id ? { ...n, ...u } : n)), []);
-  const createProjectWithMode = useCallback((input: string, mode: ExplorationMode, analysis?: IntentAnalysis) => { markMilestone('funnel_project_created'); const p: Project = { id: uuidv4(), name: analysis?.suggestedTitle || input.slice(0, 15), metaProblem: input, createdAt: Date.now(), explorationMode: mode, intentAnalysis: analysis, nodes: [{ id: uuidv4(), title: input, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: "", chatHistory: [], agentResults: [] }] }; setProjects(prev => [...prev, p]); setCurrentProjectId(p.id); setPendingIntent(null); setMetaInput(''); setShowMetaModal(false); }, []);
+  const createProjectWithMode = useCallback((input: string, mode: ExplorationMode, analysis?: IntentAnalysis) => { markMilestone('funnel_project_created'); const p: Project = { id: uuidv4(), name: analysis?.suggestedTitle || input.slice(0, 15), metaProblem: input, createdAt: Date.now(), explorationMode: mode, intentAnalysis: analysis, nodes: [{ id: uuidv4(), title: input, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: "", chatHistory: [], agentResults: [] }] }; setProjects(prev => [...prev, p]); setCurrentProjectId(p.id); setPendingIntent(null); setMetaInput(''); setShowMetaModal(false);
+    // 新项目不再直接开跑，先拟一份目录跟用户对齐——这是整个节奏改造的入口
+    setTimeout(() => proposeOutlineRef.current?.(p.id, input), 300);
+  }, []);
 
   // 探索重试计数
   const retryCountRef = useRef<Record<string, number>>({});
@@ -1426,7 +1442,21 @@ const App: React.FC = () => {
     const route = routeRef.current;
     const allowed = explorableNodes(nodes, route);
     if (unexplored && route && !allowed.some(n => n.id === unexplored!.id)) unexplored = undefined;
-    if (!unexplored) unexplored = allowed[0];
+    if (!unexplored) {
+      // ① 用户刚点了某一篇的「▶ 写这一篇」——他的指定永远优先
+      const forced = forceNodeRef.current;
+      if (forced) {
+        const hit = allowed.find(n => n.id === forced);
+        if (hit) unexplored = hit;
+        forceNodeRef.current = null;
+      }
+    }
+    if (!unexplored) {
+      // ② 有框架就按框架的顺序写：用户在框架阶段排过序、挑过「先写哪篇」，那个顺序必须算数，
+      //    否则他确认完框架、AI 却从第四篇开始写，前面那一步的对齐就白做了。
+      const wantId = outlineProgress(outlineRef.current, nodes).next?.nodeId;
+      unexplored = (wantId ? allowed.find(n => n.id === wantId) : undefined) || allowed[0];
+    }
 
     if (!unexplored) {
       if (!nodes.some(n => n.status === NodeStatus.EXPLORING)) {
@@ -1644,6 +1674,19 @@ const App: React.FC = () => {
             validationReason: undefined, noteUpdatedAt: Date.now(),
           }));
         }
+        /*
+          ===== 一篇一停 =====
+          写完一篇就把方向盘交回给人。
+          用户跟不上，不是因为笔记写得不好，是因为**没有一个地方让他说「我看完了」**；
+          没有这个动作，AI 只能按自己的节奏往下跑，两边的认知就此分叉。
+          「持续探索」是用户明确要求不打扰的模式，那时不停。
+        */
+        if (paceRef.current === 'step' && !continuousModeRef.current) {
+          setIsLooping(false);
+          setJustWroteId(cid);
+          trackEvent('step_pause');
+        }
+
         // 「总览优先」：每解决若干节点，自动刷新一次项目总览，让用户随时看到最新进展
         solvedSinceOverviewRef.current += 1;
         if (solvedSinceOverviewRef.current >= OVERVIEW_REFRESH_EVERY) {
@@ -1958,6 +2001,145 @@ ${plan.lead.duty}
     setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, probes: [...(p.probes || []), ...ps] } : p));
     trackEvent('design_probes', { count: ps.length });
   }, [currentProjectId]);
+  // ===== 框架先行 + 一篇一停 =====
+  /*
+    要解决的是一个节奏问题：原来一按「开始探索」，AI 十分钟能生成七八篇笔记，
+    用户根本来不及看，看完也不知道这些方向是怎么来的。
+    **产出的速度一旦超过理解的速度，多出来的那部分就不是资产，是噪音。**
+
+    改成两段：先只出目录跟用户对齐（一个字正文都不写），确认之后一篇一篇写、写完一篇停一下。
+  */
+  const projectOutline = currentProject?.outline;
+  // 默认 step。老项目没存过 pace，也按一篇一停走——这正是要改掉的那个默认行为。
+  const projectPace: ExplorationPace = currentProject?.pace || 'step';
+  const [outlineBusy, setOutlineBusy] = useState(false);
+  /** 刚写完的那一篇（step 模式下循环停在这里等人） */
+  const [justWroteId, setJustWroteId] = useState<string | null>(null);
+
+  useEffect(() => { outlineRef.current = projectOutline; }, [projectOutline]);
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
+  useEffect(() => { paceRef.current = projectPace; }, [projectPace]);
+  // 换项目时把上一篇的停顿清掉，免得张冠李戴
+  useEffect(() => { setJustWroteId(null); }, [currentProjectId]);
+
+  const patchProject = useCallback((id: string, patch: Partial<Project>) => {
+    setProjects(prev => prev.map(p => (p.id === id ? { ...p, ...patch } : p)));
+  }, []);
+
+  /** 让 AI 拟一份目录。只出标题和「这篇要回答什么」，不写正文。 */
+  const handleProposeOutline = useCallback(async (projId?: string, goal?: string) => {
+    const pid = projId || currentProjectId;
+    if (!pid || outlineBusy) return;
+    setOutlineBusy(true);
+    try {
+      const proj = projectsRef.current.find(p => p.id === pid);
+      const g = goal || proj?.metaProblem || proj?.name || '';
+      const existing = (proj?.nodes || [])
+        .filter(n => n.noteType === 'direction' || !n.noteType)
+        .map(n => n.title);
+      const { outline, problems } = await proposeOutline(g, proj?.explorationMode || 'research', {
+        existingTitles: existing,
+        userNote: proj?.outline?.userNote,
+      });
+      if (!outline) {
+        addNotification('warning', '🗺️ 这次没拟出框架', problems.join('；') || '模型没给出可用的方向');
+        return;
+      }
+      patchProject(pid, { outline });
+      trackEvent('outline_proposed', { items: outline.items.length });
+      if (problems.length) addNotification('info', '🗺️ 框架已拟好（有几条被丢掉）', problems.join('；'));
+    } catch (e: any) {
+      addNotification('warning', '🗺️ 拟框架失败', e?.message || String(e));
+    } finally {
+      setOutlineBusy(false);
+    }
+  }, [currentProjectId, outlineBusy, addNotification, patchProject]);
+
+  // 新建项目时要在 createProjectWithMode 里调它，而那个回调定义在前面，所以走 ref
+  useEffect(() => { proposeOutlineRef.current = handleProposeOutline; }, [handleProposeOutline]);
+
+  const handleOutlineChange = useCallback((o: Outline) => {
+    if (currentProjectId) patchProject(currentProjectId, { outline: o });
+  }, [currentProjectId, patchProject]);
+
+  /**
+   * 确认框架 → 建空壳节点。
+   * 关键：**这一步不调模型，一篇正文都不生成。** 用户拿到的是一份目录，
+   * 然后由他点「写这一篇」开始第一篇。
+   */
+  const handleConfirmOutline = useCallback(() => {
+    if (!currentProjectId || !projectOutline) return;
+    const proj = projectsRef.current.find(p => p.id === currentProjectId);
+    const rootId = (proj?.nodes || []).find(n => n.noteType === 'overview')?.id
+      || (proj?.nodes || [])[0]?.id || '';
+    const { outline, nodes: fresh } = confirmOutline(projectOutline, rootId);
+    setNodes(prev => [...prev, ...fresh]);
+    patchProject(currentProjectId, { outline, pace: 'step' });
+    // 把商量好的目录写进总览：「我们说好要写哪几篇」得有个固定的地方可查
+    const md = outlineToMarkdown(outline, fresh);
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? {
+      ...p,
+      nodes: (p.nodes || []).map(n => n.noteType === 'overview'
+        ? { ...n, fullNote: `${n.fullNote || ''}\n\n${md}\n`, noteUpdatedAt: Date.now() }
+        : n),
+    } : p));
+    const first = keptItems(outline).find(i => i.id === outline.startId) || keptItems(outline)[0];
+    if (first?.nodeId) setSelectedNodeId(first.nodeId);
+    trackEvent('outline_confirmed', { items: keptItems(outline).length });
+    addNotification('info', '🗺️ 框架定了', `一共 ${keptItems(outline).length} 篇。点「▶ 写这一篇」开始第一篇，写完会停下来等你。`);
+  }, [currentProjectId, projectOutline, patchProject, addNotification]);
+
+  const handleDiscardOutline = useCallback(() => {
+    if (currentProjectId) patchProject(currentProjectId, { outline: undefined });
+  }, [currentProjectId, patchProject]);
+
+  // 没走框架流程的项目也要能说出「还剩几篇、下一篇是谁」，
+  // 否则一篇一停就退化成一个说不出下一步的空壳条
+  const outlineDone = useMemo(
+    () => (projectOutline?.status === 'confirmed' ? outlineProgress(projectOutline, nodes) : plainProgress(nodes)),
+    [projectOutline, nodes],
+  );
+  const justWroteNode = useMemo(() => nodes.find(n => n.id === justWroteId), [nodes, justWroteId]);
+
+  /** 「看完了，写下一篇」 */
+  const handleStepNext = useCallback(() => {
+    setJustWroteId(null);
+    setIsLooping(true);
+  }, []);
+
+  /** 「这篇重写」——用户此刻的判断是方向不对，不是错别字，所以是清空重跑而不是打开编辑器 */
+  const handleStepRewrite = useCallback(() => {
+    if (!justWroteId) return;
+    updateNode(justWroteId, {
+      status: NodeStatus.UNEXPLORED,
+      notes: '',
+      validationReason: undefined,
+      noteUpdatedAt: Date.now(),
+    });
+    setJustWroteId(null);
+    setIsLooping(true);
+    trackEvent('step_rewrite');
+  }, [justWroteId, updateNode]);
+
+  const handleStepStop = useCallback(() => { setJustWroteId(null); setIsLooping(false); }, []);
+
+  /** 某一篇的「▶ 写这一篇」：指定下一轮就写它 */
+  const handleWriteThis = useCallback((nodeId: string) => {
+    forceNodeRef.current = nodeId;
+    setJustWroteId(null);
+    setSelectedNodeId(nodeId);
+    setIsLooping(true);
+    trackEvent('write_this_one');
+  }, []);
+
+  /** 「剩下的一次写完」：用户明确说不用再停了 */
+  const handleSwitchToAuto = useCallback(() => {
+    if (currentProjectId) patchProject(currentProjectId, { pace: 'auto' });
+    setJustWroteId(null);
+    setIsLooping(true);
+    trackEvent('pace_auto');
+  }, [currentProjectId, patchProject]);
+
   // ===== 仿真笔记 =====
   // 「先仿真、再探针」：仿真只回答「这个判断对哪个数最敏感」，
   // 探针再去把那一个数量出来。仿真本身**不产生任何证据**，节点状态一动不动。
@@ -2927,18 +3109,72 @@ ${plan.lead.duty}
             <div className="text-[11px] text-slate-500 truncate pointer-events-auto">{selectedNode ? '📝 笔记' : ''}</div>
             <div className="flex items-center gap-2 pointer-events-auto">
               <button
-                onClick={() => { const next = !continuousMode; setContinuousMode(next); setIsLooping(next); if (next) addNotification('info', '♾️ 持续探索已开启', '保持本应用打开，AI 会不停探索并自主提出新方向'); }}
+                onClick={() => {
+                  const next = !continuousMode;
+                  setContinuousMode(next);
+                  setIsLooping(next);
+                  // 开持续探索 = 用户明确说「别停下来问我」，那就把节奏也一起改掉，
+                  // 不然两个设置互相打架：一个说不停跑，一个说每篇都停。
+                  if (next && currentProjectId) patchProject(currentProjectId, { pace: 'auto' });
+                  if (next) { setJustWroteId(null); addNotification('info', '♾️ 持续探索已开启', '不再一篇一停。AI 会连着写下去并自主提出新方向，保持本应用打开即可。'); }
+                }}
                 className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white animate-pulse' : 'bg-slate-700/70 text-slate-200 hover:bg-emerald-600 hover:text-white'}`}
                 title="7×24 持续探索：探索完会自主提出新方向，永不停（保持应用打开即可）"
               >♾️ {continuousMode ? '探索中' : '持续探索'}</button>
+              {/*
+                「先理框架」：没有框架的项目（含所有老项目）也能随时补一个。
+                放在「持续探索」旁边是有意的——这两个按钮代表两种相反的节奏，
+                摆在一起用户才会意识到自己在选节奏，而不是被默认值推着走。
+              */}
+              {currentProject && projectOutline?.status !== 'draft' && (
+                <button
+                  onClick={() => handleProposeOutline()}
+                  disabled={outlineBusy}
+                  className="px-3 py-1.5 bg-slate-700/70 hover:bg-blue-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  title="先只列出打算写哪几篇（不写正文），跟你对齐之后再一篇一篇填"
+                >🗺️ {outlineBusy ? '拟稿中…' : projectOutline ? '重理框架' : '先理框架'}</button>
+              )}
               <button onClick={() => setShowGraphModal(true)} className="px-3 py-1.5 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title="打开关系图谱">🕸️ 图谱</button>
               <button onClick={() => setRightChatOpen(v => !v)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${rightChatOpen ? 'bg-blue-600 text-white' : 'bg-slate-700/70 text-slate-200 hover:bg-blue-600 hover:text-white'}`} title="切换 AI 对话栏">💬 对话</button>
             </div>
           </div>
 
-          <div className="h-full pt-11">
+          <div className="h-full pt-11 flex flex-col min-h-0">
+            {/*
+              框架还在草稿阶段时，中间栏整个让给它。
+              这是刻意的：这一刻用户唯一该做的事就是把目录看一遍、改一改，
+              旁边再摆一篇笔记只会让他分心，也会让人误以为"已经开始写了"。
+            */}
+            {projectOutline?.status === 'draft' ? (
+              <div className="flex-1 min-h-0 overflow-y-auto px-5 md:px-8 py-6 scroll-hide">
+                <OutlinePlanner
+                  outline={projectOutline}
+                  onChange={handleOutlineChange}
+                  onConfirm={handleConfirmOutline}
+                  onRegenerate={() => handleProposeOutline()}
+                  onDiscard={handleDiscardOutline}
+                  busy={outlineBusy}
+                />
+              </div>
+            ) : (
+            <>
+            {justWroteNode && (
+              <div className="px-5 md:px-8 pt-3 flex-shrink-0">
+                <StepBar
+                  justWrote={justWroteNode}
+                  progress={outlineDone}
+                  onNext={handleStepNext}
+                  onRewrite={handleStepRewrite}
+                  onStop={handleStepStop}
+                  onOpen={id => setSelectedNodeId(id)}
+                  onSwitchToAuto={handleSwitchToAuto}
+                  busy={isLooping}
+                />
+              </div>
+            )}
+            <div className="flex-1 min-h-0">
             {selectedNode ? (
-              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onMentionAgent={mentionAgentInChat} probes={projectProbes} onAddProbes={handleAddProbes} onUpdateProbe={handleUpdateProbe} onContradicted={handleContradicted} projectGoal={currentProject?.metaProblem || currentProject?.name} route={projectRoute} routeBusy={routeBusy} onPlanRoute={handlePlanRoute} onSettleAnchor={handleSettleAnchor} onSkipAnchor={handleSkipAnchor} onDesignAnchorProbes={handleDesignAnchorProbes} onDesignSim={handleDesignSim} simBusy={simBusy} onSimProbe={handleSimProbe} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
+              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onMentionAgent={mentionAgentInChat} probes={projectProbes} onAddProbes={handleAddProbes} onUpdateProbe={handleUpdateProbe} onContradicted={handleContradicted} projectGoal={currentProject?.metaProblem || currentProject?.name} route={projectRoute} routeBusy={routeBusy} onPlanRoute={handlePlanRoute} onSettleAnchor={handleSettleAnchor} onSkipAnchor={handleSkipAnchor} onDesignAnchorProbes={handleDesignAnchorProbes} onDesignSim={handleDesignSim} simBusy={simBusy} onSimProbe={handleSimProbe} onWriteThis={handleWriteThis} isWriting={isLooping} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="text-5xl opacity-40">📂</div>
@@ -2946,6 +3182,9 @@ ${plan.lead.duty}
                 <div className="text-slate-600 text-[11px] max-w-sm leading-relaxed">一个项目就是一个文件夹（含 README + 项目总览），里面放 5–10 个关键方向，每个方向是一篇子笔记、可由一个专门的 Agent 负责。用 <span className="text-purple-400">[[标题]]</span> 互相关联，点上方 <span className="text-purple-400">🕸️ 图谱</span> 看关系网络。</div>
                 <button onClick={() => handleCreateProject()} className="mt-2 px-4 py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">＋ 新建项目</button>
               </div>
+            )}
+            </div>
+            </>
             )}
           </div>
         </div>

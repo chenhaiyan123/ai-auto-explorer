@@ -9,6 +9,7 @@ import ProjectDashboard from './ProjectDashboard';
 import { buildDashboard } from '../services/dashboardService';
 import HypothesisPanel from './HypothesisPanel';
 import SimNote from './SimNote';
+import { isStub } from '../services/outline';
 import ProbePanel from './ProbePanel';
 import { probesOf } from '../services/probeService';
 import RouteMap from './RouteMap';
@@ -63,6 +64,10 @@ interface NodeDetailsProps {
   simBusy?: string;
   /** 从仿真里「把这个数量出来」→ 在来源节点上建一个探针草稿 */
   onSimProbe?: (nodeId: string, draft: { hypothesis: string; method: string; expectedSignal: string; effort: string }) => void;
+  /** 这一篇还没写：让 AI 现在就写它（一篇一篇写的入口） */
+  onWriteThis?: (nodeId: string) => void;
+  /** 正在写（全局探索循环在跑） */
+  isWriting?: boolean;
 }
 
 const AGENT_MARKETPLACE = [
@@ -78,7 +83,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
   allNodes = [], onNavigate, onWikiLink, variant = 'panel',
   decisions = [], onRecordDecision, onForkDecision, onMentionAgent,
   probes = [], onAddProbes, onUpdateProbe, onContradicted, projectGoal,
-  onDesignSim, simBusy, onSimProbe,
+  onDesignSim, simBusy, onSimProbe, onWriteThis, isWriting,
   route, routeBusy, onPlanRoute, onSettleAnchor, onSkipAnchor, onDesignAnchorProbes
 }) => {
   const isCenter = variant === 'center';
@@ -481,6 +486,8 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
     : node.noteType === 'simulation' ? '🧪 仿真' : '关键方向';
   // 仿真笔记是一篇独立的推演，不参与状态流转：没有赌注面板、不能核验、不能标完成
   const isSim = node.noteType === 'simulation' && !!node.sim;
+  // 空壳：框架里说好要写、但还没写的一篇
+  const stub = !isSim && isStub(node);
   // 笔记正文：优先用户写的 fullNote；没有就回退到探索/背景笔记 notes，避免主页面空白
   const noteBody = node.fullNote || node.notes || '';
   // 核验/溯源：有 AI 探索内容的方向节点，未核验前明确标注「AI 自动生成·未核验」
@@ -570,6 +577,30 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
           {(node.tags || []).map(t => <span key={t} className="px-2 py-0.5 rounded-full bg-purple-900/30 border border-purple-500/30 text-purple-300">#{t}</span>)}
           {node.noteUpdatedAt && <span className="px-2 py-0.5 text-slate-600 ml-auto">更新于 {new Date(node.noteUpdatedAt).toLocaleString()}</span>}
         </div>
+
+        {/*
+          ===== 还没写的一篇 =====
+          框架确认后节点是空壳，正文要由用户一篇一篇点着写。
+          这个入口必须在笔记正文的位置上，而不是藏在顶部工具条里——
+          用户此刻正看着这一篇，动作就应该在这一篇上。
+        */}
+        {stub && onWriteThis && (
+          <div className="rounded-xl border border-blue-500/30 bg-blue-950/20 p-3 flex items-center gap-3 flex-wrap">
+            <div className="flex-1 min-w-0">
+              <div className="text-[12px] font-bold text-blue-200">这一篇还没写</div>
+              <div className="text-[11px] text-slate-400 mt-0.5 leading-6">
+                写完会停下来，等你看过再决定下一篇。
+              </div>
+            </div>
+            <button
+              onClick={() => onWriteThis(node.id)}
+              disabled={isWriting}
+              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[12px] font-bold disabled:opacity-40 transition-colors flex-shrink-0"
+            >
+              {isWriting ? '写作中…' : '▶ 写这一篇'}
+            </button>
+          </div>
+        )}
 
         {/* ===== 仿真笔记正文：一次可拖动的推演（不产生任何证据） ===== */}
         {isSim && (

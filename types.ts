@@ -268,6 +268,56 @@ export const ANCHOR_METHOD_LABEL: Record<RouteAnchor['method'], string> = {
   mixed: '组合验证',
 };
 
+// ========== 框架先行：先跟用户把「打算写哪几篇」对齐，再一篇一篇填 ==========
+/**
+ * 框架里的一条 = 将来的一篇笔记。
+ * 这一层**只有标题和一句话**，没有正文——它的全部意义是让用户能在三十秒内看完并改掉。
+ */
+export interface OutlineItem {
+  id: string;
+  title: string;
+  /** 这一篇要回答什么（一句话） */
+  question: string;
+  /** 为什么值得单独成一篇 */
+  why?: string;
+  /** keep = 要写；drop = 用户说不关心（保留记录，可撤销） */
+  state: 'keep' | 'drop';
+  /** 用户改过标题或问题——后面填充时按用户的说法走 */
+  edited?: boolean;
+  /** 这条是用户自己加的 */
+  byUser?: boolean;
+  /** 确认后落成了哪个节点 */
+  nodeId?: string;
+}
+
+/**
+ * 一份还没开始写的目录。
+ *
+ * status: draft = 还在跟用户对齐，一篇正文都没生成；
+ *         confirmed = 已确认，节点已建好（空壳），开始一篇一篇填。
+ */
+export interface Outline {
+  id: string;
+  goal: string;
+  createdAt: number;
+  status: 'draft' | 'confirmed';
+  items: OutlineItem[];
+  /** 用户挑的「先写这一篇」 */
+  startId?: string;
+  /** 用户在框架阶段补的一句话，会带进后面每一篇的提示词 */
+  userNote?: string;
+  confirmedAt?: number;
+}
+
+/**
+ * 生成节奏。
+ * step = 写完一篇就停下来等人（默认）；auto = 老行为，一路写到底。
+ *
+ * 默认给 step 是有原因的：产出的速度一旦超过理解的速度，
+ * 多出来的那部分就不是资产，是噪音。
+ */
+export type ExplorationPace = 'step' | 'auto';
+
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
@@ -335,6 +385,8 @@ export interface ProblemNode {
   simValues?: Record<string, number>;
   /** 这篇仿真笔记在验哪个节点的假设 */
   simSourceId?: string;
+  /** 这个节点是从框架里的哪一条落下来的 */
+  outlineItemId?: string;
   /** 该节点是从某条决策记录 fork（复刻）出来的 */
   forkOfDecisionId?: string;
   pendingDecision?: DecisionPoint;
@@ -469,6 +521,10 @@ export interface Project {
   probes?: Probe[];
   /** 探索路线（含锚点路标），随项目自动持久化 */
   route?: ExplorationRoute;
+  /** 这个项目打算写哪几篇（框架先行）。draft 阶段一篇正文都不会生成。 */
+  outline?: Outline;
+  /** 生成节奏：step=写完一篇就停（默认），auto=一路写到底 */
+  pace?: ExplorationPace;
 }
 
 // ========== Artifact 类型 ==========
