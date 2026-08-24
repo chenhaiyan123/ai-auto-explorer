@@ -1,4 +1,4 @@
-import { ProblemNode, NodeStatus, Hypothesis, Evidence, LAYER_WEIGHT } from '../types';
+import { ProblemNode, NodeStatus, Hypothesis, Evidence, LAYER_WEIGHT, isRealOrigin } from '../types';
 
 /**
  * 验证触发器（Validation Trigger）
@@ -90,7 +90,9 @@ export function statEvidence(h?: Hypothesis): EvidenceStat {
   };
   for (const e of list) {
     const w = weightOf(e);
-    const isReal = e.origin !== 'ai';
+    // 白名单，不是 `!== 'ai'`。以后再加任何新来源（仿真、外部导入…），
+    // 默认都不算现实证据，必须显式加进 REAL_ORIGINS 才算——宁可漏，不可冒充。
+    const isReal = isRealOrigin(e.origin);
     if (isReal) stat.real += 1;
     if (w > stat.topLayer) stat.topLayer = w;
     if (e.stance === 'refute') {

@@ -34,6 +34,8 @@ import { checkTriggers, summarizeHits, isContradictedByReality, isBlockedOnReali
 import { pendingProbeCount, designProbes, applyProbeResult } from './services/probeService';
 import DeviceGuard from './components/DeviceGuard';
 import ChatLauncher from './components/ChatLauncher';
+import SimPreview from './components/SimPreview';
+import { designSimulation } from './services/simService';
 import { buildInbox, parseItemId, InboxReply } from './services/inbox';
 import { pushInbox, pullReplies, ackReplies, nextPollDelay, hasSyncBackend } from './services/inboxSync';
 import { loadPending, approvePending, dropPending } from './services/iotService';
@@ -1956,6 +1958,73 @@ ${plan.lead.duty}
     setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, probes: [...(p.probes || []), ...ps] } : p));
     trackEvent('design_probes', { count: ps.length });
   }, [currentProjectId]);
+  // ===== 仿真笔记 =====
+  // 「先仿真、再探针」：仿真只回答「这个判断对哪个数最敏感」，
+  // 探针再去把那一个数量出来。仿真本身**不产生任何证据**，节点状态一动不动。
+  const [simBusy, setSimBusy] = useState<string>('');
+  const handleDesignSim = useCallback(async (nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node || simBusy) return;
+    setSimBusy(nodeId);
+    try {
+      const { spec, problems } = await designSimulation(node, currentProject?.metaProblem || currentProject?.name);
+      if (!spec) {
+        // 不吞错：模型编了不存在的变量、写了不合法的公式，都要如实说，
+        // 宁可没有仿真，也不要一条算错的曲线——曲线比文字更容易被当真。
+        addNotification('warning', '🧪 这次没生成出来', problems.join('；') || '模型返回的仿真不合法');
+        return;
+      }
+      const id = uuidv4();
+      const simNode: ProblemNode = {
+        id,
+        title: `🧪 ${spec.title}`,
+        status: NodeStatus.UNEXPLORED,
+        confidence: 0,
+        dependencies: [nodeId],
+        notes: '',
+        chatHistory: [],
+        agentResults: [],
+        noteType: 'simulation',
+        sim: spec,
+        simSourceId: nodeId,
+        folder: node.folder,
+        anchorId: node.anchorId,
+        fullNote: `## 我拖出来的发现\n\n- \n\n> 相关：[[${node.title}]]`,
+        noteUpdatedAt: Date.now(),
+      };
+      setNodes(prev => [...prev, simNode]);
+      setSelectedNodeId(id);
+      markMilestone('funnel_tried_sim');
+      trackEvent('sim_generated', { params: spec.params.length, steps: spec.steps });
+      if (problems.length) addNotification('info', '🧪 仿真已生成（有部分内容被丢弃）', problems.join('；'));
+    } catch (e: any) {
+      addNotification('warning', '🧪 生成仿真失败', e?.message || String(e));
+    } finally {
+      setSimBusy('');
+    }
+  }, [simBusy, nodes, currentProject, addNotification]);
+
+  /** 仿真里点「去把这个数量出来」→ 在来源节点上建一个探针草稿 */
+  const handleSimProbe = useCallback((nodeId: string, draft: { hypothesis: string; method: string; expectedSignal: string; effort: string }) => {
+    if (!currentProjectId) return;
+    const probe: Probe = {
+      id: uuidv4(),
+      nodeId,
+      kind: 'manual',
+      hypothesis: draft.hypothesis,
+      method: draft.method,
+      cost: 'low',
+      effort: draft.effort,
+      expectedSignal: draft.expectedSignal,
+      status: 'draft',
+      createdAt: Date.now(),
+    };
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, probes: [...(p.probes || []), probe] } : p));
+    trackEvent('sim_to_probe');
+    addNotification('info', '🔬 已生成探针', '去那个节点的 🔬 面板里，量完把结果填回来');
+    setSelectedNodeId(nodeId);
+  }, [currentProjectId, addNotification]);
+
   const handleUpdateProbe = useCallback((probe: Probe) => {
     if (!currentProjectId) return;
     setProjects(prev => prev.map(p => p.id === currentProjectId
@@ -2356,9 +2425,27 @@ ${plan.lead.duty}
 
   if (routeInfo.type === 'delegate' && routeInfo.nodeId) return <DelegationView nodeId={routeInfo.nodeId} taskTitle={routeInfo.taskTitle} />;
 
+  /** 落地页是否展示仿真区块：管理员入口和验证码环节要专注，不塞东西 */
+  const showLandingSim = !isLoginAsAdmin && !isOtpSent;
+
   if (!user) return (
-    <div className="h-screen w-screen flex items-center justify-center bg-slate-950 p-4">
-      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden">
+    /*
+      首屏改版：把「可以动手的东西」放在要邮箱之前。
+      访客平均只停留 10 秒、91% 直接跳出——十秒读不完三条介绍，但够拖两下滑块。
+      仿真区块只在正常落地时出现；管理员入口和验证码环节要专注，不塞东西。
+    */
+    <div className="min-h-screen w-screen overflow-y-auto bg-slate-950 p-4 flex items-center justify-center">
+      <div className={`w-full ${showLandingSim ? 'max-w-5xl lg:grid lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-6 lg:items-start' : 'max-w-md'}`}>
+      {showLandingSim && (
+        <SimPreview
+          className="mb-4 lg:mb-0"
+          onEnter={() => {
+            if (hasTrialBackend()) { trackEvent('trial_start'); trackEvent('sim_to_trial'); setUser(auth.loginAsGuest()); }
+            else document.getElementById('landing-card')?.scrollIntoView({ behavior: 'smooth' });
+          }}
+        />
+      )}
+      <div id="landing-card" className="max-w-md w-full mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-emerald-600"></div>
         <div className="text-center mb-6">
           <div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">🧭</div>
@@ -2540,6 +2627,7 @@ ${plan.lead.duty}
             粤ICP备2023000583号-1
           </a>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -2850,7 +2938,7 @@ ${plan.lead.duty}
 
           <div className="h-full pt-11">
             {selectedNode ? (
-              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onMentionAgent={mentionAgentInChat} probes={projectProbes} onAddProbes={handleAddProbes} onUpdateProbe={handleUpdateProbe} onContradicted={handleContradicted} projectGoal={currentProject?.metaProblem || currentProject?.name} route={projectRoute} routeBusy={routeBusy} onPlanRoute={handlePlanRoute} onSettleAnchor={handleSettleAnchor} onSkipAnchor={handleSkipAnchor} onDesignAnchorProbes={handleDesignAnchorProbes} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
+              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onMentionAgent={mentionAgentInChat} probes={projectProbes} onAddProbes={handleAddProbes} onUpdateProbe={handleUpdateProbe} onContradicted={handleContradicted} projectGoal={currentProject?.metaProblem || currentProject?.name} route={projectRoute} routeBusy={routeBusy} onPlanRoute={handlePlanRoute} onSettleAnchor={handleSettleAnchor} onSkipAnchor={handleSkipAnchor} onDesignAnchorProbes={handleDesignAnchorProbes} onDesignSim={handleDesignSim} simBusy={simBusy} onSimProbe={handleSimProbe} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="text-5xl opacity-40">📂</div>

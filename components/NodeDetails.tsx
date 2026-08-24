@@ -8,6 +8,7 @@ import { downloadNoteMd } from '../services/vault';
 import ProjectDashboard from './ProjectDashboard';
 import { buildDashboard } from '../services/dashboardService';
 import HypothesisPanel from './HypothesisPanel';
+import SimNote from './SimNote';
 import ProbePanel from './ProbePanel';
 import { probesOf } from '../services/probeService';
 import RouteMap from './RouteMap';
@@ -56,6 +57,12 @@ interface NodeDetailsProps {
   onSettleAnchor?: (anchorId: string, verdict: 'pass' | 'fail' | 'unclear', summary: string) => void;
   onSkipAnchor?: (anchorId: string) => void;
   onDesignAnchorProbes?: (anchorId: string) => void;
+  /** 为这个节点生成一篇独立的仿真笔记 */
+  onDesignSim?: (nodeId: string) => void;
+  /** 正在生成仿真的节点 id */
+  simBusy?: string;
+  /** 从仿真里「把这个数量出来」→ 在来源节点上建一个探针草稿 */
+  onSimProbe?: (nodeId: string, draft: { hypothesis: string; method: string; expectedSignal: string; effort: string }) => void;
 }
 
 const AGENT_MARKETPLACE = [
@@ -71,6 +78,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
   allNodes = [], onNavigate, onWikiLink, variant = 'panel',
   decisions = [], onRecordDecision, onForkDecision, onMentionAgent,
   probes = [], onAddProbes, onUpdateProbe, onContradicted, projectGoal,
+  onDesignSim, simBusy, onSimProbe,
   route, routeBusy, onPlanRoute, onSettleAnchor, onSkipAnchor, onDesignAnchorProbes
 }) => {
   const isCenter = variant === 'center';
@@ -468,11 +476,15 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
     contradicted: { label: '被现实推翻', cls: 'text-pink-300 bg-pink-900/30 border-pink-500/40' },
   };
   const st = statusInfo[node.status] || statusInfo.unexplored;
-  const typeLabel = node.noteType === 'readme' ? 'README' : node.noteType === 'overview' ? '项目总览' : '关键方向';
+  const typeLabel = node.noteType === 'readme' ? 'README'
+    : node.noteType === 'overview' ? '项目总览'
+    : node.noteType === 'simulation' ? '🧪 仿真' : '关键方向';
+  // 仿真笔记是一篇独立的推演，不参与状态流转：没有赌注面板、不能核验、不能标完成
+  const isSim = node.noteType === 'simulation' && !!node.sim;
   // 笔记正文：优先用户写的 fullNote；没有就回退到探索/背景笔记 notes，避免主页面空白
   const noteBody = node.fullNote || node.notes || '';
   // 核验/溯源：有 AI 探索内容的方向节点，未核验前明确标注「AI 自动生成·未核验」
-  const canVerify = node.noteType === 'direction' || !node.noteType;
+  const canVerify = (node.noteType === 'direction' || !node.noteType) && !isSim;
   const isExplored = !!((node.notes && node.notes.trim()) || (node.agentResults && node.agentResults.length) || node.status === NodeStatus.SOLVED);
 
   return (
@@ -546,7 +558,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
         {/* ===== 节点信息总览：把这个节点相关的关键信息都摆在主页面上 ===== */}
         <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
           {(node.noteType === 'direction' || !node.noteType) && <span className={`px-2 py-0.5 rounded-full border font-bold ${st.cls}`}>{st.label}</span>}
-          <span className={`px-2 py-0.5 rounded-full border ${node.noteType === 'readme' ? 'text-purple-400 border-purple-500/30' : node.noteType === 'overview' ? 'text-blue-400 border-blue-500/30' : 'border-slate-700 text-slate-500'}`}>{typeLabel}</span>
+          <span className={`px-2 py-0.5 rounded-full border ${node.noteType === 'readme' ? 'text-purple-400 border-purple-500/30' : node.noteType === 'overview' ? 'text-blue-400 border-blue-500/30' : node.noteType === 'simulation' ? 'text-cyan-300 border-cyan-500/30' : 'border-slate-700 text-slate-500'}`}>{typeLabel}</span>
           {(node.assignedAgent || node.noteType === 'direction' || !node.noteType) && <button onClick={() => setActiveModule('props')} className={`px-2 py-0.5 rounded-full border transition-colors ${node.assignedAgent ? 'text-blue-400 bg-blue-900/30 border-blue-500/30' : 'text-slate-500 border-slate-700 hover:border-blue-500/40'}`} title="负责 Agent">🤖 {node.assignedAgent || '未指派'}</button>}
           <button onClick={() => setActiveModule('links')} className="px-2 py-0.5 rounded-full border border-slate-700 text-slate-400 hover:border-purple-500/40 transition-colors" title="关联笔记">🔗 出{outgoingLinks.length} 入{backlinks.length}</button>
           {(node.agentResults || []).length > 0 && <button onClick={() => setActiveModule('task')} className="px-2 py-0.5 rounded-full border border-slate-700 text-emerald-400 hover:border-emerald-500/40 transition-colors" title="任务成果">📊 成果{node.agentResults!.length}</button>}
@@ -559,13 +571,29 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
           {node.noteUpdatedAt && <span className="px-2 py-0.5 text-slate-600 ml-auto">更新于 {new Date(node.noteUpdatedAt).toLocaleString()}</span>}
         </div>
 
+        {/* ===== 仿真笔记正文：一次可拖动的推演（不产生任何证据） ===== */}
+        {isSim && (
+          <SimNote
+            spec={node.sim!}
+            values={node.simValues}
+            onChangeValues={v => onUpdateNodeData(node.id, { simValues: v })}
+            onCreateProbe={onSimProbe ? d => onSimProbe(node.simSourceId || node.id, d) : undefined}
+            onOpenSource={node.simSourceId && onNavigate ? () => onNavigate(node.simSourceId!) : undefined}
+            sourceTitle={allNodes.find(n => n.id === node.simSourceId)?.title}
+          />
+        )}
+
         {/* ===== 当前赌注：这个节点在赌什么、凭什么、最大的未知是什么 ===== */}
-        <HypothesisPanel
-          node={node}
-          onUpdateNodeData={onUpdateNodeData}
-          onOpenProbes={() => setActiveModule('probe')}
-          onContradicted={onContradicted}
-        />
+        {!isSim && (
+          <HypothesisPanel
+            node={node}
+            onUpdateNodeData={onUpdateNodeData}
+            onOpenProbes={() => setActiveModule('probe')}
+            onContradicted={onContradicted}
+            onDesignSim={onDesignSim ? () => onDesignSim(node.id) : undefined}
+            simBusy={simBusy === node.id}
+          />
+        )}
 
         {/* ===== 探索路线（仅总览笔记）：先看"要去哪、下一个必须问现实的点是什么" ===== */}
         {dashboard && onPlanRoute && (
@@ -593,7 +621,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
         {/* ===== 节点笔记：描述这个关键节点的探索现状与后续方向 ===== */}
         <section className={isCenter ? '' : 'bg-slate-900/60 border border-slate-700 rounded-xl p-4'}>
           <div className="flex justify-between items-center mb-3">
-            <label className="text-[10px] uppercase tracking-widest text-purple-400 font-bold">📝 探索笔记</label>
+            <label className="text-[10px] uppercase tracking-widest text-purple-400 font-bold">{isSim ? '📝 我拖出来的发现' : '📝 探索笔记'}</label>
             <div className="flex items-center gap-2">
               {node.noteUpdatedAt && !isEditingNote && (
                 <span className="text-[9px] text-slate-600">{new Date(node.noteUpdatedAt).toLocaleString()}</span>

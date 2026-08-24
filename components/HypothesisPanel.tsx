@@ -37,7 +37,10 @@ const HypothesisPanel: React.FC<{
   onOpenProbes?: () => void;
   /** 假设被现实推翻时通知外面（去开决策记录弹窗留痕） */
   onContradicted?: (nodeId: string) => void;
-}> = ({ node, onUpdateNodeData, onOpenProbes, onContradicted }) => {
+  /** 生成一篇独立的仿真笔记：把这个赌注变成一条能拖的曲线，先看它对哪个数最敏感 */
+  onDesignSim?: () => void;
+  simBusy?: boolean;
+}> = ({ node, onUpdateNodeData, onOpenProbes, onContradicted, onDesignSim, simBusy }) => {
   const h = node.hypothesis;
   const [adding, setAdding] = useState(false);
   const [stance, setStance] = useState<'support' | 'refute'>('refute');
@@ -140,6 +143,16 @@ const HypothesisPanel: React.FC<{
           <button onClick={() => setAdding(a => !a)}
             className="text-[11px] px-2 py-1 rounded-lg bg-slate-700/60 text-slate-200 hover:bg-slate-600 transition-colors">
             ➕ 回填现实证据
+          </button>
+        )}
+        {/*
+          仿真排在探针**前面**是有意的：先用仿真把「这个判断对哪个数最敏感」找出来，
+          再让探针只去量那一个数。反过来做，探针就成了漫无目的的调研。
+        */}
+        {h && onDesignSim && (
+          <button onClick={onDesignSim} disabled={simBusy}
+            className="text-[11px] px-2 py-1 rounded-lg bg-cyan-700/40 text-cyan-200 hover:bg-cyan-600/50 disabled:opacity-50 transition-colors">
+            {simBusy ? '🧪 生成中…' : '🧪 做个仿真看看'}
           </button>
         )}
         {(awaiting || contradicted) && onOpenProbes && (

@@ -65,6 +65,7 @@ export function daysBetween(a: string, b: string): number {
  */
 export const MILESTONES = [
   'funnel_landed',              // 打开了页面（几乎等于访客数，作分母）
+  'funnel_tried_sim',           // 在落地页动手拖过仿真滑块（首屏有没有留住人）
   'funnel_entered_app',         // 真的进到产品界面（不是停在登录页）
   'funnel_project_created',     // 建了第一个项目
   'funnel_exploration_started', // 点了开始探索

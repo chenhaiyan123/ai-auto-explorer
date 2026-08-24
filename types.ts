@@ -1,3 +1,4 @@
+import type { SimSpec } from './services/simSpec';
 
 export enum NodeStatus {
   UNEXPLORED = 'unexplored',
@@ -22,8 +23,22 @@ export enum NodeStatus {
  */
 export type EvidenceLayer = 'stated' | 'behavior' | 'outcome' | 'environment' | 'market';
 
-/** 证据由谁产生。ai = 模型自己推理出来的，永远只能算 stated 层。 */
-export type EvidenceOrigin = 'ai' | 'human' | 'probe';
+/**
+ * 证据由谁产生。
+ * - ai    模型自己推理出来的，永远只能算 stated 层
+ * - sim   仿真跑出来的。**仿真穿着滑块和曲线的外衣，本质仍是推理**，
+ *         所以和 ai 一样不算现实证据（见 validationTrigger.REAL_ORIGINS）
+ * - human 人回填的
+ * - probe 探针实测的
+ */
+export type EvidenceOrigin = 'ai' | 'sim' | 'human' | 'probe';
+
+/**
+ * 只有这两种来源算「现实证据」。
+ * 这是整套闭环的地基：仿真跑一万次，节点也不会离开「等现实验证」。
+ */
+export const REAL_ORIGINS: readonly EvidenceOrigin[] = ['human', 'probe'];
+export const isRealOrigin = (o: EvidenceOrigin): boolean => REAL_ORIGINS.includes(o);
 
 export interface Evidence {
   id: string;
@@ -284,8 +299,11 @@ export interface ProblemNode {
   tags?: string[];
   /** 所属文件夹路径（Obsidian 式层级，用 / 分隔，如 "研究方向/材料"） */
   folder?: string;
-  /** 笔记类型：readme=项目说明，overview=项目总览主文件，direction=关键方向子节点（默认） */
-  noteType?: 'readme' | 'overview' | 'direction';
+  /**
+   * 笔记类型：readme=项目说明，overview=项目总览主文件，direction=关键方向子节点（默认），
+   * simulation=仿真笔记（一次可拖动的推演，正文由 SimSpec 渲染，**不参与状态流转**）
+   */
+  noteType?: 'readme' | 'overview' | 'direction' | 'simulation';
   /** 负责这个子任务的 Agent（AI 团队分工，类似公司部门负责人） */
   assignedAgent?: string;
   /** 人工核验：AI 探索的结论由人确认后置 true（人机分工 + 可信溯源的核心） */
@@ -307,6 +325,16 @@ export interface ProblemNode {
   validationReason?: string;
   /** 属于路线上的哪一段（哪个锚点之前）。有路线时，探索循环只跑当前段的节点 */
   anchorId?: string;
+  /**
+   * 仿真规格。只有 noteType==='simulation' 的笔记才有。
+   * 注意它**不产生任何 Evidence**：仿真是推理穿了滑块和曲线的外衣，
+   * 通向现实的唯一出口是从这里生成一个探针（见 simSpec.simToProbeDraft）。
+   */
+  sim?: SimSpec;
+  /** 用户在仿真笔记里拖到的参数值（下次打开还是这个状态） */
+  simValues?: Record<string, number>;
+  /** 这篇仿真笔记在验哪个节点的假设 */
+  simSourceId?: string;
   /** 该节点是从某条决策记录 fork（复刻）出来的 */
   forkOfDecisionId?: string;
   pendingDecision?: DecisionPoint;

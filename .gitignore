@@ -41,3 +41,7 @@ ios/
 *.jks
 google-services.json
 GoogleService-Info.plist
+
+# 云端会话用来做首屏截图的临时目录（可直接删）
+_to_delete_preview/
+.preview/

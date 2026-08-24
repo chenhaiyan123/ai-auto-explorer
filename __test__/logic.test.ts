@@ -22,6 +22,16 @@ import {
   computeVisitEvents, computeMilestone, furthestStage, dayKey, daysBetween,
   emptyState, MILESTONES,
 } from '../services/funnel';
+import {
+  SIM_PRESETS, getPreset, paramValues, retentionCurve, cumulativeMargin, diffusionCurve,
+} from '../services/simPresets';
+import { isRealOrigin, REAL_ORIGINS } from '../types';
+import { compile, tryCompile, run, parse, evaluate, ExprError, FUNCS } from '../services/expr';
+import {
+  parseSimSpec, runSim, sensitivity, topSensitivity, simToProbeDraft,
+  specToMarkdown, paramValues as specParams, SimSpec, MAX_STEPS,
+} from '../services/simSpec';
+import { simulationSection } from '../services/vault';
 
 let pass = 0, fail = 0;
 const t = (name: string, fn: () => void) => {
@@ -1300,6 +1310,443 @@ t('漏斗顺序就是用户实际走的路径，aha 在最后一步', () => {
   eq(MILESTONES[0], 'funnel_landed');
   eq(MILESTONES[MILESTONES.length - 1], 'funnel_reality_evidence');
 });
+
+
+console.log('\n== 仿真：结果永远不算现实证据（这是整套闭环的地基）==');
+t("'sim' 不在现实来源白名单里", () => {
+  no(isRealOrigin('sim'), '仿真穿着滑块和曲线的外衣，本质仍是推理');
+  no(isRealOrigin('ai'));
+  ok(isRealOrigin('human'));
+  ok(isRealOrigin('probe'));
+  eq([...REAL_ORIGINS].sort(), ['human', 'probe']);
+});
+t('仿真反证再多也不会把节点判成「被现实推翻」', () => {
+  const h: Hypothesis = {
+    statement: '换个文案能把注册率翻倍', belief: 'high', updatedAt: NOW,
+    evidence: Array.from({ length: 20 }, (_, i) => ({
+      id: 's' + i, stance: 'refute' as const, layer: 'market' as EvidenceLayer,
+      claim: '仿真跑出来是负的', origin: 'sim' as const, createdAt: NOW,
+    })),
+  };
+  no(isContradictedByReality(h), '仿真跑一万次也不能宣布现实的结论');
+  eq(statEvidence(h).real, 0);
+  eq(statEvidence(h).realRefuteWeight, 0);
+});
+t('仿真证据不能满足 weak_evidence 触发器（节点仍然停在等现实）', () => {
+  const n: ProblemNode = {
+    id: 'n1', title: '增长假设', status: NodeStatus.EXPLORING, confidence: 0,
+    dependencies: [], notes: '', chatHistory: [], agentResults: [],
+    hypothesis: {
+      statement: '口碑能自己长起来', belief: 'high', updatedAt: NOW,
+      evidence: [{ id: 'e1', stance: 'support', layer: 'outcome', claim: '仿真 k=1.2', origin: 'sim', createdAt: NOW }],
+    },
+  };
+  ok(checkTriggers(n, [n], { now: NOW }).some(x => x.reason === 'weak_evidence'),
+    '有仿真背书也依然是「缺外部证据」');
+});
+t('一条人工证据就能让 real 计数动起来（对照组）', () => {
+  const h: Hypothesis = {
+    statement: 'x', belief: 'high', updatedAt: NOW,
+    evidence: [
+      { id: 'a', stance: 'support', layer: 'market', claim: '仿真说行', origin: 'sim', createdAt: NOW },
+      { id: 'b', stance: 'refute', layer: 'behavior', claim: '20 个人里 0 个点', origin: 'human', createdAt: NOW },
+    ],
+  };
+  eq(statEvidence(h).real, 1);
+  ok(isContradictedByReality(h), '现实反证 3 > 现实支持 0');
+});
+
+console.log('\n== 仿真模型：算术本身要对 ==');
+t('留存曲线从 100 开始，次日等于次日留存率', () => {
+  const c = retentionCurve(30, 0.6, 30);
+  eq(c[0], 100);
+  eq(c[1], 30, '第 1 天 = r1');
+  eq(c.length, 31);
+});
+t('留存曲线单调不增（α > 0 时不可能回升）', () => {
+  const c = retentionCurve(45, 0.8, 30);
+  for (let i = 1; i < c.length; i++) ok(c[i] <= c[i - 1], `第 ${i} 天反而涨了`);
+});
+t('α 越大掉得越狠', () => {
+  ok(retentionCurve(30, 1.2, 30)[30] < retentionCurve(30, 0.3, 30)[30]);
+});
+t('累计毛利第 0 个月等于 -CAC', () => {
+  eq(cumulativeMargin(120, 30, 12, 80, 24)[0], -120);
+});
+t('毛利为零时永远回不了本', () => {
+  const c = cumulativeMargin(100, 30, 12, 0, 24);
+  ok(c.every(x => x <= -100 + 1e-9), '没有毛利就不该有任何回收');
+});
+t('流失率越高，24 个月累计越低', () => {
+  ok(cumulativeMargin(120, 30, 30, 80, 24)[24] < cumulativeMargin(120, 30, 5, 80, 24)[24]);
+});
+t('k < 1 时累计用户收敛到 n0/(1-k)，不会无限长', () => {
+  const n0 = 100, k = 0.5;
+  const c = diffusionCurve(n0, k, 40);
+  const ceiling = n0 / (1 - k);
+  ok(c[40] <= ceiling + 1, `应收敛到 ${ceiling}，实际 ${c[40]}`);
+  ok(c[40] > ceiling - 1, '应该已经很接近天花板了');
+});
+t('k = 0 时一个人都长不出来', () => {
+  eq(diffusionCurve(100, 0, 12)[12], 100);
+});
+t('k > 1 时是指数增长', () => {
+  const c = diffusionCurve(100, 1.5, 10);
+  ok(c[10] > c[5] * 3, 'k>1 应该越滚越快');
+});
+
+console.log('\n== 仿真预置：三个都必须自曝其短 ==');
+t('每个预置都写清楚了哪里靠不住、怎么验', () => {
+  for (const p of SIM_PRESETS) {
+    ok(p.realityCheck && p.realityCheck.length > 20, `${p.id} 没写 realityCheck`);
+    ok(p.probeHint && p.probeHint.length > 20, `${p.id} 没写 probeHint`);
+    ok(p.params.some(x => x.soft), `${p.id} 得标出至少一个「你其实是猜的」参数`);
+  }
+});
+t('默认参数下每个预置都能跑出曲线和结论', () => {
+  for (const p of SIM_PRESETS) {
+    const out = p.run(paramValues(p));
+    ok(out.headline.length > 0, `${p.id} 没有结论`);
+    ok(out.series.length > 0 && out.series[0].points.length > 1, `${p.id} 曲线是空的`);
+    eq(out.x.length, out.series[0].points.length, `${p.id} 横轴与点数对不上`);
+    ok(out.series[0].points.every(Number.isFinite), `${p.id} 曲线里有 NaN/Infinity`);
+    ok(out.readouts.length > 0, `${p.id} 没有关键读数`);
+  }
+});
+t('滑块拉到两个极端都不会崩（用户一定会这么干）', () => {
+  for (const p of SIM_PRESETS) {
+    for (const key of ['min', 'max'] as const) {
+      const v: Record<string, number> = {};
+      p.params.forEach(x => { v[x.key] = x[key]; });
+      const out = p.run(paramValues(p, v));
+      ok(out.series[0].points.every(Number.isFinite), `${p.id} 在 ${key} 处算出了非数`);
+      ok(out.readouts.every(r => !/NaN|undefined/.test(r.value)), `${p.id} 在 ${key} 处读数是 NaN`);
+    }
+  }
+});
+t('超出范围的输入会被夹回去，不会把模型喂爆', () => {
+  const p = getPreset('retention')!;
+  const v = paramValues(p, { r1: 9999, alpha: -50 });
+  eq(v.r1, 80);
+  eq(v.alpha, 0.1);
+});
+t('缺参数时回落到默认值', () => {
+  const p = getPreset('unit-economics')!;
+  eq(paramValues(p, {}).cac, 120);
+  eq(paramValues(p, { cac: NaN }).cac, 120);
+});
+t('预置 id 唯一，且 getPreset 找得到', () => {
+  eq(new Set(SIM_PRESETS.map(p => p.id)).size, SIM_PRESETS.length);
+  for (const p of SIM_PRESETS) eq(getPreset(p.id)!.id, p.id);
+  eq(getPreset('不存在'), undefined);
+});
+t('首屏仿真里程碑排在「进入产品」之前', () => {
+  ok(MILESTONES.indexOf('funnel_tried_sim') > MILESTONES.indexOf('funnel_landed'));
+  ok(MILESTONES.indexOf('funnel_tried_sim') < MILESTONES.indexOf('funnel_entered_app'));
+});
+
+
+
+// ==================== 表达式求值器 ====================
+// 它存在的唯一理由是「AI 生成的仿真不能包含可执行代码」，
+// 所以这一节里"拒绝什么"比"支持什么"更重要。
+
+const calc = (src: string, scope: Record<string, number> = {}) => run(compile(src), scope);
+const rejects = (src: string) => {
+  try { compile(src); return false; } catch { return true; }
+};
+
+console.log('\n== expr：算得对 ==');
+t('四则运算与优先级', () => {
+  eq(calc('1 + 2 * 3'), 7);
+  eq(calc('(1 + 2) * 3'), 9);
+  eq(calc('10 - 3 - 2'), 5, '减法左结合');
+  eq(calc('2 ^ 3 ^ 2'), 512, '幂右结合');
+});
+t('一元负号绑得比 ^ 松、比 * 紧', () => {
+  eq(calc('-2 ^ 2'), -4, '跟数学写法一致');
+  eq(calc('-2 * 3'), -6);
+  eq(calc('-a + b', { a: 1, b: 5 }), 4);
+  eq(calc('2 ^ -2'), 0.25);
+});
+t('变量、常量与函数', () => {
+  eq(calc('x * 2', { x: 21 }), 42);
+  eq(Math.round(calc('PI') * 100) / 100, 3.14);
+  eq(calc('max(1, 9, 5)'), 9);
+  eq(calc('clamp(99, 0, 10)'), 10);
+  eq(calc('round(2.6)'), 3);
+  eq(calc('log(8, 2)'), 3, 'log 第二个参数是底');
+});
+t('比较、逻辑与三元', () => {
+  eq(calc('3 > 2'), 1);
+  eq(calc('3 < 2'), 0);
+  eq(calc('a > 0 ? 10 : 20', { a: 1 }), 10);
+  eq(calc('a > 0 ? 10 : 20', { a: -1 }), 20);
+  eq(calc('0 && 1'), 0);
+  eq(calc('1 || 0'), 1);
+});
+t('&& || 短路，右边算不出来也不炸', () => {
+  eq(calc('x > 0 && 1 / x > 0.5', { x: 0 }), 0, 'x=0 时不该去算 1/x');
+});
+t('除零返回 NaN 而不是 Infinity', () => {
+  ok(Number.isNaN(evaluate(parse('1 / 0'), {})), '一个 Infinity 能把整张图毁掉');
+  eq(run(compile('1 / 0'), {}), NaN);
+});
+
+console.log('\n== expr：拒绝得对（这一节是安全边界）==');
+t('拒绝赋值', () => { ok(rejects('x = 1')); ok(rejects('x **= 2')); });
+t('拒绝属性访问和下标——这是拿到 window/localStorage 的入口', () => {
+  ok(rejects('a.b'));
+  ok(rejects('a["b"]'));
+  ok(rejects('constructor.constructor'), '经典的 Function 逃逸写法');
+});
+t('拒绝字符串和不认识的字符', () => {
+  ok(rejects('"abc"'));
+  ok(rejects('a @ b'));
+  ok(rejects('a; b'));
+});
+t('拒绝不在白名单里的函数', () => {
+  ok(rejects('eval(1)'));
+  ok(rejects('fetch(1)'));
+  ok(rejects('random()'), '有意不提供 random：仿真必须可复现');
+  no('random' in FUNCS);
+});
+t('原型链上的名字不能当变量用', () => {
+  // 不用 hasOwnProperty 的话 toString / constructor 会摸到 Object.prototype
+  eq(run(compile('toString'), {}), NaN);
+  eq(run(compile('constructor'), {}), NaN);
+});
+t('未定义的变量求值为 NaN，不静默当 0', () => {
+  eq(run(compile('nope + 1'), {}), NaN);
+});
+t('过长 / 过复杂的表达式被挡住', () => {
+  ok(rejects('1+'.repeat(300) + '1'));
+});
+t('语法错误抛 ExprError 而不是别的', () => {
+  let e: any = null;
+  try { compile('1 +'); } catch (x) { e = x; }
+  ok(e instanceof ExprError);
+  eq(tryCompile('1 +'), null, 'tryCompile 不抛，返回 null');
+});
+t('collectIdents 认得出用到哪些量（校验模型有没有瞎编变量靠它）', () => {
+  eq(compile('a + b * max(c, 2) + PI').idents.sort(), ['a', 'b', 'c']);
+});
+
+// ==================== 仿真规格 ====================
+
+const SPEC_JSON = {
+  title: '单位经济',
+  question: '买来一个用户多久回本？',
+  steps: 24,
+  x_label: '月',
+  y_label: '累计毛利',
+  params: [
+    { key: 'cac', label: '获客成本', min: 5, max: 1000, step: 5, value: 120, unit: '元' },
+    { key: 'arpu', label: '每月付费', min: 5, max: 500, step: 5, value: 30, unit: '元' },
+    { key: 'churn', label: '月流失率', min: 1, max: 40, step: 1, value: 12, unit: '%', soft: true, why: '没有三个月以上的付费名单' },
+  ],
+  init: { cum: '-cac' },
+  step: { cum: 'cum + arpu * (1 - churn/100)^(t-1)' },
+  series: [{ key: 'cum', label: '单用户累计贡献' }],
+  readouts: [
+    { key: 'payback', label: '回本时间', expr: 'cross_cum', unit: '个月', digits: 0, bad_if: 'cross_cum < 0' },
+    { key: 'final', label: '24 个月累计', expr: 'last_cum', unit: '元', digits: 0 },
+  ],
+  headline: '第 {payback} 回本',
+  bad_if: 'cross_cum < 0',
+  reality_check: '模型假设流失率每月恒定，真实的流失几乎从来不恒定。',
+  probe_hint: '翻出三个月前的付费名单，数今天还有多少人在扣款。',
+};
+const okSpec = (): SimSpec => parseSimSpec(JSON.parse(JSON.stringify(SPEC_JSON)), NOW).spec!;
+
+console.log('\n== parseSimSpec：宁可不生成，也不要一条算错的曲线 ==');
+t('正常的规格能解析出来', () => {
+  const { spec, problems } = parseSimSpec(SPEC_JSON, NOW);
+  ok(spec, problems.join('；'));
+  eq(spec!.params.length, 3);
+  eq(spec!.steps, 24);
+  eq(spec!.createdAt, NOW);
+});
+t('公式引用了不存在的变量 → 整个仿真作废', () => {
+  const r = parseSimSpec({ ...SPEC_JSON, step: { cum: 'cum + mystery' } });
+  no(r.spec);
+  ok(r.problems.join('').includes('mystery'), '要说清是哪个量，不能只说失败');
+});
+t('公式里藏了属性访问 → 整个仿真作废', () => {
+  no(parseSimSpec({ ...SPEC_JSON, step: { cum: 'cum + a.b' } }).spec);
+});
+t('不肯说自己哪里靠不住 → 拒收', () => {
+  no(parseSimSpec({ ...SPEC_JSON, reality_check: '' }).spec);
+  no(parseSimSpec({ ...SPEC_JSON, probe_hint: '仅供参考' }).spec);
+});
+t('一个可调参数都没有 → 拒收（那是结论，不是仿真）', () => {
+  no(parseSimSpec({ ...SPEC_JSON, params: [] }).spec);
+});
+t('没有任何读数 → 拒收（曲线好看但读不出结论）', () => {
+  no(parseSimSpec({ ...SPEC_JSON, readouts: [] }).spec);
+});
+t('一个 soft 参数都没标时自动补一个——不许假装模型是确定的', () => {
+  const p = SPEC_JSON.params.map(x => ({ ...x, soft: false }));
+  const spec = parseSimSpec({ ...SPEC_JSON, params: p }).spec!;
+  ok(spec.params.some(x => x.soft));
+});
+t('步数、参数个数被夹在上限内', () => {
+  eq(parseSimSpec({ ...SPEC_JSON, steps: 99999 }).spec!.steps, MAX_STEPS);
+  eq(parseSimSpec({ ...SPEC_JSON, steps: 0 }).spec!.steps, 2);
+});
+t('min > max 会被换过来，min == max 会被撑开', () => {
+  const r = parseSimSpec({
+    ...SPEC_JSON,
+    params: [{ key: 'a', label: 'a', min: 10, max: 1, value: 5 }, { key: 'b', label: 'b', min: 3, max: 3, value: 3 }],
+    init: { y: 'a' }, step: { y: 'y + b' },
+    series: [{ key: 'y', label: 'y' }],
+    readouts: [{ key: 'f', label: '末值', expr: 'last_y' }],
+    headline: '{f}',
+  });
+  ok(r.spec, r.problems.join('；'));
+  eq(r.spec!.params[0].min, 1);
+  eq(r.spec!.params[0].max, 10);
+  eq(r.spec!.params[1].max, 4, 'min==max 撑开 1');
+});
+t('参数名与状态变量重名 → 拒收', () => {
+  no(parseSimSpec({ ...SPEC_JSON, init: { cac: '1' }, step: { cac: 'cac' } }).spec);
+});
+t('要画的曲线不是状态变量 → 跳过并说明，回退到第一个变量', () => {
+  const r = parseSimSpec({ ...SPEC_JSON, series: [{ key: '不存在', label: 'x' }] });
+  ok(r.spec);
+  eq(r.spec!.series[0].key, 'cum');
+  ok(r.problems.length);
+});
+t('模型返回的不是对象 → 拒收，不崩', () => {
+  no(parseSimSpec(null).spec);
+  no(parseSimSpec('一段话').spec);
+});
+
+console.log('\n== runSim：算得对，算不下去就老实截断 ==');
+t('第 0 步就是初值', () => {
+  const out = runSim(okSpec());
+  eq(out.history.cum[0], -120);
+});
+t('曲线长度 = 步数 + 1', () => {
+  const out = runSim(okSpec());
+  eq(out.series[0].points.length, 25);
+  eq(out.x.length, 25);
+});
+t('headline 模板被真实读数替换', () => {
+  const out = runSim(okSpec());
+  ok(/^第 \d+个月 回本$/.test(out.headline), out.headline);
+});
+t('回本时间 = 累计首次转正的那一步', () => {
+  const out = runSim(okSpec());
+  const h = out.history.cum;
+  const expect = h.findIndex((v, i) => i > 0 && v >= 0);
+  eq(out.values.payback, expect);
+});
+t('获客成本拉满就回不了本，读数标红', () => {
+  const out = runSim(okSpec(), { cac: 1000 });
+  eq(out.values.payback, -1);
+  ok(out.bad, '结论是坏消息要用告警色');
+  ok(out.readouts[0].bad);
+});
+t('滑块拉到两端都不会算出 NaN', () => {
+  const spec = okSpec();
+  for (const k of ['min', 'max'] as const) {
+    const v: Record<string, number> = {};
+    spec.params.forEach(p => { v[p.key] = p[k]; });
+    const out = runSim(spec, v);
+    ok(out.series[0].points.every(Number.isFinite), `${k} 端出现了非数`);
+  }
+});
+t('越界的参数被夹回区间', () => {
+  const spec = okSpec();
+  eq(specParams(spec, { cac: 99999 }).cac, 1000);
+  eq(specParams(spec, { cac: -5 }).cac, 5);
+  eq(specParams(spec, {}).cac, 120, '缺参数回落默认值');
+});
+t('公式算不出数时截断曲线并说明，不补点', () => {
+  const spec = { ...okSpec(), init: { cum: '1' }, step: { cum: 'cum / (t - 3)' } };
+  const out = runSim(spec as SimSpec);
+  ok(out.note && out.note.includes('第 3 步'), out.note);
+  ok(out.series[0].points.length < 25, '算不下去就该停，不许编后面的点');
+});
+t('公式被改坏时不白屏，如实说不可信', () => {
+  const spec = { ...okSpec(), step: { cum: 'cum + ' } };
+  const out = runSim(spec as SimSpec);
+  ok(out.note && out.note.includes('损坏'), out.note);
+});
+t('同样的参数跑两次结果完全一样（没有随机数，可复现）', () => {
+  eq(runSim(okSpec(), { churn: 7 }).history, runSim(okSpec(), { churn: 7 }).history);
+});
+
+console.log('\n== 敏感度：这条结论最怕你猜错哪个数 ==');
+t('猜出来的参数排在最前面', () => {
+  const s = sensitivity(okSpec());
+  ok(s.length);
+  ok(s[0].soft, '不然用户会去量一个本来就知道的数');
+});
+t('完全不影响结论的参数 spread 为 0', () => {
+  const spec = okSpec();
+  spec.params.push({ key: 'noop', label: '无关量', min: 0, max: 10, step: 1, value: 5 });
+  const s = sensitivity(spec).filter(x => x.paramKey === 'noop');
+  ok(s.every(x => x.spread === 0));
+});
+t('topSensitivity 挑的是真的会晃的那个', () => {
+  const top = topSensitivity(sensitivity(okSpec()))!;
+  ok(top.spread > 0);
+  ok(top.high > top.low);
+});
+t('敏感度不修改传进来的参数（纯函数）', () => {
+  const v = { churn: 20 };
+  sensitivity(okSpec(), v);
+  eq(v, { churn: 20 });
+});
+
+console.log('\n== 仿真通向现实的唯一出口是探针，不是证据 ==');
+t('simToProbeDraft 给出的判定线里写明了量什么', () => {
+  const d = simToProbeDraft(okSpec())!;
+  ok(d.method.includes('月流失率'), d.method);
+  ok(d.expectedSignal.length > 20, '判定必须事前写死，含糊等于没验证');
+  ok(d.hypothesis.length > 0);
+});
+t('整个 simSpec 模块不产生任何 Evidence', () => {
+  const src = [runSim(okSpec()), simToProbeDraft(okSpec())];
+  for (const o of src) {
+    const j = JSON.stringify(o);
+    no(j.includes('"origin"'), '仿真一旦能产出 origin，整套闭环就废了');
+    no(j.includes('"stance"'));
+  }
+});
+
+console.log('\n== 仿真笔记导出：半年后还查得到这条曲线是怎么算的 ==');
+t('导出的 markdown 里有公式、有自曝其短、有免责', () => {
+  const md = specToMarkdown(okSpec(), runSim(okSpec()));
+  ok(md.includes('cum + arpu'), '递推式必须原样写出来');
+  ok(md.includes('这是仿真，不是证据'));
+  ok(md.includes('哪里靠不住'));
+  ok(md.includes('月流失率'));
+});
+t('非仿真笔记不会被塞进仿真段落', () => {
+  eq(simulationSection({ id: 'x', title: 'y', status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: '', chatHistory: [], agentResults: [] }), '');
+});
+t('仿真笔记的导出段落带 SimSpec 内容', () => {
+  const n: ProblemNode = {
+    id: 'x', title: '🧪 单位经济', status: NodeStatus.UNEXPLORED, confidence: 0,
+    dependencies: [], notes: '', chatHistory: [], agentResults: [],
+    noteType: 'simulation', sim: okSpec(),
+  };
+  ok(simulationSection(n).includes('这是仿真，不是证据'));
+});
+t('仿真笔记不改变任何节点状态', () => {
+  const n: ProblemNode = {
+    id: 'x', title: '🧪 x', status: NodeStatus.UNEXPLORED, confidence: 0,
+    dependencies: [], notes: '', chatHistory: [], agentResults: [],
+    noteType: 'simulation', sim: okSpec(),
+  };
+  // 仿真笔记没有 hypothesis，触发器不该把它当成"缺证据"的推理节点来处理
+  eq(n.hypothesis, undefined);
+  no(isBlockedOnReality([n]), '仿真笔记不该让循环误以为在等现实');
+});
+
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`);
 if (fail) process.exit(1);

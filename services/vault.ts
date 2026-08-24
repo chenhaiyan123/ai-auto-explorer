@@ -1,4 +1,5 @@
 import { ProblemNode, LAYER_LABEL } from '../types';
+import { specToMarkdown, runSim } from './simSpec';
 
 /**
  * 本地 Markdown 库（Vault）工具：把笔记节点与 .md 文件互相转换，
@@ -23,7 +24,23 @@ export const noteToMarkdown = (n: ProblemNode): string => {
   const body = (n.fullNote && n.fullNote.trim()) ? n.fullNote : (n.notes || '');
   // 假设与证据写进**正文**而不是 frontmatter：
   // 导出到 Obsidian 后，最重要的东西必须能直接看见，塞进 frontmatter 就被折叠了。
-  return fm.join('\n') + body + hypothesisSection(n) + '\n';
+  return fm.join('\n') + simulationSection(n) + body + hypothesisSection(n) + '\n';
+};
+
+/**
+ * 仿真笔记的正文（公式 + 当前结论 + 自曝其短）。
+ *
+ * 放在用户自己写的内容**之前**：导出到 Obsidian 半年后再看，
+ * 「当时那条曲线是怎么算的」必须能查到，否则它就只是一张好看的图。
+ * 界面上不显示这一段（SimNote 已经交互式呈现过了），只在导出时生成。
+ */
+export const simulationSection = (n: ProblemNode): string => {
+  if (n.noteType !== 'simulation' || !n.sim) return '';
+  try {
+    return specToMarkdown(n.sim, runSim(n.sim, n.simValues || {})) + '\n\n---\n\n';
+  } catch {
+    return '';
+  }
 };
 
 /** 把「当前赌注」渲染成一段 Markdown，附在正文末尾 */
@@ -38,7 +55,7 @@ export const hypothesisSection = (n: ProblemNode): string => {
     lines.push('', '### 证据', '');
     for (const e of h.evidence) {
       const mark = e.stance === 'refute' ? '✗' : '✓';
-      const from = e.origin === 'ai' ? 'AI 推理' : e.origin === 'probe' ? '探针' : '人工';
+      const from = e.origin === 'ai' ? 'AI 推理' : e.origin === 'sim' ? '仿真（不算现实证据）' : e.origin === 'probe' ? '探针' : '人工';
       lines.push(`- ${mark} \`${LAYER_LABEL[e.layer]}\` ${e.claim}${e.source ? ` —— ${e.source}` : ''}（${from}）`);
     }
   }
