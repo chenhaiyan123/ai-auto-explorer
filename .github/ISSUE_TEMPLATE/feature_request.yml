@@ -1,0 +1,26 @@
+name: ✨ 功能建议
+description: 想让 HiExplore 有某个功能
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        功能建议是最宝贵的反馈，请描述清楚**你想解决什么问题**，而不只是「加个按钮」。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题？
+      description: 什么场景下遇到的？现在是怎么绕过去的？
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你期望的解决方案
+      description: 描述你想象的交互或功能
+  - type: textarea
+    id: alternative
+    attributes:
+      label: 有没有替代方案（选填）
+      description: 你试过的其他工具/做法

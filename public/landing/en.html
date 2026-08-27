@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HiExplore · Score your question before you research it</title>
+<meta name="description" content="HiExplore is a question-driven research platform for independent researchers and creators. Score any question 0–100 across six dimensions (verifiability, depth, scarcity, social value, innovation, feasibility) — below 60, don't bother. Worth it? A team of AI agents breaks it into a question tree and explores it long-term. Every claim must carry a falsifiable hypothesis; when the AI gets stuck, it asks real humans through your phone. Your data lives locally. Bring your own model. MIT-licensed, self-hostable.">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="theme-color" content="#0f172a">
+<link rel="canonical" href="https://www.hiexplore.com/landing/en.html">
+<meta property="og:title" content="HiExplore · Score your question before you research it">
+<meta property="og:description" content="Question-driven AI research: QVS score → falsifiable hypotheses → reality checks via real humans. Local-first, BYO model, MIT-licensed.">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --bg: #0f172a; --bg-2: #111c33; --card: #16233f; --border: #24334f;
+    --text: #f8fafc; --muted: #94a3b8; --accent: #38bdf8; --accent-2: #818cf8;
+    --good: #34d399; --bad: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.7; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+  section { padding: 64px 0; }
+  h2 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+  .sub { color: var(--muted); font-size: 16px; max-width: 720px; }
+  a { color: var(--accent); text-decoration: none; }
+  nav { position: sticky; top: 0; z-index: 50; background: rgba(15,23,42,0.85); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .logo { font-weight: 800; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+  .logo-mark { width: 24px; height: 24px; border-radius: 7px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: inline-block; }
+  nav .links { display: flex; gap: 18px; align-items: center; }
+  nav .links a { color: var(--muted); font-size: 14px; }
+  .btn { display: inline-block; padding: 10px 22px; border-radius: 10px; font-weight: 600; font-size: 15px; background: var(--accent); color: #0f172a !important; }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(56,189,248,0.35); text-decoration: none; }
+  .btn-ghost { background: transparent; color: var(--text) !important; border: 1px solid var(--border); }
+  .hero { padding: 96px 0 72px; text-align: center; }
+  .hero h1 { font-size: 42px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.25; max-width: 820px; margin: 0 auto 20px; }
+  .hero h1 em { font-style: normal; background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero .sub { margin: 0 auto 30px; font-size: 17px; }
+  .hero .ctas { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 26px; }
+  .trust { color: var(--muted); font-size: 13px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; margin-bottom: 48px; }
+  .hero-shot { border-radius: 16px; border: 1px solid var(--border); overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,0.5); background: var(--bg-2); }
+  /* Screenshot placeholder: replace with a real QVS score card screenshot (16:9, dark) */
+  .shot-placeholder { aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #12203c, #1a2b4d); color: var(--muted); font-size: 15px; }
+  .shot-bar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .shot-bar i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .shot-bar i:nth-child(1) { background: #f87171; } .shot-bar i:nth-child(2) { background: #fbbf24; } .shot-bar i:nth-child(3) { background: #34d399; }
+  .hook { background: var(--bg-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 32px; }
+  .compare-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+  .compare-card h3 { font-size: 15px; margin-bottom: 10px; }
+  .compare-card p { color: var(--muted); font-size: 14px; }
+  .score { display: inline-block; font-weight: 800; margin-top: 10px; }
+  .score.bad { color: var(--bad); } .score.good { color: var(--good); }
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 36px; }
+  .step { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+  .step .n { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+  .step h3 { font-size: 15px; margin-bottom: 6px; }
+  .step p { font-size: 13px; color: var(--muted); }
+  .table-wrap { overflow-x: auto; margin-top: 32px; border: 1px solid var(--border); border-radius: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 600px; }
+  th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg-2); font-weight: 600; color: var(--muted); font-size: 12.5px; }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  .ok { color: var(--good); } .no { color: var(--bad); }
+  .scenarios { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 36px; }
+  .scenario { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+  .scenario h3 { font-size: 15px; margin-bottom: 6px; }
+  .scenario p { font-size: 13px; color: var(--muted); }
+  .privacy { background: var(--bg-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .privacy-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 32px; }
+  .p-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+  .p-card h3 { font-size: 15px; margin-bottom: 6px; }
+  .p-card p { font-size: 13px; color: var(--muted); }
+  .pricing-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 32px; }
+  .price-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
+  .price-card.hot { border-color: var(--accent); }
+  .price-card h3 { font-size: 16px; margin-bottom: 4px; }
+  .price-card .price { font-size: 14px; color: var(--muted); margin-bottom: 12px; }
+  .price-card ul { list-style: none; font-size: 13.5px; color: var(--muted); }
+  .price-card li { padding: 4px 0; }
+  .price-card li::before { content: "✓ "; color: var(--good); }
+  details { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 14.5px; }
+  details p { margin-top: 8px; color: var(--muted); font-size: 13.5px; }
+  footer { border-top: 1px solid var(--border); padding: 36px 0 52px; color: var(--muted); font-size: 12.5px; }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 14px; }
+  footer a { color: var(--muted); }
+  @media (max-width: 900px) { .steps, .scenarios { grid-template-columns: repeat(2, 1fr); } .hero h1 { font-size: 32px; } }
+  @media (max-width: 640px) { .steps, .scenarios, .compare, .privacy-grid, .pricing-cards { grid-template-columns: 1fr; } nav .links a:not(.btn) { display: none; } }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="logo"><span class="logo-mark"></span>HiExplore</div>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#compare">vs others</a>
+      <a href="#pricing">Pricing</a>
+      <a href="https://github.com/chenhaiyan123/ai-auto-explorer" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn" href="https://www.hiexplore.com/">Try free</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="wrap">
+    <h1>Score your question <em>before</em> you research it</h1>
+    <p class="sub">HiExplore scores any question 0–100 across six dimensions — verifiability, depth, scarcity, social value, innovation, feasibility. Below 60? Don't research it yet. Above? A team of AI agents breaks it into a question tree and explores it for days — every claim must carry a falsifiable hypothesis, and when the AI gets stuck, it asks real humans through your phone.</p>
+    <div class="ctas">
+      <a class="btn" href="https://www.hiexplore.com/">Start exploring free</a>
+      <a class="btn btn-ghost" href="#how">See how it works ↓</a>
+    </div>
+    <div class="trust">
+      <span>No signup to try</span><span>MIT-licensed</span><span>Data stays local</span><span>BYO model (DeepSeek / Qwen / Claude / Ollama)</span>
+    </div>
+    <div class="hero-shot">
+      <div class="shot-bar"><i></i><i></i><i></i></div>
+      <!-- Screenshot placeholder: replace with a real QVS score card screenshot (16:9, dark) -->
+      <div class="shot-placeholder">[ Screenshot placeholder: QVS score card — 78 / grade B / six-axis radar ]</div>
+    </div>
+  </div>
+</section>
+
+<section class="hook">
+  <div class="wrap">
+    <h2>You don't need better answers. You need better questions.</h2>
+    <p class="sub">Most "this seems interesting" questions die on verifiability and feasibility. Finding out costs you 10 seconds instead of three weeks.</p>
+    <div class="compare">
+      <div class="compare-card">
+        <h3>❌ “Will AI replace programmers?”</h3>
+        <p>Unfalsifiable, answered a thousand times, no way to know you were right.</p>
+        <div class="score bad">55 — don't bother</div>
+      </div>
+      <div class="compare-card">
+        <h3>✅ “Across 3 real codebases, how did Copilot change median PR review time and defect escape rate?”</h3>
+        <p>Checkable, specific, nobody has published it.</p>
+        <div class="score good">82 — promote it</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>Four steps, from question to conclusions</h2>
+    <div class="steps">
+      <div class="step"><div class="n">STEP 1</div><h3>Ask</h3><p>Drop in the question you actually want answered — or pick one from the question board.</p></div>
+      <div class="step"><div class="n">STEP 2</div><h3>Score</h3><p>QVS returns a 0–100 score with a radar breakdown and sharpening suggestions. Below 60, it tells you not to bother yet.</p></div>
+      <div class="step"><div class="n">STEP 3</div><h3>Agent team explores</h3><p>5–8 directions → specialized agents (researcher, analyst, reviewer…) → loop of decompose → execute → review → record, producing falsifiable hypotheses, notes, and simulations.</p></div>
+      <div class="step"><div class="n">STEP 4</div><h3>Reality feedback loop</h3><p>When the AI hits a question only reality can answer, it's pushed to real humans via a companion phone app. Decision timeline can replay any branch.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="compare" style="background:var(--bg-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="wrap">
+    <h2>vs generic AI search / Deep Research</h2>
+    <div class="table-wrap">
+      <table>
+        <tr><th></th><th>Generic AI search / Deep Research</th><th>HiExplore</th></tr>
+        <tr><td>Question value gate</td><td class="no">✗ answers everything</td><td class="ok">✓ QVS 6-dim score, &lt;60 = don't bother</td></tr>
+        <tr><td>Claim reliability</td><td>looks right</td><td>every node requires a falsifiable hypothesis; reasoning ≠ evidence</td></tr>
+        <tr><td>Simulation vs reality</td><td>blended</td><td>simulations explicitly marked "not evidence", with reality check + probe hint</td></tr>
+        <tr><td>Stuck?</td><td>keeps hallucinating</td><td>pushes the question to real humans / real data (phone app)</td></tr>
+        <tr><td>Your data</td><td>platform cloud</td><td>your browser / local Markdown, Obsidian-friendly</td></tr>
+        <tr><td>Models</td><td>locked in</td><td>bring your own: DeepSeek, Qwen, Claude, local Ollama</td></tr>
+        <tr><td>Code</td><td>closed</td><td>MIT, self-hostable</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Who it's for</h2>
+    <div class="scenarios">
+      <div class="scenario"><h3>🎓 Researchers & grad students</h3><p>Decompose a big question into verifiable sub-questions; an agent team grinds 24/7 while you make the calls.</p></div>
+      <div class="scenario"><h3>✍️ Content creators</h3><p>Run every topic idea through QVS before investing; exploration notes become your content library.</p></div>
+      <div class="scenario"><h3>🧠 Lifelong learners</h3><p>Turn "things I want to understand" into long-running research projects with a personal knowledge graph.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="privacy">
+  <div class="wrap">
+    <h2>Your data & models, your rules</h2>
+    <div class="privacy-grid">
+      <div class="p-card"><h3>🔒 Local-first</h3><p>Data lives in your browser or local Markdown (Obsidian-friendly). Export a note or the whole vault as a zip.</p></div>
+      <div class="p-card"><h3>🧠 Bring your own model</h3><p>Fully local with Ollama (data never leaves your machine), or any OpenAI-compatible endpoint — DeepSeek, Qwen, Claude.</p></div>
+      <div class="p-card"><h3>🛡️ Optional key proxy</h3><p>Hide your API key behind a serverless function so it never reaches the browser.</p></div>
+      <div class="p-card"><h3>🔌 Can touch the physical world</h3><p>Register HTTP-API devices (sensors, robot arms) — agents read from and act on them mid-exploration, with an auditable call log.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="pricing">
+  <div class="wrap">
+    <h2>Pricing</h2>
+    <div class="pricing-cards">
+      <div class="price-card">
+        <h3>Free</h3>
+        <div class="price">No signup required</div>
+        <ul>
+          <li>5 explorations/day anonymous; 30/day logged in</li>
+          <li>BYO model = unlimited</li>
+          <li>Local data + Markdown export</li>
+        </ul>
+      </div>
+      <div class="price-card hot">
+        <h3>Long-term Exploration membership</h3>
+        <div class="price">Subscription</div>
+        <ul>
+          <li>Long-running projects with 24/7 agent teams</li>
+          <li>Higher quotas / advanced models</li>
+          <li>Reality-feedback push quota</li>
+          <li>Supports independent development</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="background:var(--bg-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="wrap">
+    <h2>FAQ</h2>
+    <details open><summary>Do I need an account?</summary><p>No — try it without signing up. Login (WeChat or email) gives persistence and a higher daily quota.</p></details>
+    <details><summary>Where does my data go?</summary><p>By default it stays in your browser / local files. Only aggregate stats (active time, token usage) are synced to the cloud.</p></details>
+    <details><summary>Which models can I use?</summary><p>Any OpenAI-compatible endpoint: DeepSeek, Qwen, Claude, or fully local via Ollama/LM Studio. A desktop app is recommended for local models.</p></details>
+    <details><summary>How is this different from NotebookLM / Perplexity / Deep Research?</summary><p>They're better at answering; HiExplore is about whether a question deserves answering, and keeping claims falsifiable and checked against reality. You can even run their reports through HiExplore as an audit.</p></details>
+    <details><summary>Is it open source?</summary><p>Yes — MIT, self-hostable, no backend required. github.com/chenhaiyan123/ai-auto-explorer</p></details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>© Shenzhen Haitan Technology Co., Ltd. · 粤ICP备2023000583号-1</div>
+    <div><a href="https://github.com/chenhaiyan123/ai-auto-explorer" target="_blank" rel="noopener">GitHub</a> · <a href="https://www.hiexplore.com/">Launch app</a> · <a href="https://www.hiexplore.com/landing/">中文</a> · <a href="mailto:357755590@qq.com">357755590@qq.com</a></div>
+  </div>
+</footer>
+
+</body>
+</html>

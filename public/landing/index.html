@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HiExplore · AI 自动探究平台 —— 先判断问题值不值得回答，再让 AI 团队探究到底</title>
+<meta name="description" content="HiExplore 是给独立研究者与创作者的 AI 自动探究平台：把问题丢进来打一个 0–100 的「问题价值分」（稀缺性、深度、可验证性等六维），低于 60 分劝你先别研究；值得的问题由 AI 团队自动拆成问题树长期探究，每个结论都要求「可被现实推翻的假设」，卡住了就通过手机推给真实用户回答。数据存本地、模型自带、MIT 开源。">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="theme-color" content="#0f172a">
+<link rel="canonical" href="https://www.hiexplore.com/landing/">
+<meta property="og:title" content="HiExplore · AI 自动探究平台">
+<meta property="og:description" content="先判断这个问题值不值得回答，再让 AI 团队帮你探究到底。数据存本地、模型自带、MIT 开源。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://www.hiexplore.com/landing/">
+<style>
+  :root {
+    --bg: #0f172a;
+    --bg-2: #111c33;
+    --card: #16233f;
+    --border: #24334f;
+    --text: #f8fafc;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent-2: #818cf8;
+    --good: #34d399;
+    --bad: #f87171;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+                 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  section { padding: 72px 0; }
+  h2 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+  .sub { color: var(--muted); font-size: 17px; max-width: 720px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Nav */
+  nav { position: sticky; top: 0; z-index: 50; background: rgba(15,23,42,0.85); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .logo { font-weight: 800; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+  .logo-mark { width: 24px; height: 24px; border-radius: 7px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: inline-block; }
+  nav .links { display: flex; gap: 22px; align-items: center; }
+  nav .links a { color: var(--muted); font-size: 14px; }
+  nav .links a:hover { color: var(--text); text-decoration: none; }
+  .btn {
+    display: inline-block; padding: 10px 22px; border-radius: 10px; font-weight: 600; font-size: 15px;
+    background: var(--accent); color: #0f172a !important; transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(56,189,248,0.35); text-decoration: none; }
+  .btn-ghost { background: transparent; color: var(--text) !important; border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); }
+
+  /* Hero */
+  .hero { padding: 100px 0 80px; text-align: center; }
+  .hero h1 { font-size: 46px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.25; max-width: 860px; margin: 0 auto 20px; }
+  .hero h1 em { font-style: normal; background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero .sub { margin: 0 auto 32px; font-size: 18px; }
+  .hero .ctas { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 28px; }
+  .trust { color: var(--muted); font-size: 13px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; margin-bottom: 56px; }
+  .hero-shot {
+    border-radius: 16px; border: 1px solid var(--border); overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.5); background: var(--bg-2);
+  }
+  /* 截图占位：替换成真实截图（QVS 评分卡，16:9，深色背景） */
+  .shot-placeholder {
+    aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #12203c, #1a2b4d); color: var(--muted); font-size: 15px;
+    border-bottom: 1px solid var(--border);
+  }
+  .shot-bar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+  .shot-bar i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .shot-bar i:nth-child(1) { background: #f87171; } .shot-bar i:nth-child(2) { background: #fbbf24; } .shot-bar i:nth-child(3) { background: #34d399; }
+
+  /* Hook */
+  .hook { background: var(--bg-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 36px; }
+  .compare-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .compare-card h3 { font-size: 15px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .compare-card p { color: var(--muted); font-size: 14px; }
+  .score { display: inline-block; font-weight: 800; font-size: 15px; margin-top: 12px; }
+  .score.bad { color: var(--bad); } .score.good { color: var(--good); }
+  .tip { margin-top: 28px; color: var(--muted); font-size: 14px; }
+
+  /* Steps */
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 40px; }
+  .step { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+  .step .n { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+  .step h3 { font-size: 16px; margin-bottom: 8px; }
+  .step p { font-size: 13.5px; color: var(--muted); }
+
+  /* Compare table */
+  .table-wrap { overflow-x: auto; margin-top: 40px; border: 1px solid var(--border); border-radius: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 640px; }
+  th, td { padding: 13px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg-2); font-weight: 600; color: var(--muted); font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  .ok { color: var(--good); } .no { color: var(--bad); }
+
+  /* Scenarios */
+  .scenarios { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 40px; }
+  .scenario { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .scenario .emoji { font-size: 26px; margin-bottom: 10px; }
+  .scenario h3 { font-size: 16px; margin-bottom: 8px; }
+  .scenario p { font-size: 13.5px; color: var(--muted); }
+
+  /* Privacy */
+  .privacy { background: var(--bg-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .privacy-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 36px; }
+  .p-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .p-card h3 { font-size: 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .p-card p { font-size: 13.5px; color: var(--muted); }
+
+  /* Pricing */
+  .pricing-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 40px; }
+  .price-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 26px; }
+  .price-card.hot { border-color: var(--accent); position: relative; }
+  .price-card h3 { font-size: 17px; margin-bottom: 6px; }
+  .price-card .price { font-size: 15px; color: var(--muted); margin-bottom: 14px; }
+  .price-card ul { list-style: none; font-size: 14px; color: var(--muted); }
+  .price-card li { padding: 5px 0; }
+  .price-card li::before { content: "✓ "; color: var(--good); }
+
+  /* Examples */
+  .examples { list-style: none; margin-top: 36px; }
+  .examples li {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 20px; margin-bottom: 12px; font-size: 15px;
+  }
+  .examples li::before { content: "❓ "; }
+
+  /* FAQ */
+  details { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin-bottom: 12px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+  details p { margin-top: 10px; color: var(--muted); font-size: 14px; }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--border); padding: 40px 0 56px; color: var(--muted); font-size: 13px; }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--text); }
+
+  @media (max-width: 900px) {
+    .steps, .scenarios { grid-template-columns: repeat(2, 1fr); }
+    .hero h1 { font-size: 34px; }
+  }
+  @media (max-width: 640px) {
+    .steps, .scenarios, .compare, .privacy-grid, .pricing-cards { grid-template-columns: 1fr; }
+    section { padding: 52px 0; }
+    nav .links a:not(.btn) { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="logo"><span class="logo-mark"></span>HiExplore</div>
+    <div class="links">
+      <a href="#how">怎么用</a>
+      <a href="#compare">差异</a>
+      <a href="#pricing">定价</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/chenhaiyan123/ai-auto-explorer" target="_blank" rel="noopener">GitHub</a>
+      <a class="btn" href="https://www.hiexplore.com/">免费试用</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ================= Hero ================= -->
+<section class="hero">
+  <div class="wrap">
+    <h1>先判断这个问题<b>值不值得回答</b>，<br>再让 AI 团队帮你<em>探究到底</em></h1>
+    <p class="sub">HiExplore 给每个问题打一个 0–100 的「问题价值分」——稀缺性、深度、可验证性、社会价值、创新性、可行性。低于 60 分，先别研究。值得的，AI 团队自动拆解问题树、长期探究，每个结论都要求「可被现实推翻的假设」。</p>
+    <div class="ctas">
+      <a class="btn" href="https://www.hiexplore.com/">免费开始探究</a>
+      <a class="btn btn-ghost" href="#how">看它怎么工作 ↓</a>
+    </div>
+    <div class="trust">
+      <span>免注册直接体验</span><span>MIT 开源</span><span>数据存本地</span><span>自带模型：DeepSeek / 通义 / Claude / Ollama</span>
+    </div>
+    <div class="hero-shot">
+      <div class="shot-bar"><i></i><i></i><i></i></div>
+      <!-- 截图占位：替换成真实 QVS 评分卡截图（16:9，深色背景） -->
+      <div class="shot-placeholder">[ 截图占位：QVS 评分卡 —— 你的问题 78 分 / B 级 / 六维雷达图 ]</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Hook ================= -->
+<section class="hook" id="hook">
+  <div class="wrap">
+    <h2>你缺的不是更好的答案，是更值得的问题</h2>
+    <p class="sub">花三周研究一个烂问题，是最大的时间浪费。HiExplore 把「问题值不值」变成 10 秒的量化判断——大多数「好像挺有意思」的问题，都死在可验证性和可行性这两项上。</p>
+    <div class="compare">
+      <div class="compare-card">
+        <h3>❌ “AI 会取代程序员吗？”</h3>
+        <p>不可证伪、被回答过一万遍、没法知道你对没对。</p>
+        <div class="score bad">55 分 —— 别研究</div>
+      </div>
+      <div class="compare-card">
+        <h3>✅ “在 3 个真实代码库上，Copilot 把 PR 评审中位时间和缺陷逃逸率改成了多少？”</h3>
+        <p>可验证、具体、还没人发表过。</p>
+        <div class="score good">82 分 —— 立项</div>
+      </div>
+    </div>
+    <p class="tip">六维权重是可调整的判断，欢迎去 GitHub 提 issue 挑战它。</p>
+  </div>
+</section>
+
+<!-- ================= How ================= -->
+<section id="how">
+  <div class="wrap">
+    <h2>四步，从问题到结论</h2>
+    <p class="sub">不是让你点 50 个按钮——你只做判断，AI 团队做苦力。</p>
+    <div class="steps">
+      <div class="step">
+        <div class="n">STEP 1</div>
+        <h3>抛问题</h3>
+        <p>写下你真正想搞清楚的问题，或从问题广场挑一个。</p>
+      </div>
+      <div class="step">
+        <div class="n">STEP 2</div>
+        <h3>打分</h3>
+        <p>QVS 六维评分 + 优化建议，先筛掉不值得研究的。</p>
+      </div>
+      <div class="step">
+        <div class="n">STEP 3</div>
+        <h3>AI 团队自动探究</h3>
+        <p>拆成 5–8 个方向 → 组建多角色 agent 团队 → 自动跑「拆解→执行→审核→记录→提出新方向」，产出可证伪假设、知识卡片、仿真。</p>
+      </div>
+      <div class="step">
+        <div class="n">STEP 4</div>
+        <h3>现实反馈闭环</h3>
+        <p>AI 卡在「必须问现实」的问题上时，手机端「现实反馈」App 当场推给真实用户/真实数据源；决策时间线随时可复刻另一条路线。</p>
+      </div>
+    </div>
+    <!-- 截图占位：问题树 + AI 团队群聊截图（横向 16:9） -->
+    <div class="hero-shot" style="margin-top:32px;">
+      <div class="shot-bar"><i></i><i></i><i></i></div>
+      <div class="shot-placeholder">[ 截图占位：问题树 + AI 团队群聊 —— 研究员、分析师、评审员分工协作 ]</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Compare ================= -->
+<section id="compare" style="background:var(--bg-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="wrap">
+    <h2>和「更会回答问题的 AI」有什么不同</h2>
+    <div class="table-wrap">
+      <table>
+        <tr><th></th><th>一般 AI 搜索 / Deep Research</th><th>HiExplore</th></tr>
+        <tr><td>先判断问题值不值</td><td class="no">✗ 来者不拒</td><td class="ok">✓ QVS 六维评分，低于 60 劝退</td></tr>
+        <tr><td>结论可信度</td><td>看起来都对</td><td>每节点强制「可证伪假设」，区分推理依据与现实证据</td></tr>
+        <tr><td>仿真与真实</td><td>混在一起</td><td>仿真明确标注「不是证据」，强制给出现实验证办法</td></tr>
+        <tr><td>卡住了怎么办</td><td>继续编</td><td>推给真实用户 / 真实数据（现实反馈闭环）</td></tr>
+        <tr><td>数据归属</td><td>平台云端</td><td>浏览器 / 本地 Markdown，兼容 Obsidian</td></tr>
+        <tr><td>模型</td><td>只能用平台的</td><td>自带：DeepSeek / 通义 / Claude / 本地 Ollama</td></tr>
+        <tr><td>代码</td><td>闭源</td><td>MIT 开源，可自托管</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Scenarios ================= -->
+<section id="scenarios">
+  <div class="wrap">
+    <h2>给谁用</h2>
+    <div class="scenarios">
+      <div class="scenario">
+        <div class="emoji">🎓</div>
+        <h3>独立研究者 / 硕博生</h3>
+        <p>把毕业论文的大问题拆成可验证的小问题，AI 团队 7×24 自动推进，你只做关键判断。</p>
+      </div>
+      <div class="scenario">
+        <div class="emoji">✍️</div>
+        <h3>内容创作者 / 自媒体</h3>
+        <p>选题先过 QVS——值得做的选题才投入；探索笔记直接变成你的内容素材库。</p>
+      </div>
+      <div class="scenario">
+        <div class="emoji">🧠</div>
+        <h3>终身学习者 / 知识工作者</h3>
+        <p>把「想搞懂的事」变成长期探究项目，知识卡片 + 双链笔记沉淀成自己的知识库。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Privacy ================= -->
+<section class="privacy">
+  <div class="wrap">
+    <h2>数据与模型，你自己说了算</h2>
+    <div class="privacy-grid">
+      <div class="p-card">
+        <h3>🔒 数据默认在本地</h3>
+        <p>数据存在你自己的浏览器和本地文件夹，Markdown 格式，随时导出、随时带走，兼容 Obsidian。</p>
+      </div>
+      <div class="p-card">
+        <h3>🧠 模型你自己带</h3>
+        <p>本地 Ollama 数据不出机器；云端用 DeepSeek / 通义 / Claude 等任意 OpenAI 兼容端点。</p>
+      </div>
+      <div class="p-card">
+        <h3>🛡️ 可选藏 Key 代理</h3>
+        <p>通过 Serverless 代理把自己的 API Key 藏在服务端，前端不暴露密钥。</p>
+      </div>
+      <div class="p-card">
+        <h3>🔌 可触碰物理世界</h3>
+        <p>可选接入实验设备（传感器 / 机器人臂），让 AI 在读数和实验中推进探究，调用全程留痕。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Pricing ================= -->
+<section id="pricing">
+  <div class="wrap">
+    <h2>定价</h2>
+    <p class="sub">先免费跑通一个完整探究，觉得值再升级。</p>
+    <div class="pricing-cards">
+      <div class="price-card">
+        <h3>免费体验</h3>
+        <div class="price">¥0 —— 免注册即可用</div>
+        <ul>
+          <li>匿名每天 5 次探究额度</li>
+          <li>登录（微信/邮箱）后每天 30 次</li>
+          <li>自带模型：不限额</li>
+          <li>本地数据 + Markdown 导出</li>
+        </ul>
+      </div>
+      <div class="price-card hot">
+        <h3>长期探索会员</h3>
+        <div class="price">订阅制 · 解锁长期项目</div>
+        <ul>
+          <li>长期项目 + AI 团队常驻自动探究</li>
+          <li>更高额度 / 高级模型</li>
+          <li>现实反馈推送配额</li>
+          <li>支持独立开发者的持续投入</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Examples ================= -->
+<section id="examples" style="background:var(--bg-2); border-top:1px solid var(--border); border-bottom:1px solid var(--border);">
+  <div class="wrap">
+    <h2>值得探究的问题长这样</h2>
+    <p class="sub">平台上的示例问题（可一键填入体验）：</p>
+    <!-- 示例问题：可替换成平台上真实火的问题 -->
+    <ul class="examples" data-示例问题>
+      <li>大规模匿名协作（如开源软件）为什么能成功？这种模式能推广到科研、治理等领域吗？</li>
+      <li>一个足够完美的模拟体验，缺失的到底是什么？为什么它对人类如此重要？</li>
+      <li>拖延的根源是时间管理问题，还是情绪调节问题？针对后者的干预是否更有效？</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= FAQ ================= -->
+<section id="faq">
+  <div class="wrap">
+    <h2>FAQ</h2>
+    <details open>
+      <summary>需要注册吗？</summary>
+      <p>不需要。免注册即可体验；登录（微信扫码 / 邮箱验证码）可长期保存数据并提高每日额度。</p>
+    </details>
+    <details>
+      <summary>我的数据安全吗？</summary>
+      <p>数据默认存在本地（浏览器 / 本地文件夹）。云端只存统计信息（活跃时长、Token 消耗），不存你的笔记内容。完整说明见「隐私政策」。</p>
+    </details>
+    <details>
+      <summary>需要什么模型？怎么配？</summary>
+      <p>无模型也能进，但推荐配置一个：DeepSeek（最划算）、通义千问，或本地 Ollama（数据不出机器）。设置 → 模型 → 填 API 地址即可，通常 1 分钟。</p>
+    </details>
+    <details>
+      <summary>和 NotebookLM / 秘塔 / Kimi 探索版有什么区别？</summary>
+      <p>它们更会「回答问题」；HiExplore 先判断「值不值得回答」，并管理结论的可证伪性 + 现实验证。你可以把它们的报告丢进 HiExplore 质检。</p>
+    </details>
+    <details>
+      <summary>是开源的吗？</summary>
+      <p>是，MIT 协议，GitHub 可自托管：github.com/chenhaiyan123/ai-auto-explorer</p>
+    </details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>© 深圳市海探科技有限公司 · <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener">粤ICP备2023000583号-1</a></div>
+    <div>
+      <a href="https://github.com/chenhaiyan123/ai-auto-explorer" target="_blank" rel="noopener">GitHub</a>
+      · <a href="https://www.hiexplore.com/">进入应用</a>
+      · <a href="https://www.hiexplore.com/landing/en.html">English</a>
+      <!-- 联系邮箱：已改为反馈收件邮箱（与 FC FEEDBACK_TO 一致） -->
+      · 联系：<a href="mailto:357755590@qq.com">357755590@qq.com</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

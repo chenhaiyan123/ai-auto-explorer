@@ -1,0 +1,39 @@
+name: 🐛 Bug 报告
+description: 提交一个可复现的问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢报 Bug！请尽量填全，可复现的 Bug 修得最快。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么？
+      description: 预期行为 vs 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 1. 打开… 2. 点击… 3. 看到…
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境
+      description: 浏览器及版本、设备、模型（如 DeepSeek/Ollama 本地）、使用方式（网页/桌面）
+    validations:
+      required: true
+  - type: textarea
+    id: contact
+    attributes:
+      label: 联系方式（选填）
+      description: 邮箱或微信，方便我们回访确认修复结果
