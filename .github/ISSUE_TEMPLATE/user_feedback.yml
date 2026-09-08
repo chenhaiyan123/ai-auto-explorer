@@ -1,0 +1,22 @@
+name: 💬 用户反馈
+description: 使用体验反馈（这里是站内「帮助与反馈」表单的兜底入口）
+title: "[反馈] "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > 来自站内「帮助与反馈」的兜底通道。分类会在标题前缀里自动带：报错 / 建议 / 没看懂 / 其他。
+        > 运行环境信息已随表单自动附上。
+  - type: textarea
+    id: content
+    attributes:
+      label: 反馈内容
+      description: 什么操作之后出的问题？屏幕上显示了什么？或：你的建议是什么？
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: 联系方式（选填）
+      description: 邮箱或微信，留了才能回复你

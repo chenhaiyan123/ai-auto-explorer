@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>隐私政策 · HiExplore</title>
+<meta name="description" content="HiExplore 隐私政策：数据默认存储在本地（浏览器/本地文件夹）；上云数据仅限账号信息与匿名统计（活跃时长、Token 消耗）；模型由用户自带。">
+<link rel="canonical" href="https://www.hiexplore.com/privacy.html">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="theme-color" content="#0f172a">
+<script async defer src="https://cloud.umami.is/script.js" data-website-id="be74bdcf-1923-4f20-9e43-7fafb0595554"></script>
+<style>
+  :root { --bg:#0f172a; --card:#16233f; --border:#24334f; --text:#f8fafc; --muted:#94a3b8; --accent:#38bdf8; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif; background:var(--bg); color:var(--text); line-height:1.8; }
+  .wrap { max-width:760px; margin:0 auto; padding:0 24px; }
+  nav { border-bottom:1px solid var(--border); padding:18px 0; }
+  nav .wrap { display:flex; justify-content:space-between; align-items:center; }
+  .logo { font-weight:800; }
+  nav a { color:var(--muted); font-size:14px; text-decoration:none; }
+  article { padding:44px 0 24px; }
+  h1 { font-size:28px; margin-bottom:8px; }
+  .meta { color:var(--muted); font-size:13px; margin-bottom:28px; }
+  h2 { font-size:19px; margin:30px 0 10px; }
+  p { margin-bottom:12px; color:#cbd5e1; font-size:14.5px; }
+  li { margin:0 0 8px 22px; color:#cbd5e1; font-size:14.5px; }
+  strong { color:var(--text); }
+  footer { border-top:1px solid var(--border); padding:26px 0 42px; color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<nav><div class="wrap"><span class="logo">🧭 HiExplore</span><a href="https://www.hiexplore.com/landing/">← 返回主页</a></div></nav>
+
+<article class="wrap">
+<h1>隐私政策</h1>
+<div class="meta">深圳市海探科技有限公司 · 更新日期：2026-08-27</div>
+
+<p>HiExplore（www.hiexplore.com）是一个以问题为坐标的 AI 自动探究平台。我们坚持一个原则：<strong>你的研究数据默认属于你、默认留在你的设备上</strong>。本政策说明我们收集什么、不收集什么。</p>
+
+<h2>一、数据存储方式</h2>
+<p><strong>本地存储（默认）</strong>：你的项目、笔记、问题树、决策记录等研究数据，默认保存在你的浏览器本地（localStorage）或本地文件夹中（Markdown 格式，兼容 Obsidian）。使用网页版时，数据只存在于你自己的浏览器；使用桌面客户端或导出功能时，数据存在于你的本地文件系统。</p>
+<p>这些内容我们<strong>不会上传到任何服务器</strong>，除非你主动使用需要同步的功能（如有）。</p>
+
+<h2>二、我们会收集什么</h2>
+<p>为了提供账号、额度与统计服务，我们收集并处理以下最小化信息：</p>
+<ul>
+  <li><strong>账号信息</strong>（你选择登录时）：邮箱地址或微信 OpenID，用于身份识别与登录。</li>
+  <li><strong>使用统计</strong>（匿名聚合）：活跃时长、Token 消耗量等运行统计，用于额度管理与产品改进，不含你的笔记内容。</li>
+  <li><strong>反馈信息</strong>（你主动提交时）：你在「帮助与反馈」中填写的内容与联系方式（邮箱/微信，选填），仅用于回复你的反馈。</li>
+  <li><strong>基础访问统计</strong>：我们使用 Umami 统计访问量。Umami 为无 Cookie 的匿名统计，不采集个人身份信息。</li>
+</ul>
+
+<h2>三、我们不会收集什么</h2>
+<ul>
+  <li>你的笔记、问题、研究内容的正文（默认仅存本地）。</li>
+  <li>你的模型 API Key（你自己填写并保存在你的浏览器本地；如使用云代理，Key 存储在你自己部署的服务端）。</li>
+  <li>你的对话/探究过程的原始内容。</li>
+</ul>
+
+<h2>四、AI 模型</h2>
+<p>HiExplore 本身不内置模型。所有 AI 能力调用你自行配置的模型服务：本地模型（Ollama、LM Studio 等，数据不出你的设备）或云端模型（DeepSeek、通义千问、Claude 等 OpenAI 兼容端点）。<strong>你与模型服务商之间的数据往来，适用该模型服务商的隐私政策</strong>；我们建议研究敏感内容时优先使用本地模型。</p>
+
+<h2>五、第三方服务</h2>
+<ul>
+  <li><strong>Umami</strong>（cloud.umami.is）：匿名访问统计，无 Cookie。</li>
+  <li><strong>Tawk.to</strong>（可选客服挂件）：如你使用在线客服，对话内容由 Tawk.to 处理，适用其隐私政策。</li>
+  <li><strong>阿里云函数计算</strong>：账号登录与反馈转发所依赖的后端服务。</li>
+</ul>
+
+<h2>六、会员与支付</h2>
+<p>如你订阅「长期探索会员」，支付由第三方支付渠道完成；我们不存储你的银行卡/支付账户信息。</p>
+
+<h2>七、数据导出与删除</h2>
+<p>你的数据随时可导出（单篇 Markdown 或整库 ZIP），也随时可清除（清除浏览器站点数据 / 删除本地文件夹）。如需删除账号相关数据，联系我们处理。</p>
+
+<h2>八、联系我们</h2>
+<p>隐私相关问题：<a href="mailto:357755590@qq.com">357755590@qq.com</a></p>
+
+<p style="margin-top:24px;color:var(--muted);font-size:13px;">深圳市海探科技有限公司 · <a href="https://beian.miit.gov.cn" style="color:var(--muted)">粤ICP备2023000583号-1</a></p>
+</article>
+
+<footer><div class="wrap">© 深圳市海探科技有限公司 · <a href="https://www.hiexplore.com/landing/" style="color:var(--muted)">HiExplore</a> · <a href="https://github.com/chenhaiyan123/ai-auto-explorer" style="color:var(--muted)">GitHub</a></div></footer>
+</body>
+</html>

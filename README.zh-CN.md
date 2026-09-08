@@ -1,6 +1,10 @@
 # 🧭 HiExplore · AI 自动探究平台
 
-[English](./README.md) | **中文**
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Live demo](https://img.shields.io/badge/demo-hiexplore-blue)](https://www.hiexplore.com/)
+[![GitHub stars](https://img.shields.io/github/stars/chenhaiyan123/ai-auto-explorer)](https://github.com/chenhaiyan123/ai-auto-explorer)
+
+[English](./README.md) | **中文** | [在线体验（托管版）](https://www.hiexplore.com/)
 
 ### 先算清楚这个问题值不值得研究，再让 AI 去研究。
 
@@ -11,6 +15,23 @@ HiExplore 从上游一步开始。你把候选问题丢进问题广场，它按�
 **适合谁：** 独立研究者 / 创作者 / 独立开发者（低门槛地把好奇心变成持续探究），以及做情报调研、尽职调查的人（把一个问题挂上去，得到持续、可溯源的调查）。
 
 ![HiExplore 演示](./docs/assets/demo-zh.gif)
+
+---
+
+## ⚔️ 和其他 AI 工具有什么不一样
+
+| | 一般 AI 搜索 / Deep Research | HiExplore |
+|---|---|---|
+| **先判断问题值不值** | ❌ 来者不拒，有问必答 | ✅ QVS 六维评分，低于 60 分劝你先别研究 |
+| **结论可信度** | 看起来都对，从不说自己哪里可能错 | 每个节点强制「可被现实推翻的假设」+ 最大未知量 + 支持/反对依据 |
+| **推理依据 vs 现实证据** | 混在一起 | 严格区分；推理层依据不足时明确标注 |
+| **仿真与真实** | 仿真结果被当事实引用 | 仿真明确标注「这是仿真，不是证据」，强制给出现实验证办法 |
+| **卡住了怎么办** | 继续编 | 推给真实用户 / 真实数据（手机端「现实反馈」闭环） |
+| **数据归属** | 平台云端 | 浏览器 / 本地 Markdown，兼容 Obsidian |
+| **模型** | 只能用平台的 | 自带：DeepSeek / 通义 / Claude / 本地 Ollama |
+| **代码** | 闭源 | MIT 开源，可自托管 |
+
+一句话：**别人给你答案，我们让你敢用这个答案。**
 
 ---
 
@@ -67,6 +88,9 @@ HiExplore 从上游一步开始。你把候选问题丢进问题广场，它按�
 **🔌 IoT / 实验设备接入**
 注册带 HTTP API 的设备（传感器、培养箱、机械臂…），AI 在探索中可自主调用读取数据、执行操作，把物理世界纳入探究闭环，调用有日志可审计。
 
+**📱 手机端「现实反馈」**
+AI 卡在「只能问现实」的问题上时，通过手机端 PWA 推给真实用户回答——电脑上探究、手机上问人，答案回流问题树。
+
 **🌗 白天 / 深色主题**，顶栏一键切换。
 
 ---
@@ -81,6 +105,8 @@ npm run dev        # http://localhost:3000
 ```
 
 首次进入点右上角 **⚙️ 设置 → 模型接入**，选一个预设填好即可使用，无需任何后端。
+
+不想自己部署？[托管版 www.hiexplore.com](https://www.hiexplore.com/) 免注册即可体验。
 
 ### 配置模型（举例）
 
@@ -127,7 +153,7 @@ npm run explore                          # 开始 7×24 自主探索
 
 ## 🔐 托管版登录（可选 · 仅 SaaS 需要）
 
-开源/本地版**不需要登录**，直接用。只有托管版（www.hiexplore.com）做用户体系时才用到——目前支持**邮箱验证码登录**：
+开源/本地版**不需要登录**，直接用。只有托管版（www.hiexplore.com）做用户体系时才用到——目前支持**邮箱验证码登录**（微信扫码登录在托管版已支持）：
 
 ```bash
 # 后端（零额外依赖，复用 express）
@@ -136,7 +162,7 @@ RESEND_API_KEY=你的Resend密钥 MAIL_FROM="HiExplore <noreply@hiexplore.com>" 
 VITE_AUTH_API=https://api.hiexplore.com npm run build
 ```
 
-不配 `RESEND_API_KEY` 时验证码会打印到后端控制台（方便本地联调）。手机号 / 微信扫码需各自的第三方账号与资质，后续接入。
+不配 `RESEND_API_KEY` 时验证码会打印到后端控制台（方便本地联调）。
 
 ---
 
@@ -166,7 +192,7 @@ React 19 + TypeScript + Vite + Tailwind + D3，纯前端，零后端依赖，数
 
 ## 🤝 贡献
 
-欢迎 Issue 与 PR，尤其欢迎：新的 IoT 设备适配、Agent / 探索模板、QVS 维度改进、模型预设。详见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+欢迎 Issue 与 PR，尤其欢迎：新的 IoT 设备适配、Agent / 探索模板、QVS 维度改进、模型预设。讨论请到 [Discussions](https://github.com/chenhaiyan123/ai-auto-explorer/discussions)。详见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ## 📄 License
 

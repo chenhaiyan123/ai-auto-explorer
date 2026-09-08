@@ -1,6 +1,10 @@
 # 🧭 HiExplore
 
-**English** | [中文](./README.zh-CN.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Live demo](https://img.shields.io/badge/demo-hiexplore-blue)](https://www.hiexplore.com/)
+[![GitHub stars](https://img.shields.io/github/stars/chenhaiyan123/ai-auto-explorer)](https://github.com/chenhaiyan123/ai-auto-explorer)
+
+**English** | [中文](./README.zh-CN.md) | [Hosted version](https://www.hiexplore.com/)
 
 ### Score whether a question is worth researching — before you research it.
 
@@ -8,12 +12,26 @@ Every AI tool is racing to answer questions better. None of them ask whether the
 
 HiExplore starts one step earlier. You put candidate questions on a board, it scores each one across six dimensions, and only the ones that survive get promoted into long-running research projects — where a team of specialized agents works on them over days and weeks, producing plain Markdown you own.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
-[![Live demo](https://img.shields.io/badge/demo-hiexplore-blue)](https://chenhaiyan123.github.io/ai-auto-explorer/)
+**Who it's for:** independent researchers, creators, and indie developers (low-friction curiosity → ongoing research), plus people doing intelligence/research work (hang a question up, get continuous, traceable investigation).
 
 ![HiExplore demo](./docs/assets/demo-en.gif)
 
-> *The UI in the recording is Chinese — an English UI is on the roadmap. The flow is: ask → score → promote → assemble team → notes.*
+---
+
+## ⚔️ Why it's different from generic AI search / Deep Research
+
+| | Generic AI search / Deep Research | HiExplore |
+|---|---|---|
+| **Question value gate** | ❌ answers everything, no questions asked | ✅ QVS 6-dimension score — below 60, it tells you not to research it yet |
+| **Claim reliability** | looks right, never says where it might be wrong | every node requires a falsifiable hypothesis + biggest unknown + supporting/opposing evidence |
+| **Reasoning vs real-world evidence** | blended | strictly separated; low-confidence reasoning is flagged for human review |
+| **Simulation vs reality** | simulation results quoted as facts | simulations explicitly labeled "this is a simulation, not evidence", with a reality check + probe hint |
+| **Stuck?** | keeps hallucinating | pushes the question to real humans / real data via a companion phone app |
+| **Your data** | platform cloud | your browser / local Markdown, Obsidian-friendly |
+| **Models** | locked in | bring your own: DeepSeek, Qwen, Claude, local Ollama |
+| **Code** | closed | MIT, self-hostable |
+
+In one line: **others give you answers. HiExplore makes you able to trust the answer.**
 
 ---
 
@@ -48,6 +66,12 @@ Most "this seems interesting" questions die on **verifiability** and **feasibili
 
 **🤝 An agent team assembles.** The system reads the goal, splits it into 5–8 key directions, groups them into work areas (market research / engineering / …), and assigns a specialized agent to each. There's a group chat on the right: @mention a member, `[[reference]]` any note into context, append any reply straight into a note.
 
+**🎯 Falsifiability is enforced.** Every node must carry a one-line hypothesis reality could disprove, plus the biggest unknown and the supporting/opposing evidence. Reasoning-level claims are kept separate from real-world evidence.
+
+**🧪 Simulations know their place.** Agents can write and run simulations (state variables, recurrence, key readings) — but every simulation is explicitly labeled *"this is a simulation, not evidence"*, and must state what's unreliable about the model and how to check reality instead.
+
+**📱 Reality feedback loop.** When the AI hits a question only the real world can answer, it's pushed to real humans through a companion phone app (PWA) — answers flow back into the question tree. Optional: register HTTP-API lab devices (sensors, robot arms) and agents can read from and act on them mid-exploration, with an auditable call log.
+
 **🤖 It keeps running with the UI closed.** A local daemon loops *pick frontier → decompose → execute → review → record → propose new directions*, with a daily budget and rate limits. Low-confidence conclusions are flagged **needs human review** rather than silently written in as fact — AI does the grinding, you make the calls.
 
 **📓 Output is plain Markdown you own.** Project-as-folder structure, `[[bidirectional links]]`, a navigable knowledge graph. Export a note, export the whole vault as a zip, or write straight into a local folder (Obsidian-style). Everything lives in your browser and your filesystem.
@@ -56,8 +80,6 @@ Most "this seems interesting" questions die on **verifiability** and **feasibili
 - **Local** — Ollama, LM Studio, vLLM. Data never leaves your machine.
 - **Cloud** — any OpenAI-compatible endpoint (DeepSeek, Qwen, Claude…).
 - **Self-hosted proxy** — keep your key behind a serverless function (`server/fc_backend.js`).
-
-**🔌 It can touch the physical world.** Register any HTTP-API device (sensors, incubators, robot arms) and agents can read from and act on them mid-exploration, with an auditable call log.
 
 ---
 
@@ -71,6 +93,8 @@ npm run dev        # http://localhost:3000
 ```
 
 Open **⚙️ Settings → Model**, pick a preset, done. No backend, no signup.
+
+Don't want to self-host? [Try the hosted version](https://www.hiexplore.com/) — free, no signup required.
 
 | Setup | Provider | API Base URL | Model |
 |---|---|---|---|
@@ -120,7 +144,7 @@ services/
 
 ## 🤝 Contributing
 
-Issues and PRs welcome — especially **QVS dimension and weight proposals**, agent/exploration templates, IoT device adapters, and model presets. See [CONTRIBUTING.md](./CONTRIBUTING.md).
+Issues and PRs welcome — especially **QVS dimension and weight proposals**, agent/exploration templates, IoT device adapters, and model presets. Discussion lives in [Discussions](https://github.com/chenhaiyan123/ai-auto-explorer/discussions). See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## 📄 License
 
