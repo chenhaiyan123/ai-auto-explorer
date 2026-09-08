@@ -1,5 +1,5 @@
 import { ProblemNode, KnowledgeCard, ResearchFinding, ResearchProgress, NodeStatus } from '../types';
-import { callGemini } from './geminiService';
+import { callGemini, factMessages } from './geminiService';
 import { GEMINI_MODEL } from '../constants';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -39,7 +39,8 @@ export async function exploreResearchNode(
   node: ProblemNode,
   allNodes: ProblemNode[],
   onKnowledgeCard?: (card: KnowledgeCard) => void,
-  onFinding?: (finding: ResearchFinding) => void
+  onFinding?: (finding: ResearchFinding) => void,
+  facts = ''
 ): Promise<{
   notes: string;
   confidence: number;
@@ -76,6 +77,7 @@ ${context || '无'}
   try {
     const response = await callGemini([
       { role: 'system', content: '你是专业的研究助手，擅长系统性分析和知识整理。返回纯JSON，不要markdown代码块。' },
+      ...factMessages(facts),
       { role: 'user', content: prompt }
     ], undefined);
 

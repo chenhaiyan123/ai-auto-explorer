@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Project, ProblemNode, ChatMessage, NodeStatus } from '../types';
-import { callGemini } from '../services/geminiService';
+import { callGemini, factMessages } from '../services/geminiService';
+import { INQUIRY_ROLES, questionFactContext } from '../services/inquiry';
 import { resolveNodeByTitle } from '../services/noteLinks';
 import MarkdownView from './MarkdownView';
 
@@ -56,8 +57,10 @@ const TeamChat: React.FC<{
   const members = useMemo(() => {
     const set = new Set<string>([lead]);
     nodes.forEach(n => { if (n.assignedAgent) set.add(n.assignedAgent); });
+    const inquiry = (selectedNode ? project?.inquiries?.[selectedNode.id] : undefined) || project?.inquiries?.root;
+    if (inquiry?.rounds.length) Object.values(INQUIRY_ROLES).forEach(role => set.add(role.name));
     return Array.from(set);
-  }, [nodes, lead]);
+  }, [nodes, lead, project?.inquiries, selectedNode?.id]);
 
   const mountedRef = useRef(false);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, busy]);
@@ -95,6 +98,7 @@ const TeamChat: React.FC<{
     const recent = history.slice(-4).map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: (h.agent ? `${h.agent}：` : '') + h.text }));
     return await callGemini([
       { role: 'system', content: sys + (ctx ? `\n\n相关笔记内容：\n${ctx}` : '') },
+      ...factMessages(questionFactContext(project?.inquiries, selectedNode?.id)),
       ...recent,
       { role: 'user', content: userText }
     ]);

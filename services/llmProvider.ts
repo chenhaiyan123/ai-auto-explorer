@@ -10,8 +10,9 @@
  */
 
 import { trackEvent } from './analytics';
+import { buildModelRequest, parseModelResponse } from './modelRequest';
 
-export type LLMProviderType = 'cloud-proxy' | 'openai-compatible' | 'trial';
+export type LLMProviderType = 'cloud-proxy' | 'openai-compatible' | 'trial' | 'openai' | 'anthropic';
 
 export interface LLMSettings {
   provider: LLMProviderType;
@@ -125,37 +126,26 @@ export class TrialQuotaError extends Error {
  */
 export async function callLLM(
   messages: { role: string; content: string }[],
-  options: LLMCallOptions = {}
+  options: LLMCallOptions = {},
+  settings?: LLMSettings,
 ): Promise<LLMResult> {
-  const s = loadLLMSettings();
+  const s = settings || loadLLMSettings();
   if (!s.baseUrl) {
     throw new Error('尚未配置模型 API，请点击右上角 ⚙️ 设置模型接入');
   }
 
   const isTrial = s.provider === 'trial';
-  const trialBase = (ENV_TRIAL_API || s.baseUrl).replace(/\/+$/, '');
-  const url = isTrial
-    ? `${trialBase}/api/chat`
-    : s.provider === 'cloud-proxy'
-      ? s.baseUrl
-      : `${s.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const globalTrial = loadLLMSettings();
+  const trustedTrialBase = (ENV_TRIAL_API || (globalTrial.provider === 'trial' ? globalTrial.baseUrl : '')).replace(/\/+$/, '');
+  if (isTrial && settings && (!trustedTrialBase || s.baseUrl.replace(/\/+$/, '') !== trustedTrialBase)) {
+    throw new Error('体验代理仅允许使用全局配置的地址。自定义服务请使用独立 API 协议和密钥');
+  }
+  const { url, headers, body } = buildModelRequest(isTrial && ENV_TRIAL_API ? { ...s, baseUrl: ENV_TRIAL_API } : s, messages, options);
   if (isTrial) {
     headers['X-Device-Id'] = getDeviceId();
     const t = getAuthToken();
     if (t) headers['Authorization'] = `Bearer ${t}`;
-  } else if (s.provider === 'openai-compatible' && s.apiKey) {
-    headers['Authorization'] = `Bearer ${s.apiKey}`;
   }
-
-  const body: any = {
-    model: options.model || s.model,  // 体验模式下后端会忽略此字段、强制用服务端模型
-    messages,
-    max_tokens: options.maxTokens ?? 2048,
-    temperature: options.temperature ?? 0.7,
-  };
-  if (options.jsonMode) body.response_format = { type: 'json_object' };
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs ?? 120000);
@@ -178,15 +168,11 @@ export async function callLLM(
       }
       // 兼容两种错误结构：OpenAI 的 {error:{message}} 与本服务的 {error:"..."}
       const msg = err.error?.message || (typeof err.error === 'string' ? err.error : '') || response.statusText;
-      throw new Error(`HTTP ${response.status}: ${msg}`);
+      throw new Error(`HTTP ${response.status}: ${s.apiKey ? String(msg).split(s.apiKey).join('[密钥已隐藏]') : msg}`);
     }
 
     const data = await response.json();
-    return {
-      content: data.choices?.[0]?.message?.content || data.content || '',
-      usage: data.usage,
-      trial: data._trial,
-    };
+    return parseModelResponse(data, s.provider);
   } finally {
     clearTimeout(timeoutId);
   }

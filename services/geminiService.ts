@@ -77,7 +77,7 @@ export const identifyNodeTask = async (node: ProblemNode): Promise<'image' | 'co
 /**
  * 探索节点（简化prompt）
  */
-export const exploreNode = async (node: ProblemNode, contextNodes: ProblemNode[]) => {
+export const exploreNode = async (node: ProblemNode, contextNodes: ProblemNode[], facts = '') => {
   const deps = node.dependencies || [];
   const context = contextNodes
     .filter(n => deps.includes(n.id) && n.notes)
@@ -117,7 +117,7 @@ ${context ? `相关节点：${context}` : ''}
 6. taskType 从 research/code/web/image 中选最贴切的一个。`;
 
   try {
-    const result = await callGemini([{ role: "user", content: prompt }], undefined, "application/json");
+    const result = await callGemini([...factMessages(facts), { role: "user", content: prompt }], undefined, "application/json");
     // 稳健解析：去 ```fence```，并截取第一个 { 到最后一个 }（兼容会在 JSON 外带说明文字的模型，如 Claude 兼容层）
     let clean = result.replace(/```json\n?|\n?```/g, '').trim();
     const a = clean.indexOf('{'); const b = clean.lastIndexOf('}');
@@ -280,11 +280,14 @@ ${findLines}
   ]);
 };
 
-export const chatWithNode = async (node: ProblemNode, message: string, history: ChatMessage[]): Promise<string> => {
+export const factMessages = (facts: string) => facts ? facts.match(/[\s\S]{1,5500}/g)!.map(content => ({ role: 'user', content })) : [];
+
+export const chatWithNode = async (node: ProblemNode, message: string, history: ChatMessage[], facts = ''): Promise<string> => {
   const recent = history.slice(-3);
   const iotPrompt = buildIoTSystemPrompt(); // 已注册 IoT 设备时，告知 AI 可调用
   let reply = await callGemini([
     { role: "system", content: `背景:${node.title}${iotPrompt}` },
+    ...factMessages(facts),
     ...recent.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.text.slice(0,300) })),
     { role: "user", content: message.slice(0,500) }
   ]);

@@ -1,3 +1,5 @@
+import RouteMap from './components/RouteMap';
+import { migrateProjectOverview, isOverviewNote, projectOverviewContext, overviewExportNodes } from './services/projectOverview';
 import { UserStats, KnowledgeCard, ResearchFinding } from './types';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import MessageBoard from './components/MessageBoard';
@@ -18,7 +20,11 @@ import { analyzeIntentWithAutoConfirm, IntentAnalysis, ExplorationMode } from '.
 import IntentConfirmModal from './components/IntentConfirmModal';
 import { exploreResearchNode, generateResearchReport } from './services/researchExplorer';
 import ResearchReport from './components/ResearchReport';
-import AgentTeamPanel, { AgentTeamState, initialAgentTeamState } from './components/AgentTeamPanel';
+import ProjectWorkspace from './components/ProjectWorkspace';
+import NotesPanel from './components/ProjectNotesTree';
+import { ensureWorktree, saveStage, branchFromStage, switchExplorationBranch, PROJECT_PAGES, ProjectPage } from './services/projectWorktree';
+import { useInquiryTeams } from './services/useInquiryTeams';
+import { recoverInquiry, questionFactContext } from './services/inquiry';
 import QuestionEvaluator from './components/QuestionEvaluator';
 import QuestionBoard from './components/QuestionBoard';
 import TeamChat from './components/TeamChat';
@@ -762,51 +768,7 @@ const DelegationView: React.FC<{ nodeId: string, taskTitle: string }> = ({ nodeI
   );
 };
 
-// ===== 笔记模板（项目像一个代码仓库：README + 主文件 + 关键方向子节点） =====
-const readmeTemplate = (name: string) => `# ${name}
-
-> 项目说明（README）· 本项目不限于代码，也可以是研究 / 产品 / 其它类型。
-
-## 这个项目要解决什么
-（用一两句话写清核心问题或目标）
-
-## 项目类型
-代码开发 / 研究探索 / 产品 / 其它
-
-## 关键节点（二级，建议 5–8 个）
-把项目分解成 5–8 个重要节点，每个是一篇子笔记，像公司里不同部门分工，可由一个专门的 Agent 负责；节点内部可再建三级详情：
-
-- [[方向一]] — 负责 Agent：
-- [[方向二]] — 负责 Agent：
-
-## 说明
-- 「项目总览」笔记里持续更新整体进展。
-- 每个子节点笔记里记录该方向的探索现状与后续方向。`;
-
-// 总览正文：方向 / 进度 / Agent / 笔记链接都由上方仪表盘自动汇总，
-// 这里只写机器算不出来的判断，保持短。
-const overviewTemplate = (name: string) => `# ${name} · 总览
-
-> 一句话说清这个项目在做什么。
-
-## 📌 这是什么
-（背景 + 要解决的问题，三句以内）
-
-## 🎯 成功标准
-- 算成功：
-- 不做：
-
-## 🧩 当前卡点
-- 卡在哪 → 影响什么 → 目前的思路
-
-## 🗺️ 下一步
-- 近期：
-- 中期：
-
-## 💡 关键结论
-- （日期）决定了什么，因为……
-`;
-
+// 方向笔记模板；项目说明与摘要统一在项目总览中维护。
 const directionTemplate = (title: string) => `# ${title}
 
 ## 探索现状
@@ -837,194 +799,13 @@ const recommendAgentFor = (title: string): string => {
   return '通用研究员';
 };
 
-// 确保每个项目都有 README + 总览（老项目自动补齐）
-function ensureOverview(p: Project): Project {
-  const nodes = p.nodes || [];
-  if (nodes.some(n => n.noteType === 'overview')) return p;
-  const name = p.name || (p.metaProblem || '').slice(0, 12) || '项目';
-  const now = Date.now();
-  const add: ProblemNode[] = [];
-  if (!nodes.some(n => n.noteType === 'readme')) {
-    add.push({ id: uuidv4(), title: 'README', noteType: 'readme', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], fullNote: readmeTemplate(name), noteUpdatedAt: now });
-  }
-  add.push({ id: uuidv4(), title: '总览', noteType: 'overview', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], fullNote: overviewTemplate(name), noteUpdatedAt: now });
-  return { ...p, nodes: [...add, ...nodes] };
+// 保留旧说明的原文和链接，统一进入项目总览。新项目仅创建一份摘要笔记。
+function ensureOverview(project: Project): Project {
+  const p = migrateProjectOverview(project);
+  if (p.nodes.some(n => n.noteType === 'overview')) return p;
+  const overview: ProblemNode = { id: uuidv4(), title: '项目总览', noteType: 'overview', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], fullNote: '', noteUpdatedAt: Date.now() };
+  return { ...p, nodes: [overview, ...p.nodes] };
 }
-
-// 项目=文件夹，里面是 README / 项目总览 / 关键方向子节点
-const NotesPanel: React.FC<{
-  projects: Project[];
-  currentProjectId: string | null;
-  selectedNodeId: string | null;
-  search: string;
-  onSearch: (s: string) => void;
-  onOpenNode: (projectId: string, nodeId: string) => void;
-  onCreateProject: () => void;
-  onCreateDirection: (projectId: string, title?: string) => void;
-  onAddChild: (projectId: string, parentId: string) => void;
-  onBuildTeam: (projectId: string) => void;
-  onCleanup: (projectId: string) => void;
-  onImport?: () => void;
-  onExportVault?: () => void;
-  onSaveToFolder?: () => void;
-}> = ({ projects, currentProjectId, selectedNodeId, search, onSearch, onOpenNode, onCreateProject, onCreateDirection, onAddChild, onBuildTeam, onCleanup, onImport, onExportVault, onSaveToFolder }) => {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set()); // 节点子项默认收起，只有手动展开的才显示子节点
-  const toggleNode = (id: string) => setExpandedNodes(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
-  const q = search.trim().toLowerCase();
-
-  // 节点排序：README → 总览 → 子节点（按方向/链接热度）
-  const typeRank = (n: ProblemNode) => n.noteType === 'readme' ? 0 : n.noteType === 'overview' ? 1 : 2;
-  const sortNotes = (list: ProblemNode[]) => [...list].sort((a, b) =>
-    typeRank(a) - typeRank(b) || (b.noteUpdatedAt || 0) - (a.noteUpdatedAt || 0));
-
-  const allNodes = useMemo(() => projects.flatMap(p => (p.nodes || []).map(n => ({ n, p }))), [projects]);
-  const searchResults = useMemo(() => {
-    if (!q) return [] as { n: ProblemNode; p: Project }[];
-    return allNodes.filter(({ n, p }) =>
-      n.title.toLowerCase().includes(q) ||
-      (n.fullNote || '').toLowerCase().includes(q) ||
-      p.name.toLowerCase().includes(q) ||
-      (n.tags || []).some(t => t.toLowerCase().includes(q)));
-  }, [allNodes, q]);
-
-  const toggleProject = (id: string) => setCollapsed(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
-
-  const noteIcon = (n: ProblemNode) => n.noteType === 'readme' ? '📘' : n.noteType === 'overview' ? '🏠' : '📄';
-
-  // 一行笔记。childCount>0 时显示折叠箭头（默认收起）。canAddChild: 二级节点可加三级详情。
-  const NoteRow = (projectId: string, n: ProblemNode, depth: number, opts?: { showProject?: string; canAddChild?: boolean; childCount?: number; expanded?: boolean }) => (
-    <div key={n.id} className="flex items-center group/row" style={{ paddingLeft: 16 + depth * 16 }}>
-      {opts?.childCount ? (
-        <button onClick={() => toggleNode(n.id)} className="px-1 py-1.5 text-slate-500 hover:text-slate-300 flex-shrink-0" title={opts.expanded ? '收起' : `展开 ${opts.childCount} 个子项`}>
-          <span className={`text-[9px] inline-block transition-transform ${opts.expanded ? 'rotate-90' : ''}`}>▶</span>
-        </button>
-      ) : <span className="w-[16px] flex-shrink-0" />}
-      <button
-        onClick={() => onOpenNode(projectId, n.id)}
-        className={`flex-1 text-left pr-2 py-1.5 rounded-lg border transition-colors min-w-0 ${
-          selectedNodeId === n.id ? 'bg-purple-600/15 border-purple-500/50' : 'bg-transparent border-transparent hover:bg-slate-800 hover:border-slate-700'
-        }`}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[11px]">{noteIcon(n)}</span>
-            <span className={`text-[11px] font-semibold truncate ${selectedNodeId === n.id ? 'text-purple-200' : 'text-slate-200'}`}>{n.title || '未命名'}</span>
-            {!opts?.expanded && opts?.childCount ? <span className="flex-shrink-0 text-[9px] text-slate-600">{opts.childCount}</span> : null}
-          </span>
-          {n.assignedAgent && <span className="flex-shrink-0 text-[8px] text-blue-400 bg-blue-900/30 border border-blue-500/30 rounded-full px-1.5 py-0.5 truncate max-w-[72px]">🤖 {n.assignedAgent}</span>}
-        </div>
-        {opts?.showProject && <div className="text-[9px] text-slate-600 truncate mt-0.5 ml-5">📁 {opts.showProject}</div>}
-      </button>
-      {opts?.canAddChild && <button onClick={() => onAddChild(projectId, n.id)} className="opacity-0 group-hover/row:opacity-100 px-1.5 text-slate-500 hover:text-emerald-400 text-sm flex-shrink-0" title="在这个节点下加一条三级详情">＋</button>}
-    </div>
-  );
-
-  return (
-    <div className="h-full flex flex-col">
-      <div className="p-3 border-b border-slate-800 space-y-2">
-        <input
-          value={search}
-          onChange={e => onSearch(e.target.value)}
-          placeholder="🔍 搜索 / 新建项目名…"
-          className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-[11px] text-slate-200 outline-none focus:ring-1 focus:ring-purple-500"
-        />
-        <button onClick={() => onCreateProject()} className="w-full py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-[11px] font-bold transition-colors">
-          ＋ 新建项目{q ? `「${search.trim()}」` : ''}
-        </button>
-        {(onImport || onExportVault || onSaveToFolder) && (
-          <div className="flex gap-1">
-            {onImport && <button onClick={onImport} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title="导入 .md 文件">⬆ 导入</button>}
-            {onExportVault && <button onClick={onExportVault} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title="导出当前项目为 Markdown(.zip，项目即文件夹)">⬇ 导出</button>}
-            {onSaveToFolder && <button onClick={onSaveToFolder} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title="保存到本地文件夹(Vault)">💾 本地库</button>}
-          </div>
-        )}
-        <div className="text-[9px] text-slate-600 flex justify-between">
-          <span>{projects.length} 个项目</span>
-          <span>项目 › 节点 › 详情（3 级）</span>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto scroll-hide p-2 space-y-0.5">
-        {q ? (
-          searchResults.length === 0
-            ? <div className="text-center text-[11px] text-slate-600 py-8">没有匹配的笔记</div>
-            : searchResults.map(({ n, p }) => NoteRow(p.id, n, 0, { showProject: p.name }))
-        ) : projects.length === 0 ? (
-          <div className="text-center text-[11px] text-slate-600 py-8">还没有项目，点上方新建</div>
-        ) : (
-          projects.map(p => {
-            const isOpen = !collapsed.has(p.id);
-            const pn = p.nodes || [];
-            const byId = new Map(pn.map(n => [n.id, n]));
-            const isDir = (n?: ProblemNode) => !!n && (n.noteType === 'direction' || !n.noteType);
-            // 结构父级 = 依赖里那个「方向」节点（README/总览 不作为嵌套父级）
-            const parentOf = (n: ProblemNode) => (n.dependencies || []).map(d => byId.get(d)).find(pp => isDir(pp));
-            const specials = pn.filter(n => n.noteType === 'readme' || n.noteType === 'overview');
-            const level2 = sortNotes(pn.filter(n => isDir(n) && !parentOf(n)));
-            const childrenOf = (id: string) => sortNotes(pn.filter(n => isDir(n) && parentOf(n)?.id === id));
-            // 二级节点可按 folder 字段归到「工作板块」文件夹下（按成员分工）
-            const fname = (n: ProblemNode) => (n.folder || '').trim();
-            const grouped = new Map<string, ProblemNode[]>();
-            const ungrouped: ProblemNode[] = [];
-            for (const n of level2) { const f = fname(n); if (f) { if (!grouped.has(f)) grouped.set(f, []); grouped.get(f)!.push(n); } else ungrouped.push(n); }
-            // 递归渲染节点（子项默认收起；seen 防止依赖成环时无限递归）
-            const renderNode = (n: ProblemNode, depth: number, seen: Set<string>): React.ReactNode => {
-              if (seen.has(n.id)) return null;
-              const nextSeen = new Set(seen); nextSeen.add(n.id);
-              const kids = childrenOf(n.id).filter(c => !nextSeen.has(c.id));
-              const expanded = expandedNodes.has(n.id);
-              return (
-                <div key={n.id}>
-                  {NoteRow(p.id, n, depth, { canAddChild: !parentOf(n), childCount: kids.length, expanded })}
-                  {expanded && kids.map(c => renderNode(c, Math.min(depth + 1, 3), nextSeen))}
-                </div>
-              );
-            };
-            return (
-              <div key={p.id}>
-                <div className={`flex items-center group rounded-lg ${p.id === currentProjectId ? 'bg-slate-800/40' : ''}`}>
-                  <button onClick={() => toggleProject(p.id)} className="flex-1 flex items-center gap-1.5 py-2 px-1 text-left min-w-0">
-                    <span className={`text-slate-500 text-[9px] transition-transform ${isOpen ? 'rotate-90' : ''}`}>▶</span>
-                    <span className="text-[12px]">{isOpen ? '📂' : '📁'}</span>
-                    <span className={`text-[11px] font-bold truncate ${p.id === currentProjectId ? 'text-purple-300' : 'text-slate-200'}`}>{p.name}</span>
-                    <span className="text-[9px] text-slate-600">{level2.length}</span>
-                  </button>
-                  <button onClick={() => onCleanup(p.id)} className="opacity-0 group-hover:opacity-100 px-1 text-slate-500 hover:text-amber-400 text-[11px]" title={`清理「${p.name}」里待探索且无内容的子问题`}>🧹</button>
-                  <button onClick={() => onBuildTeam(p.id)} className="opacity-0 group-hover:opacity-100 px-1 text-slate-500 hover:text-blue-400 text-[11px]" title={`AI 组建团队：读懂「${p.name}」目标→拆解 5–8 个关键节点→各配一名负责 Agent`}>🤝</button>
-                  <button onClick={() => onCreateDirection(p.id)} className="opacity-0 group-hover:opacity-100 px-1.5 text-slate-500 hover:text-emerald-400 text-sm" title={`在「${p.name}」里新增一个关键节点（二级）`}>＋</button>
-                </div>
-                {isOpen && (
-                  <div>
-                    {specials.map(n => NoteRow(p.id, n, 0))}
-                    {Array.from(grouped.entries()).map(([fn, fnodes]) => {
-                      const fkey = `${p.id}::f::${fn}`;
-                      const fopen = !collapsed.has(fkey);
-                      const agent = fnodes.find(n => n.assignedAgent)?.assignedAgent;
-                      return (
-                        <div key={fkey}>
-                          <button onClick={() => toggleProject(fkey)} style={{ paddingLeft: 14 }} className="w-full flex items-center gap-1.5 py-1.5 text-left min-w-0 hover:bg-slate-800/40 rounded-lg">
-                            <span className={`text-slate-500 text-[9px] transition-transform ${fopen ? 'rotate-90' : ''}`}>▶</span>
-                            <span className="text-[11px]">{fopen ? '📂' : '📁'}</span>
-                            <span className="text-[11px] font-bold text-slate-300 truncate">{fn}</span>
-                            {agent && <span className="flex-shrink-0 text-[8px] text-blue-400 bg-blue-900/30 border border-blue-500/30 rounded-full px-1.5 py-0.5 truncate max-w-[84px]">🤖 {agent}</span>}
-                            <span className="text-[9px] text-slate-600">{fnodes.length}</span>
-                          </button>
-                          {fopen && sortNotes(fnodes).map(n => renderNode(n, 1, new Set<string>()))}
-                        </div>
-                      );
-                    })}
-                    {ungrouped.map(n => renderNode(n, 0, new Set<string>()))}
-                    {pn.length === 0 && <div className="text-[9px] text-slate-600 italic pl-7 py-1">空项目</div>}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-};
 
 // --- 主应用 ---
 const App: React.FC = () => {
@@ -1044,6 +825,7 @@ const App: React.FC = () => {
   }, [theme]);
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const inquiryTeams = useInquiryTeams(projects, setProjects, user?.username);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPhone, setLoginPhone] = useState('');
   const [isOtpSent, setIsOtpSent] = useState(false);
@@ -1088,10 +870,10 @@ const App: React.FC = () => {
     }
   }, [projects, currentProjectId]);
 
-  const [notesPanelMode, setNotesPanelMode] = useState<number>(1);
+  const [notesPanelMode, setNotesPanelMode] = useState<number>(() => window.innerWidth < 768 ? 0 : 1);
   const [sidebarWidth, setSidebarWidth] = useState<number>(320); // 可调节的侧边栏宽度
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [sidebarActiveTab, setSidebarActiveTab] = useState<'butler' | 'agents' | 'research' | 'notes'>('notes');
+  const [projectPage, setProjectPage] = useState<{ projectId: string; scopeId: string; page: ProjectPage } | null>(null);
   const [notesSearch, setNotesSearch] = useState('');
   const [showGraphModal, setShowGraphModal] = useState(false); // 图谱弹出层
   const [showFeedback, setShowFeedback] = useState(false); // 反馈弹窗
@@ -1111,7 +893,7 @@ const App: React.FC = () => {
     window.addEventListener('focus', onFocus);
     return () => { alive = false; clearInterval(id); window.removeEventListener('focus', onFocus); };
   }, [activeModel]);
-  const [rightChatOpen, setRightChatOpen] = useState(true);     // 右侧 AI 对话栏
+  const [rightChatOpen, setRightChatOpen] = useState(false);     // 右侧 AI 对话栏
   const [rightChatWidth, setRightChatWidth] = useState(360);
   // 仪表盘点 Agent → 打开群聊并把 @某某 塞进输入框（nonce 保证同一个 Agent 连点两次也生效）
   const [chatPrefill, setChatPrefill] = useState<{ text: string; nonce: number } | null>(null);
@@ -1120,6 +902,8 @@ const App: React.FC = () => {
     setChatPrefill({ text: `@${agent} `, nonce: Date.now() });
   }, []);
   const [nodes, setNodes] = useState<ProblemNode[]>([]);
+  const workspaceEpochRef = useRef(0);
+  const projectHydrationRef = useRef<{ nodes: ProblemNode[]; cards: KnowledgeCard[]; findings: ResearchFinding[] } | null>(null);
   const pendingSelectRef = useRef<string | null>(null); // 切换项目后要自动选中的节点
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
@@ -1133,7 +917,7 @@ const App: React.FC = () => {
   const [decision, setDecision] = useState<DecisionPoint | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId: string } | null>(null);
   // 决策节点持久化（重点功能）：记录弹窗草稿 + 项目级时间线
-  const [decisionDraft, setDecisionDraft] = useState<(DecisionDraft & { pendingAction?: 'delete' | 'invalidate' }) | null>(null);
+  const [decisionDraft, setDecisionDraft] = useState<(DecisionDraft & { projectId: string; pendingAction?: 'delete' | 'invalidate' }) | null>(null);
   const [showDecisionTimeline, setShowDecisionTimeline] = useState(false);
   
   // 通知系统
@@ -1147,9 +931,6 @@ const App: React.FC = () => {
   
   // AI管家聊天记录（持久化到项目中）
   const [butlerChatHistory, setButlerChatHistory] = useState<ChatMessage[]>([]);
-  
-  // Agent团队状态（持久化）
-  const [agentTeamState, setAgentTeamState] = useState<AgentTeamState>(initialAgentTeamState);
   
   const isLoopingRef = useRef(false);
   const isProcessingRef = useRef(false);
@@ -1276,7 +1057,7 @@ const App: React.FC = () => {
   // 引用节点到AI管家
   const handleQuoteNodeToButler = useCallback((node: ProblemNode) => {
     setQuotedNodeForButler(node);
-    setSidebarActiveTab('butler');
+    setRightChatOpen(true);
     if (notesPanelMode === 0) setNotesPanelMode(1);
   }, [notesPanelMode]);
 
@@ -1288,7 +1069,7 @@ const App: React.FC = () => {
       let p: Project[] | undefined;
       try { p = await getWithMigration<Project[]>(k); } catch { p = undefined; }
       if (cancelled) return;
-      const list = (Array.isArray(p) ? p : []).map(ensureOverview);
+      const list = (Array.isArray(p) ? p : []).map(ensureOverview).map(project => ensureWorktree({ ...project, inquiries: Object.fromEntries(Object.entries(project.inquiries || {}).map(([id, workspace]) => [id, recoverInquiry(workspace)])) }));
       setProjects(list);
       setCurrentProjectId(null);
       if (list.length === 0) setShowMetaModal(true);
@@ -1302,22 +1083,42 @@ const App: React.FC = () => {
   const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId) || null, [projects, currentProjectId]);
   // 项目视图：当前项目用实时 nodes，其它项目用各自保存的 nodes（供左侧项目树使用）
   const projectsView = useMemo(() => projects.map(p => p.id === currentProjectId ? { ...p, nodes } : p), [projects, currentProjectId, nodes]);
-  const selectedNode = useMemo(() => nodes.find(n => n.id === selectedNodeId) || null, [nodes, selectedNodeId]);
+  const activeProjectPage = selectedNodeId && nodes.some(n => n.id === selectedNodeId && isOverviewNote(n)) ? { scopeId: 'root', page: 'research' as ProjectPage } : projectPage?.projectId === currentProjectId ? projectPage : { scopeId: 'root', page: 'research' as ProjectPage };
+  const selectedNode = useMemo(() => nodes.find(n => n.id === selectedNodeId && !isOverviewNote(n)) || null, [nodes, selectedNodeId]);
+  useEffect(() => {
+    if (currentProjectId && nodes.some(n => n.id === selectedNodeId && isOverviewNote(n))) {
+      setProjectPage({ projectId: currentProjectId, scopeId: 'root', page: 'research' });
+      setSelectedNodeId(null);
+    }
+  }, [selectedNodeId, currentProjectId, nodes]);
   const decisionNode = useMemo(() => decision ? nodes.find(n => n.id === decision.nodeId) || null : null, [decision, nodes]);
   const filteredNodes = useMemo(() => { if (!focusedNodeId) return nodes; const vis = new Set<string>([focusedNodeId]); const findA = (id: string) => { const n = nodes.find(x => x.id === id); if (n) n.dependencies.forEach(d => { if (!vis.has(d)) { vis.add(d); findA(d); } }); }; const findD = (id: string) => { nodes.forEach(n => { if (n.dependencies.includes(id) && !vis.has(n.id)) { vis.add(n.id); findD(n.id); } }); }; findA(focusedNodeId); findD(focusedNodeId); return nodes.filter(n => vis.has(n.id)); }, [nodes, focusedNodeId]);
   const criticalNodes = useMemo(() => nodes.filter(n => n.isCritical), [nodes]);
 
   useEffect(() => { if (user && projects.length > 0) idbSet(`exploration_projects_${user.username}`, projects).catch(e => console.warn('[HiExplore] 保存项目失败', e)); }, [projects, user?.username]);
-  useEffect(() => { const p = projects.find(x => x.id === currentProjectId); if (p) { setSelectedNodeId(pendingSelectRef.current); pendingSelectRef.current = null; setFocusedNodeId(null); setDecision(null); setNodes(p.nodes || []); setIsLooping(false); recentTitlesRef.current = (p.nodes || []).map(n => n.title).slice(-60); emptyRoundsRef.current = 0; realityPromptedRef.current = false; setKnowledgeCards((p as any).knowledgeCards || []); setResearchFindings((p as any).researchFindings || []); setResearchReport(null); setAgentTeamState((p as any).agentTeamState || initialAgentTeamState); } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id); }, [currentProjectId, projects.length]);
-  useEffect(() => { if (currentProjectId && nodes.length > 0) setProjects(prev => { const i = prev.findIndex(p => p.id === currentProjectId); if (i === -1 || prev[i].nodes === nodes) return prev; const n = [...prev]; n[i] = { ...n[i], nodes }; return n; }); }, [nodes, currentProjectId]);
-  useEffect(() => { if (currentProjectId && currentProject?.explorationMode === 'research') setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, knowledgeCards, researchFindings } as any : p)); }, [knowledgeCards, researchFindings, currentProjectId]);
+  useEffect(() => {
+    const p = projects.find(x => x.id === currentProjectId);
+    if (p) {
+      const loaded = { nodes: p.nodes || [], cards: p.knowledgeCards || [], findings: p.researchFindings || [] };
+      projectHydrationRef.current = loaded;
+      workspaceEpochRef.current++;
+      setSelectedNodeId(pendingSelectRef.current); pendingSelectRef.current = null;
+      setFocusedNodeId(null); setDecision(null); setDecisionDraft(null);
+      setNodes(loaded.nodes); setKnowledgeCards(loaded.cards); setResearchFindings(loaded.findings);
+      setIsLooping(false); setContinuousMode(false); setResearchReport(null);
+      recentTitlesRef.current = loaded.nodes.map(n => n.title).slice(-60);
+      emptyRoundsRef.current = 0; realityPromptedRef.current = false;
+    } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id);
+  }, [currentProjectId, projects.length]);
+  useEffect(() => { const h = projectHydrationRef.current; if (h && nodes !== h.nodes) return; if (currentProjectId && nodes.length > 0) setProjects(prev => { const i = prev.findIndex(p => p.id === currentProjectId); if (i === -1 || prev[i].nodes === nodes) return prev; const n = [...prev]; n[i] = { ...n[i], nodes }; return n; }); }, [nodes, currentProjectId]);
+  useEffect(() => { const h = projectHydrationRef.current; if (h && (knowledgeCards !== h.cards || researchFindings !== h.findings)) return; if (currentProjectId && currentProject?.explorationMode === 'research') setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, knowledgeCards, researchFindings } as any : p)); }, [knowledgeCards, researchFindings, currentProjectId]);
   
-  // 保存Agent团队状态到项目
-  useEffect(() => { if (currentProjectId && agentTeamState) setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, agentTeamState } as any : p)); }, [agentTeamState, currentProjectId]);
+
+  useEffect(() => { const h = projectHydrationRef.current; if (h && nodes === h.nodes && knowledgeCards === h.cards && researchFindings === h.findings) projectHydrationRef.current = null; }, [nodes, knowledgeCards, researchFindings]);
 
   const addNode = useCallback((title: string, deps: string[] = [], notes = "", anchorId?: string) => { const n: ProblemNode = { id: uuidv4(), title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: deps, notes, chatHistory: [], agentResults: [], anchorId }; setNodes(prev => [...prev, n]); return n; }, []);
   const updateNode = useCallback((id: string, u: Partial<ProblemNode>) => setNodes(prev => prev.map(n => n.id === id ? { ...n, ...u } : n)), []);
-  const createProjectWithMode = useCallback((input: string, mode: ExplorationMode, analysis?: IntentAnalysis) => { markMilestone('funnel_project_created'); const p: Project = { id: uuidv4(), name: analysis?.suggestedTitle || input.slice(0, 15), metaProblem: input, createdAt: Date.now(), explorationMode: mode, intentAnalysis: analysis, nodes: [{ id: uuidv4(), title: input, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: "", chatHistory: [], agentResults: [] }] }; setProjects(prev => [...prev, p]); setCurrentProjectId(p.id); setPendingIntent(null); setMetaInput(''); setShowMetaModal(false);
+  const createProjectWithMode = useCallback((input: string, mode: ExplorationMode, analysis?: IntentAnalysis) => { markMilestone('funnel_project_created'); const p: Project = { id: uuidv4(), name: analysis?.suggestedTitle || input.slice(0, 15), metaProblem: input, createdAt: Date.now(), explorationMode: mode, intentAnalysis: analysis, nodes: [{ id: uuidv4(), title: input, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [], notes: "", chatHistory: [], agentResults: [] }] }; setProjects(prev => [...prev, ensureWorktree(ensureOverview(p))]); setCurrentProjectId(p.id); setPendingIntent(null); setMetaInput(''); setShowMetaModal(false);
     // 新项目不再直接开跑，先拟一份目录跟用户对齐——这是整个节奏改造的入口
     setTimeout(() => proposeOutlineRef.current?.(p.id, input), 300);
   }, []);
@@ -1401,10 +1202,12 @@ const App: React.FC = () => {
     const findings = researchFindings.map(f => f.insight).filter(Boolean);
     const cards = knowledgeCards.map(c => c.title).filter(Boolean);
     overviewRefreshingRef.current = true;
+    const overviewEpoch = workspaceEpochRef.current;
     try {
       const md = await synthesizeOverview(name, goal, directions, findings, cards);
       if (md && md.trim().length > 20) {
-        updateNode(overview.id, { fullNote: md.trim(), autoNote: true, noteUpdatedAt: Date.now() });
+        if (overviewEpoch !== workspaceEpochRef.current) return;
+        setNodes(prev => prev.map(n => n.id === overview.id && n.autoNote !== false ? { ...n, fullNote: md.trim(), autoNote: true, noteUpdatedAt: Date.now() } : n));
         solvedSinceOverviewRef.current = 0;
         if (reason === 'start') addNotification('info', '🏠 已生成项目总览', '总览会随探索进度自动更新');
       }
@@ -1541,8 +1344,8 @@ const App: React.FC = () => {
             if (f.importance === 'high') {
               addNotification('discovery', '🔥 重要发现', f.insight.slice(0, 50) + '...');
             }
-          }) 
-        : exploreNode(unexplored, nodes);
+          }, questionFactContext(currentProject?.inquiries, unexplored.id))
+        : exploreNode(unexplored, nodes, questionFactContext(currentProject?.inquiries, unexplored.id));
       
       const result = await Promise.race([explorationPromise, timeoutPromise]) as any;
       
@@ -1808,16 +1611,11 @@ const App: React.FC = () => {
     markMilestone('funnel_project_created');
     const name = (presetName || notesSearch || '').trim().slice(0, 40) || '新项目';
     const projId = uuidv4();
-    const readmeId = uuidv4();
-    const overviewId = uuidv4();
-    const now = Date.now();
-    const readme: ProblemNode = { id: readmeId, title: 'README', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], noteType: 'readme', fullNote: readmeTemplate(name), noteUpdatedAt: now };
-    const overview: ProblemNode = { id: overviewId, title: '总览', status: NodeStatus.SOLVED, confidence: 1, dependencies: [], notes: '', chatHistory: [], agentResults: [], noteType: 'overview', fullNote: overviewTemplate(name), noteUpdatedAt: now };
-    const p: Project = { id: projId, name, metaProblem: name, createdAt: now, explorationMode: 'research', nodes: [readme, overview] };
+    const p: Project = { id: projId, name, metaProblem: name, createdAt: Date.now(), explorationMode: 'research', nodes: [] };
     // 漏斗关键一步：建项目 = 真正开始用了（区分"点进来看看"和"上手了"）
     trackEvent('project_created', { 已有项目数: projects.length });
-    setProjects(prev => [...prev, p]);
-    pendingSelectRef.current = overviewId; // 切换后自动打开「项目总览」
+    setProjects(prev => [...prev, ensureWorktree(ensureOverview(p))]);
+    pendingSelectRef.current = null; // 新项目默认打开项目总览
     setCurrentProjectId(projId);
     setNotesSearch('');
   }, [notesSearch]);
@@ -1869,8 +1667,18 @@ const App: React.FC = () => {
 
   // 打开某个节点（必要时先切换到它所属的项目）
   const openNode = useCallback((projectId: string, nodeId: string) => {
+    if (window.innerWidth < 768) setNotesPanelMode(0);
     if (projectId === currentProjectId) { setSelectedNodeId(nodeId); }
     else { pendingSelectRef.current = nodeId; setCurrentProjectId(projectId); }
+  }, [currentProjectId]);
+
+  const openProjectPage = useCallback((projectId: string, scopeId: string, page: ProjectPage) => {
+    if (window.innerWidth < 768) setNotesPanelMode(0);
+    setProjectPage({ projectId, scopeId: page === 'worktree' ? 'root' : scopeId, page });
+    pendingSelectRef.current = null;
+    setSelectedNodeId(null);
+    setFocusedNodeId(null);
+    if (projectId !== currentProjectId) setCurrentProjectId(projectId);
   }, [currentProjectId]);
 
   // 兜底：纯启发式给现有方向指派 Agent（无模型时用）
@@ -1894,9 +1702,8 @@ const App: React.FC = () => {
     if (!proj) return;
     const srcNodes = projectId === currentProjectId ? nodes : (proj.nodes || []);
     const overview = srcNodes.find(n => n.noteType === 'overview');
-    const readme = srcNodes.find(n => n.noteType === 'readme');
     const goal = proj.metaProblem || proj.name;
-    const context = `${overview?.fullNote || ''}\n${readme?.fullNote || ''}`.trim();
+    const context = projectOverviewContext({ ...proj, nodes: srcNodes });
     setTeamBusy(true);
     try {
       const plan = await buildTeamPlan(goal, context);
@@ -1929,7 +1736,7 @@ ${plan.lead.duty}
 `;
       };
       const apply = (list: ProblemNode[]): ProblemNode[] => {
-        const next = list.map(n => n.id === overviewId ? { ...n, assignedAgent: plan.lead.role, fullNote: buildOverviewDoc(), noteUpdatedAt: now } : n);
+        const next = list.map(n => n.id === overviewId ? { ...n, assignedAgent: plan.lead.role, ...(n.autoNote === false ? {} : { fullNote: buildOverviewDoc(), noteUpdatedAt: now }) } : n);
         for (const m of plan.directions) {
           const existing = next.find(n => norm(n.title) === norm(m.title));
           if (existing) {
@@ -1976,7 +1783,7 @@ ${plan.lead.duty}
   const handleExportVault = useCallback(() => {
     if (!nodes.length) { alert('当前没有笔记可导出。'); return; }
     // 文件夹代表一个项目：以项目名作为顶层文件夹，子节点作为里面的 .md
-    exportVaultZip(nodes, (currentProject?.name || 'AI-Explorer') + '-Vault', currentProject?.name);
+    exportVaultZip(currentProject ? overviewExportNodes({ ...currentProject, nodes }) : nodes, (currentProject?.name || 'AI-Explorer') + '-Vault', currentProject?.name);
     // 导出 = 产出对用户有价值到愿意带走，是最强的留存信号
     trackEvent('vault_exported', { 笔记数: nodes.length });
   }, [nodes, currentProject]);
@@ -1985,7 +1792,7 @@ ${plan.lead.duty}
   const handleSaveToFolder = useCallback(async () => {
     if (!supportsDirectoryPicker()) { alert('当前浏览器不支持直接保存到本地文件夹，请用「导出」下载 .zip（推荐 Chrome / Edge）。'); return; }
     if (!nodes.length) { alert('当前没有笔记可保存。'); return; }
-    try { const count = await saveVaultToDirectory(nodes); alert(`已保存 ${count} 篇 .md 到所选文件夹。`); }
+    try { const count = await saveVaultToDirectory(currentProject ? overviewExportNodes({ ...currentProject, nodes }) : nodes); alert(`已保存 ${count} 篇 .md 到所选文件夹。`); }
     catch (e: any) { if (e?.name !== 'AbortError') alert('保存失败：' + (e?.message || e)); }
   }, [nodes]);
   const handleDeleteNode = useCallback((id: string) => { setNodes(prev => prev.filter(n => n.id !== id).map(n => ({ ...n, dependencies: n.dependencies.filter(d => d !== id) }))); if (selectedNodeId === id) setSelectedNodeId(null); if (focusedNodeId === id) setFocusedNodeId(null); if (decision?.nodeId === id) setDecision(null); }, [selectedNodeId, focusedNodeId, decision]);
@@ -2266,7 +2073,7 @@ ${plan.lead.duty}
     const overview = nodes.find(n => n.noteType === 'overview');
     setRouteBusy('正在规划探索路线…');
     try {
-      const route = await planRoute(goal, currentProject?.name || '项目', overview?.fullNote || overview?.notes);
+      const route = await planRoute(goal, currentProject?.name || '项目', currentProject ? projectOverviewContext({ ...currentProject, nodes }) : overview?.fullNote || overview?.notes);
       if (!route) { addNotification('warning', '路线规划失败', '模型没给出可用的路线，换个模型或稍后再试。'); return; }
       const first = route.anchors[0];
       // 已有的方向节点归到第一段，免得它们绕过闸门
@@ -2536,15 +2343,16 @@ ${plan.lead.duty}
   const openDecisionRecorder = useCallback((nodeId: string, trigger: DecisionTrigger, opts?: { pendingAction?: 'delete' | 'invalidate'; presetQuestion?: string; presetOptions?: { label: string; chosen: boolean }[]; skippable?: boolean }) => {
     const node = nodes.find(n => n.id === nodeId);
     if (!node) return;
+    if (!currentProjectId) return;
     setDecisionDraft({
-      nodeId, nodeTitle: node.title, trigger,
+      projectId: currentProjectId, nodeId, nodeTitle: node.title, trigger,
       snapshot: captureSubtree(nodes, nodeId),
       presetQuestion: opts?.presetQuestion,
       presetOptions: opts?.presetOptions,
       skippable: opts?.skippable,
       pendingAction: opts?.pendingAction,
     });
-  }, [nodes]);
+  }, [nodes, currentProjectId]);
 
   /** 执行关键时机弹窗附带的动作（删除 / 设为无效） */
   const runPendingDecisionAction = useCallback((draft: DecisionDraft & { pendingAction?: 'delete' | 'invalidate' }) => {
@@ -2572,13 +2380,13 @@ ${plan.lead.duty}
   useEffect(() => { contradictedDecisionRef.current = handleContradicted; }, [handleContradicted]);
 
   const handleSaveDecision = useCallback((question: string, options: DecisionOption[]) => {
-    if (!decisionDraft || !currentProjectId) return;
+    if (!decisionDraft || !currentProjectId || decisionDraft.projectId !== currentProjectId) return;
     const record = createDecision({ nodeId: decisionDraft.nodeId, nodeTitle: decisionDraft.nodeTitle, question, options, trigger: decisionDraft.trigger, snapshot: decisionDraft.snapshot });
-    setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, decisions: [...(p.decisions || []), record] } : p));
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? saveStage({ ...p, nodes, decisions: [...(p.decisions || []), record] }, `决策：${question}`, '保留决策时的完整项目状态（后续操作执行前）', record.id) : p));
     runPendingDecisionAction(decisionDraft);
     setDecisionDraft(null);
     trackEvent('record_decision', { trigger: decisionDraft.trigger });
-  }, [decisionDraft, currentProjectId, runPendingDecisionAction]);
+  }, [decisionDraft, currentProjectId, nodes, runPendingDecisionAction]);
 
   const handleSkipDecision = useCallback(() => {
     if (!decisionDraft) return;
@@ -2604,6 +2412,44 @@ ${plan.lead.duty}
     setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, decisions: (p.decisions || []).filter(d => d.id !== decisionId) } : p));
   }, [currentProjectId]);
   const handleGenerateReport = async () => { if (!currentProject || isGeneratingReport) return; setIsGeneratingReport(true); try { setResearchReport(await generateResearchReport(currentProject.metaProblem, nodes, knowledgeCards)); } finally { setIsGeneratingReport(false); } };
+
+  const worktreeBusy = !!(isLooping || isProcessingRef.current || isGeneratingReport || teamBusy || outlineBusy || routeBusy || simBusy || overviewRefreshingRef.current || isProposingRef.current || (currentProjectId && inquiryTeams.isProjectRunning(currentProjectId)));
+  const stopProjectWork = () => {
+    isLoopingRef.current = false;
+    setIsLooping(false); setContinuousMode(false);
+    if (currentProjectId) inquiryTeams.stopProject(currentProjectId);
+  };
+  const restoreProjectStage = (next: Project) => {
+    if (worktreeBusy) throw new Error('请先暂停任务并等待当前请求结束');
+    workspaceEpochRef.current++;
+    stopProjectWork();
+    setProjects(prev => prev.map(p => p.id === next.id ? next : p));
+    projectsRef.current = projectsRef.current.map(p => p.id === next.id ? next : p);
+    setNodes(next.nodes);
+    setKnowledgeCards(next.knowledgeCards || []); setResearchFindings(next.researchFindings || []);
+    setResearchReport(null); setDecision(null); setDecisionDraft(null); setJustWroteId(null);
+    forceNodeRef.current = null; pendingSelectRef.current = null;
+    routeRef.current = next.route; outlineRef.current = next.outline; anchorPromptedRef.current = null;
+    openProjectPage(next.id, 'root', 'research');
+  };
+  const worktreeActions = {
+    save: (label: string, reason: string) => {
+      if (!currentProject) return;
+      const next = saveStage({ ...currentProject, nodes }, label, reason);
+      setProjects(prev => prev.map(p => p.id === next.id ? { ...p, worktree: next.worktree } : p));
+    },
+    branch: (stageId: string, name: string) => {
+      if (currentProject) restoreProjectStage(branchFromStage({ ...currentProject, nodes }, stageId, name));
+    },
+    switchBranch: (branchId: string) => {
+      if (currentProject) restoreProjectStage(switchExplorationBranch({ ...currentProject, nodes }, branchId));
+    },
+    recordDecision: () => {
+      const node = nodes.find(n => n.noteType === 'overview') || nodes[0];
+      if (node) openDecisionRecorder(node.id, 'manual', { presetQuestion: `「${currentProject?.name || '项目'}」接下来选择哪条探索路线？` });
+    },
+    legacyFork: handleForkDecision,
+  };
 
   if (routeInfo.type === 'delegate' && routeInfo.nodeId) return <DelegationView nodeId={routeInfo.nodeId} taskTitle={routeInfo.taskTitle} />;
 
@@ -2822,7 +2668,7 @@ ${plan.lead.duty}
     >
       <header className="relative h-14 border-b border-slate-800 flex items-center justify-between px-3 sm:px-6 bg-slate-900/50 backdrop-blur-md z-50">
         <div className="flex items-center gap-2 sm:gap-4 flex-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-fit"><div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white shadow-lg">A</div><h1 className="text-lg font-semibold hidden lg:block">Explorer</h1></div>
+          <div className="hidden sm:flex items-center gap-2 min-w-fit"><div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white shadow-lg">A</div><h1 className="text-lg font-semibold hidden lg:block">Explorer</h1></div>
           
           {/* 项目选择器 + 重命名 */}
           <div className="flex items-center gap-1">
@@ -2843,7 +2689,7 @@ ${plan.lead.duty}
             {currentProject && !editingProjectName && (
               <button 
                 onClick={() => { setTempProjectName(currentProject.name); setEditingProjectName(true); }}
-                className="p-1.5 text-slate-500 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
+                className="hidden sm:block p-1.5 text-slate-500 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
                 title="重命名项目"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
@@ -2852,7 +2698,7 @@ ${plan.lead.duty}
           </div>
           
           {currentProject?.explorationMode && <div className={`hidden sm:flex px-2 py-1 rounded-full text-[10px] font-bold items-center gap-1 ${currentProject.explorationMode === 'research' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'}`}>{currentProject.explorationMode === 'research' ? '🔬研究' : '🔧构建'}</div>}
-          <button onClick={() => setShowMetaModal(true)} className="p-2 text-slate-400 hover:text-blue-400"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg></button>
+          <button onClick={() => setShowMetaModal(true)} className="hidden sm:block p-2 text-slate-400 hover:text-blue-400"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg></button>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-3">
           {/* 7x24会员按钮 */}
@@ -2896,17 +2742,10 @@ ${plan.lead.duty}
           {!IS_DESKTOP && (
             <button
               onClick={() => setShowDownloadModal(true)}
-              className="px-2.5 py-1.5 bg-slate-800 hover:bg-blue-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-blue-400 flex items-center gap-1"
+              className="hidden sm:flex px-2.5 py-1.5 bg-slate-800 hover:bg-blue-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-blue-400 flex items-center gap-1"
               title="下载桌面客户端（支持本地模型 / 7×24）"
             >⬇ 客户端</button>
           )}
-
-          {/* 决策时间线：每条决策带快照，可随时 fork 复刻 */}
-          <button
-            onClick={() => setShowDecisionTimeline(true)}
-            className="px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-amber-400 flex items-center gap-1"
-            title="决策时间线：记录每个决策的过程与理由，可随时回来 fork 复刻"
-          >⚖️ 决策{projectDecisions.length > 0 && <span className="text-[9px] opacity-70">{projectDecisions.length}</span>}</button>
 
           {/* 设备安全：待确认的写操作 + 急停（没注册设备时整条不渲染） */}
           <DeviceGuard />
@@ -2926,21 +2765,21 @@ ${plan.lead.duty}
           {/* 问题广场：筛选有价值的问题 */}
           <button
             onClick={() => setShowQuestionBoard(true)}
-            className="px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-amber-400 flex items-center gap-1"
+            className="hidden sm:flex px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-amber-400 flex items-center gap-1"
             title="问题广场：筛选有价值的问题"
           >🔥 问题</button>
 
           {/* 反馈入口：推广期最重要的一个按钮，放在顶栏常驻 */}
           <button
             onClick={() => { setShowFeedback(true); trackEvent('feedback_open'); }}
-            className="px-2.5 py-1.5 bg-slate-800 hover:bg-emerald-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-emerald-400 flex items-center gap-1"
+            className="hidden sm:flex px-2.5 py-1.5 bg-slate-800 hover:bg-emerald-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-emerald-400 flex items-center gap-1"
             title="反馈：卡住了、报错了、觉得哪里蠢，都告诉我"
           >💬 反馈</button>
 
           {/* 主题切换：白天 / 深色 */}
           <button
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-            className="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
+            className="hidden sm:flex p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
             title={theme === 'dark' ? '切换到白天模式' : '切换到深色模式'}
           >
             {theme === 'dark' ? (
@@ -3071,6 +2910,7 @@ ${plan.lead.duty}
           className={`h-full bg-slate-900 border-r border-slate-800 flex flex-col z-20 overflow-hidden ${notesPanelMode === 0 ? 'w-0 border-none' : ''}`}
           style={{ width: notesPanelMode === 0 ? 0 : sidebarWidth }}
         >
+          {notesPanelMode !== 0 && <>
           <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
             <h3 className="text-xs font-bold text-slate-400">EXPLORER</h3>
             <div className="flex gap-1">
@@ -3080,16 +2920,10 @@ ${plan.lead.duty}
               <button onClick={() => setNotesPanelMode(0)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button>
             </div>
           </div>
-          <div className="flex border-b border-slate-800">
-            <button onClick={() => setSidebarActiveTab('notes')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${sidebarActiveTab === 'notes' ? 'bg-purple-600/10 text-purple-400 border-b-2 border-purple-500' : 'text-slate-500 hover:text-slate-300'}`}><span>📝</span> 笔记</button>
-            <button onClick={() => setSidebarActiveTab('agents')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${sidebarActiveTab === 'agents' ? 'bg-violet-600/10 text-violet-400 border-b-2 border-violet-500' : 'text-slate-500 hover:text-slate-300'}`}><span>🤖</span> 团队</button>
-            <button onClick={() => setSidebarActiveTab('research')} className={`flex-1 py-3 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${sidebarActiveTab === 'research' ? 'bg-emerald-600/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}><span>📊</span> 研究</button>
-          </div>
           <div className="flex-1 overflow-hidden">
-            {sidebarActiveTab === 'notes' && <NotesPanel projects={projectsView} currentProjectId={currentProjectId} selectedNodeId={selectedNodeId} search={notesSearch} onSearch={setNotesSearch} onOpenNode={openNode} onCreateProject={handleCreateProject} onCreateDirection={handleCreateDirection} onAddChild={handleCreateChild} onBuildTeam={handleBuildTeam} onCleanup={handleCleanupProject} onImport={handleImportMd} onExportVault={handleExportVault} onSaveToFolder={handleSaveToFolder} />}
-            {sidebarActiveTab === 'agents' && <AgentTeamPanel projectId={currentProjectId || ''} projectGoal={currentProject?.metaProblem || ''} nodes={nodes} state={agentTeamState} onStateChange={setAgentTeamState} onTeamOutput={(output) => { if (currentProjectId) setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, agentOutput: output } : p)); }} />}
-            {sidebarActiveTab === 'research' && <SimpleResearchPanel project={currentProject} nodes={nodes} knowledgeCards={knowledgeCards} findings={researchFindings} criticalNodes={criticalNodes} isLooping={isLooping} isGeneratingReport={isGeneratingReport} onNodeSelect={setSelectedNodeId} onStartExploration={() => setIsLooping(true)} onStopExploration={() => setIsLooping(false)} onGenerateReport={handleGenerateReport} />}
+            <NotesPanel projects={projectsView} currentProjectId={currentProjectId} selectedNodeId={selectedNodeId} search={notesSearch} onSearch={setNotesSearch} onOpenNode={openNode} onCreateProject={handleCreateProject} onCreateDirection={handleCreateDirection} onAddChild={handleCreateChild} onBuildTeam={handleBuildTeam} onCleanup={handleCleanupProject} onImport={handleImportMd} onExportVault={handleExportVault} onSaveToFolder={handleSaveToFolder} onOpenPage={openProjectPage} selectedPage={activeProjectPage} />
           </div>
+          </>}
         </aside>
         
         {/* 拖拽调整宽度的把手 */}
@@ -3105,9 +2939,9 @@ ${plan.lead.duty}
         {/* ===== 中间：笔记内容（Obsidian 主编辑区） ===== */}
         <div className="flex-1 relative z-0 min-w-0 bg-slate-800">
           {/* 顶部工具条 */}
-          <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-3 py-2 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/60 pointer-events-none">
-            <div className="text-[11px] text-slate-500 truncate pointer-events-auto">{selectedNode ? '📝 笔记' : ''}</div>
-            <div className="flex items-center gap-2 pointer-events-auto">
+          <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between gap-3 overflow-x-auto px-3 py-2 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/60 pointer-events-none">
+            <div className="text-[11px] text-slate-500 flex-shrink-0 pointer-events-auto">{currentProject && <button onClick={() => openProjectPage(currentProject.id, 'root', 'research')} className="hover:text-blue-300">◈ 项目总览</button>}</div>
+            <div className="hidden md:flex items-center gap-2 flex-shrink-0 pointer-events-auto">
               <button
                 onClick={() => {
                   const next = !continuousMode;
@@ -3137,6 +2971,7 @@ ${plan.lead.duty}
               <button onClick={() => setShowGraphModal(true)} className="px-3 py-1.5 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title="打开关系图谱">🕸️ 图谱</button>
               <button onClick={() => setRightChatOpen(v => !v)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${rightChatOpen ? 'bg-blue-600 text-white' : 'bg-slate-700/70 text-slate-200 hover:bg-blue-600 hover:text-white'}`} title="切换 AI 对话栏">💬 对话</button>
             </div>
+            <button className="md:hidden pointer-events-auto text-xs text-slate-300" onClick={() => setNotesPanelMode(v => v ? 0 : 1)}>项目笔记</button>
           </div>
 
           <div className="h-full pt-11 flex flex-col min-h-0">
@@ -3145,7 +2980,7 @@ ${plan.lead.duty}
               这是刻意的：这一刻用户唯一该做的事就是把目录看一遍、改一改，
               旁边再摆一篇笔记只会让他分心，也会让人误以为"已经开始写了"。
             */}
-            {projectOutline?.status === 'draft' ? (
+            {projectOutline?.status === 'draft' && (selectedNode || !projectPage) ? (
               <div className="flex-1 min-h-0 overflow-y-auto px-5 md:px-8 py-6 scroll-hide">
                 <OutlinePlanner
                   outline={projectOutline}
@@ -3174,12 +3009,19 @@ ${plan.lead.duty}
             )}
             <div className="flex-1 min-h-0">
             {selectedNode ? (
-              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const resp = await chatWithNode(node, text, updated); updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={handleForkDecision} onMentionAgent={mentionAgentInChat} probes={projectProbes} onAddProbes={handleAddProbes} onUpdateProbe={handleUpdateProbe} onContradicted={handleContradicted} projectGoal={currentProject?.metaProblem || currentProject?.name} route={projectRoute} routeBusy={routeBusy} onPlanRoute={handlePlanRoute} onSettleAnchor={handleSettleAnchor} onSkipAnchor={handleSkipAnchor} onDesignAnchorProbes={handleDesignAnchorProbes} onDesignSim={handleDesignSim} simBusy={simBusy} onSimProbe={handleSimProbe} onWriteThis={handleWriteThis} isWriting={isLooping} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
+              <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const epoch = workspaceEpochRef.current; const resp = await chatWithNode(node, text, updated, questionFactContext(currentProject?.inquiries, node.id)); if (epoch !== workspaceEpochRef.current) return; updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={(id) => { const stage = currentProject?.worktree?.stages.find(s => s.decisionId === id); if (stage) openProjectPage(currentProject!.id, 'root', 'worktree'); else handleForkDecision(id); }} onMentionAgent={mentionAgentInChat} probes={projectProbes} onAddProbes={handleAddProbes} onUpdateProbe={handleUpdateProbe} onContradicted={handleContradicted} projectGoal={currentProject?.metaProblem || currentProject?.name} route={projectRoute} routeBusy={routeBusy} onPlanRoute={handlePlanRoute} onSettleAnchor={handleSettleAnchor} onSkipAnchor={handleSkipAnchor} onDesignAnchorProbes={handleDesignAnchorProbes} onDesignSim={handleDesignSim} simBusy={simBusy} onSimProbe={handleSimProbe} onWriteThis={handleWriteThis} isWriting={isLooping} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
+            ) : currentProject ? (
+              <ProjectWorkspace project={{ ...currentProject, nodes }} scopeId={activeProjectPage.scopeId} page={activeProjectPage.page} teams={inquiryTeams}
+                onPage={(page, scopeId = activeProjectPage.scopeId) => openProjectPage(currentProject.id, scopeId, page)} onNote={id => openNode(currentProject.id, id)}
+                routePanel={<RouteMap route={projectRoute} nodes={nodes} busy={routeBusy} onPlan={handlePlanRoute} onSettle={handleSettleAnchor} onSkip={handleSkipAnchor} onDesignProbes={handleDesignAnchorProbes} onNavigate={id => openNode(currentProject.id, id)} />}
+                onSaveBrief={text => setProjects(prev => prev.map(p => p.id === currentProject.id ? { ...migrateProjectOverview(p), overviewBrief: text } : p))}
+                onSaveSummary={(id, text) => updateNode(id, { fullNote: text, autoNote: false, noteUpdatedAt: Date.now() })}
+                worktree={worktreeActions} busy={worktreeBusy} onStop={stopProjectWork} onGenerateReport={handleGenerateReport} generating={isGeneratingReport} />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="text-5xl opacity-40">📂</div>
                 <div className="text-slate-400 text-sm font-bold">从左侧选择一个项目里的笔记，或新建项目</div>
-                <div className="text-slate-600 text-[11px] max-w-sm leading-relaxed">一个项目就是一个文件夹（含 README + 项目总览），里面放 5–10 个关键方向，每个方向是一篇子笔记、可由一个专门的 Agent 负责。用 <span className="text-purple-400">[[标题]]</span> 互相关联，点上方 <span className="text-purple-400">🕸️ 图谱</span> 看关系网络。</div>
+                <div className="text-slate-600 text-[11px] max-w-sm leading-relaxed">一个项目有统一的项目总览，里面放 5–10 个关键方向，每个方向是一篇子笔记、可由一个专门的 Agent 负责。用 <span className="text-purple-400">[[标题]]</span> 互相关联，点上方 <span className="text-purple-400">🕸️ 图谱</span> 看关系网络。</div>
                 <button onClick={() => handleCreateProject()} className="mt-2 px-4 py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">＋ 新建项目</button>
               </div>
             )}
@@ -3196,7 +3038,7 @@ ${plan.lead.duty}
             <button onClick={() => setRightChatOpen(false)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title="收起"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 17 5-5-5-5M13 17l5-5-5-5"/></svg></button>
           </div>
           <div className="flex-1 overflow-hidden">
-            <TeamChat key={currentProjectId || 'none'} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} />
+            <TeamChat key={`${currentProjectId || 'none'}:${currentProject?.worktree?.activeBranchId || 'main'}`} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} />
           </div>
         </div>
 

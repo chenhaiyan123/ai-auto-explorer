@@ -504,9 +504,16 @@ export interface IntentAnalysis {
 
 // ========== 项目类型（扩展版）==========
 export interface Project {
+  /** 用户维护的项目目标与范围，AI 摘要不得覆盖。 */
+  overviewBrief?: string;
+  overviewMigration?: { version: 1; at: number; originals: ProblemNode[] };
   id: string;
   name: string;
   metaProblem: string;
+  /** 每篇问题的团队、探究轮次和事实看板；root 表示项目核心问题。 */
+  inquiries?: Record<string, import('./services/inquiry').InquiryWorkspace>;
+  /** 项目内的探索阶段树：完整快照及并存的探索分支。 */
+  worktree?: import('./services/projectWorktree').ProjectWorktree;
   nodes: ProblemNode[];
   createdAt: number;
   summaryNote?: string;
