@@ -91,9 +91,6 @@
     "vite": "^6.0.3"
   },
   "description": "",
-  "directories": {
-    "doc": "docs"
-  },
   "keywords": [],
   "author": "",
   "license": "ISC",
