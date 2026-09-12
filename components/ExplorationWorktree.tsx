@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState } from 'react';
 import type { Project } from '../types';
 import { hasUnsavedStage, type ExplorationStage } from '../services/projectWorktree';
@@ -32,7 +33,7 @@ export default function ExplorationWorktree({ project, actions, busy, onStop }: 
     const children = tree!.stages.filter(s => s.parentId === stage.id);
     return <li key={stage.id} className="pl-3 border-l border-slate-700 py-1">
       <button onClick={() => { setSelectedId(stage.id); setBranchName(''); }} className={`w-full text-left rounded-lg p-2 border ${selected?.id === stage.id ? 'border-violet-500 bg-violet-500/15' : 'border-transparent hover:bg-slate-800'}`}>
-        <div className="text-xs text-slate-200 break-words">{stage.decisionId ? '⚖️' : '○'} {stage.label}{tree!.currentStageId === stage.id && <span className="ml-2 text-emerald-400">当前</span>}</div>
+        <div className="text-xs text-slate-200 break-words">{stage.decisionId ? '⚖️' : '○'} {stage.label}{tree!.currentStageId === stage.id && <span className="ml-2 text-emerald-400">{ui("当前")}</span>}</div>
         <div className="text-[10px] text-slate-500 mt-1">{tree!.branches.find(b => b.id === stage.branchId)?.name} · {new Date(stage.createdAt).toLocaleString('zh-CN')}</div>
       </button>
       {children.length > 0 && <ul className="ml-2">{children.map(s => renderStage(s, next))}</ul>}
@@ -66,7 +67,7 @@ export default function ExplorationWorktree({ project, actions, busy, onStop }: 
         {selected.reason && <p className="text-sm text-slate-300 whitespace-pre-wrap">{selected.reason}</p>}
         <div className="flex flex-wrap gap-2 text-xs text-slate-400"><span>{selected.snapshot.nodes.length} 篇笔记</span><span>· {Object.values(selected.snapshot.inquiries || {}).length} 个问题空间</span><span>· {Object.values(selected.snapshot.inquiries || {}).flatMap(w => w.facts).filter(f => f.status === 'confirmed').length} 条已确认事实</span><span>· {selected.snapshot.decisions?.length || 0} 条决策</span></div>
         {decision && <div className="border-l-2 border-amber-500 pl-3 space-y-2"><p className="text-sm text-amber-200">{decision.question}</p>{decision.options.map((o, i) => <p key={i} className="text-xs text-slate-300">{o.chosen ? '✓ 选择' : '× 放弃'} {o.label}{o.reason && <span className="text-slate-500"> — {o.reason}</span>}</p>)}</div>}
-        <details className="text-xs text-slate-400"><summary className="cursor-pointer">查看当时的笔记与事实</summary><div className="mt-2 space-y-2 max-h-80 overflow-auto">{selected.snapshot.nodes.map(n => <details key={n.id} className="rounded bg-slate-950 p-2"><summary className="cursor-pointer">{n.title}</summary><p className="mt-2 whitespace-pre-wrap break-words">{n.fullNote || n.notes || '当时尚无正文'}</p></details>)}{Object.values(selected.snapshot.inquiries || {}).flatMap(w => w.facts.map(f => <p key={`${w.questionId}:${f.id}`} className="text-[11px]">{w.question} · {f.status === 'confirmed' ? '已确认' : '未确认'}：{f.claim}</p>))}</div></details>
+        <details className="text-xs text-slate-400"><summary className="cursor-pointer">查看当时的笔记与事实</summary><div className="mt-2 space-y-2 max-h-80 overflow-auto">{selected.snapshot.nodes.map(n => <details key={n.id} className="rounded bg-slate-950 p-2"><summary className="cursor-pointer">{n.title}</summary><p className="mt-2 whitespace-pre-wrap break-words">{n.fullNote || n.notes || '当时尚无正文'}</p></details>)}{Object.values(selected.snapshot.inquiries || {}).flatMap(w => w.facts.map(f => <p key={`${w.questionId}:${f.id}`} className="text-[11px]">{w.question} · {f.status === 'confirmed' ? ui("已确认") : '未确认'}：{f.claim}</p>))}</div></details>
         <div className="border-t border-slate-700 pt-4 space-y-2"><input aria-label="新探索分支名称" value={branchName} maxLength={80} onChange={e => setBranchName(e.target.value)} className={input} placeholder={`新分支名称（默认：从 ${selected.label} 继续）`} />
           <button disabled={busy} className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 py-2 text-sm" onClick={() => act(() => { actions.branch(selected.id, branchName.trim() || `从 ${selected.label} 继续`); setSelectedId(''); setBranchName(''); })}>返回此阶段并新建分支</button>
           <p className="text-[11px] text-slate-500">会恢复当时的笔记、团队、事实、研究路线和决策；「{branch?.name || '当前分支'}」保留。</p>

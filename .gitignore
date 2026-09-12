@@ -45,3 +45,8 @@ GoogleService-Info.plist
 # 云端会话用来做首屏截图的临时目录（可直接删）
 _to_delete_preview/
 .preview/
+
+# 云端唤醒服务：运行数据、加密凭据与生成产物
+wake-data/
+server/.wake-build/
+.env.wake

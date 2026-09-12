@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 /**
  * SubscriptionModal - 订阅弹窗组件
  */
@@ -60,7 +61,7 @@ const SubscriptionModal: React.FC<SubscriptionModalProps> = ({ onClose, onSubscr
               <div className="text-sm font-bold text-slate-300 mb-1">月付</div>
               <div className="text-2xl font-bold text-white">
                 ¥{plans.monthly.price}
-                <span className="text-sm text-slate-500 font-normal">/月</span>
+                <span className="text-sm text-slate-500 font-normal">{ui("/月")}</span>
               </div>
             </button>
             <button

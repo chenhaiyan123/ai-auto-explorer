@@ -1,4 +1,9 @@
+import { useLanguage, t as ui } from './services/language';
+import SharedModelsPanel from './components/SharedModelsPanel';
+import AdminDashboard from './components/AdminDashboard';
+import { sharedRequest, SHARED_API } from './services/sharedModelsClient';
 import RouteMap from './components/RouteMap';
+import { assertBrowserResearchAllowed, pauseCloudProject } from './services/wakeClient';
 import { migrateProjectOverview, isOverviewNote, projectOverviewContext, overviewExportNodes } from './services/projectOverview';
 import { UserStats, KnowledgeCard, ResearchFinding } from './types';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -345,15 +350,15 @@ ${projectInsight ? `
       {projectInsight && showInsightPanel && (
         <div className="p-3 border-b border-slate-800 bg-gradient-to-r from-blue-900/20 to-purple-900/20 max-h-[200px] overflow-y-auto">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-[10px] font-bold text-blue-400">💡 项目洞察</div>
-            <button onClick={() => setShowInsightPanel(false)} className="text-slate-500 hover:text-slate-300 text-xs">收起</button>
+            <div className="text-[10px] font-bold text-blue-400">{ui("💡 项目洞察")}</div>
+            <button onClick={() => setShowInsightPanel(false)} className="text-slate-500 hover:text-slate-300 text-xs">{ui("收起")}</button>
           </div>
           <div className="space-y-2 text-[11px]">
-            <div><span className="text-slate-500">深层动机：</span><span className="text-slate-300">{projectInsight.deepMotivation}</span></div>
-            <div><span className="text-slate-500">价值评估：</span><span className="text-emerald-400">{projectInsight.valueAssessment}</span></div>
+            <div><span className="text-slate-500">{ui("深层动机：")}</span><span className="text-slate-300">{projectInsight.deepMotivation}</span></div>
+            <div><span className="text-slate-500">{ui("价值评估：")}</span><span className="text-emerald-400">{projectInsight.valueAssessment}</span></div>
             {projectInsight.keyQuestions.length > 0 && (
               <div>
-                <span className="text-slate-500">关键问题：</span>
+                <span className="text-slate-500">{ui("关键问题：")}</span>
                 <div className="mt-1 space-y-1">
                   {projectInsight.keyQuestions.slice(0, 3).map((q, i) => (
                     <div key={i} className="text-slate-400 pl-2 border-l border-slate-700">• {q}</div>
@@ -371,14 +376,13 @@ ${projectInsight ? `
           onClick={() => setShowInsightPanel(true)}
           className="mx-3 mt-2 px-3 py-1.5 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/20 rounded-lg text-[10px] text-blue-400 flex items-center gap-2 transition-colors"
         >
-          <span>💡</span> 查看项目洞察
-        </button>
+          <span>💡</span>{ui("查看项目洞察")}</button>
       )}
 
       {/* 活跃的Agent */}
       {activeAgents.length > 0 && (
         <div className="p-3 border-b border-slate-800 bg-slate-900/50">
-          <div className="text-[10px] text-slate-500 mb-2">协作专家</div>
+          <div className="text-[10px] text-slate-500 mb-2">{ui("协作专家")}</div>
           <div className="flex gap-2 flex-wrap">
             {activeAgents.map(agent => (
               <div key={agent.id} className="flex items-center gap-1.5 px-2 py-1 bg-slate-800 rounded-full text-xs group cursor-pointer hover:bg-slate-700" onClick={() => removeAgent(agent.id)}>
@@ -406,7 +410,7 @@ ${projectInsight ? `
                   <div className={`px-3 pt-2 pb-1 border-b ${m.role === 'user' ? 'border-blue-500/30' : 'border-slate-700'}`}>
                     <div className={`text-[10px] ${m.role === 'user' ? 'text-blue-200/70' : 'text-slate-500'} flex items-center gap-1`}>
                       <span className="opacity-60">┃</span>
-                      <span>引用：{quotedTitle}</span>
+                      <span>{ui("引用：")}{quotedTitle}</span>
                     </div>
                   </div>
                 )}
@@ -416,14 +420,14 @@ ${projectInsight ? `
             </div>
           );
         })}
-        {isTyping && <div className="flex justify-start"><div className="bg-slate-800 text-slate-400 px-3 py-2 rounded-2xl rounded-bl-sm text-xs animate-pulse">正在深度思考...</div></div>}
+        {isTyping && <div className="flex justify-start"><div className="bg-slate-800 text-slate-400 px-3 py-2 rounded-2xl rounded-bl-sm text-xs animate-pulse">{ui("正在深度思考...")}</div></div>}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Agent选择器 */}
       {showAgentPicker && (
         <div className="p-3 border-t border-slate-800 bg-slate-900">
-          <div className="text-[10px] text-slate-500 mb-2 opacity-60">邀请专家协助分析</div>
+          <div className="text-[10px] text-slate-500 mb-2 opacity-60">{ui("邀请专家协助分析")}</div>
           <div className="grid grid-cols-2 gap-2">
             {availableAgents.filter(a => !activeAgents.find(aa => aa.id === a.id)).map(agent => (
               <button key={agent.id} onClick={() => inviteAgent(agent)} className="flex items-center gap-2 p-2 bg-slate-800/60 hover:bg-slate-700 rounded-lg text-left transition-colors">
@@ -432,7 +436,7 @@ ${projectInsight ? `
               </button>
             ))}
           </div>
-          <button onClick={() => setShowAgentPicker(false)} className="w-full mt-2 py-1.5 text-[10px] text-slate-600 hover:text-slate-400">取消</button>
+          <button onClick={() => setShowAgentPicker(false)} className="w-full mt-2 py-1.5 text-[10px] text-slate-600 hover:text-slate-400">{ui("取消")}</button>
         </div>
       )}
 
@@ -441,7 +445,7 @@ ${projectInsight ? `
         <div className="mx-3 mb-2 p-2.5 bg-blue-600/10 border border-blue-500/30 rounded-xl">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
-              <div className="text-[10px] text-blue-400 mb-1">📌 引用节点讨论</div>
+              <div className="text-[10px] text-blue-400 mb-1">{ui("📌 引用节点讨论")}</div>
               <div className="text-xs text-slate-200 font-medium truncate">{currentQuotedNode.title}</div>
               {currentQuotedNode.notes && (
                 <div className="text-[10px] text-slate-400 mt-1 line-clamp-2">{currentQuotedNode.notes}</div>
@@ -476,10 +480,10 @@ ${projectInsight ? `
         }
       }} className="p-3 border-t border-slate-800 bg-slate-900/80">
         <div className="flex gap-2 items-end">
-          <button type="button" onClick={() => setShowAgentPicker(!showAgentPicker)} className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-lg transition-colors" title="邀请专家">
+          <button type="button" onClick={() => setShowAgentPicker(!showAgentPicker)} className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-lg transition-colors" title={ui("邀请专家")}>
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>
           </button>
-          <input value={input} onChange={e => setInput(e.target.value)} placeholder={currentQuotedNode ? "针对这个节点说点什么..." : "聊聊你的想法..."} className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" />
+          <input value={input} onChange={e => setInput(e.target.value)} placeholder={currentQuotedNode ? ui("针对这个节点说点什么...") : ui("聊聊你的想法...")} className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" />
           <button type="submit" disabled={isTyping || (!input.trim() && !currentQuotedNode)} className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white rounded-xl transition-colors">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
           </button>
@@ -554,7 +558,7 @@ const SimpleResearchPanel: React.FC<{
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <span className="text-xl font-bold text-white">{stats.coverage}%</span>
-            <span className="text-[9px] text-slate-500">探索进度</span>
+            <span className="text-[9px] text-slate-500">{ui("探索进度")}</span>
           </div>
         </div>
       </div>
@@ -573,50 +577,49 @@ const SimpleResearchPanel: React.FC<{
             {/* 项目介绍 */}
             {project && (
               <div className="bg-gradient-to-r from-blue-600/10 to-purple-600/10 rounded-lg p-3 border border-blue-500/20">
-                <div className="text-[10px] font-medium text-blue-400 mb-1.5">📋 项目介绍</div>
+                <div className="text-[10px] font-medium text-blue-400 mb-1.5">{ui("📋 项目介绍")}</div>
                 <div className="text-[11px] text-slate-300 mb-2">{project.name}</div>
-                <div className="text-[10px] font-medium text-purple-400 mb-1">🎯 核心目标</div>
+                <div className="text-[10px] font-medium text-purple-400 mb-1">{ui("🎯 核心目标")}</div>
                 <div className="text-[11px] text-slate-200 leading-relaxed">{project.metaProblem}</div>
               </div>
             )}
 
             {/* 探索思路 */}
             <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
-              <div className="text-[10px] font-medium text-cyan-400 mb-1.5">🧭 探索思路</div>
+              <div className="text-[10px] font-medium text-cyan-400 mb-1.5">{ui("🧭 探索思路")}</div>
               <div className="text-[11px] text-slate-400 leading-relaxed">
                 {project?.explorationMode === 'research' 
-                  ? '采用研究模式：系统性地分解问题，深度调研每个子方向，收集知识卡片，验证假设，最终形成完整的研究报告。'
-                  : '采用构建模式：以实践为导向，逐步实现目标，在过程中迭代优化方案。'
+                  ? ui("采用研究模式：系统性地分解问题，深度调研每个子方向，收集知识卡片，验证假设，最终形成完整的研究报告。")
+                  : ui("采用构建模式：以实践为导向，逐步实现目标，在过程中迭代优化方案。")
                 }
               </div>
               {stats.total > 1 && (
-                <div className="mt-2 pt-2 border-t border-slate-700/50 text-[10px] text-slate-500">
-                  当前已展开 {stats.total} 个探索方向，{stats.solved > 0 ? `其中 ${stats.solved} 个已完成` : '正在探索中'}
+                <div className="mt-2 pt-2 border-t border-slate-700/50 text-[10px] text-slate-500">{ui("当前已展开")}{stats.total}{ui("个探索方向，")}{stats.solved > 0 ? `其中 ${stats.solved} 个已完成` : ui("正在探索中")}
                 </div>
               )}
             </div>
 
             {/* 当前阶段目标 */}
             <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
-              <div className="text-[10px] font-medium text-emerald-400 mb-1.5">📍 当前阶段</div>
+              <div className="text-[10px] font-medium text-emerald-400 mb-1.5">{ui("📍 当前阶段")}</div>
               <div className="text-[11px] text-slate-300">{projectAnalysis.currentPhase}</div>
             </div>
 
             {/* 探索进度 */}
             <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
-              <div className="text-[10px] font-medium text-slate-400 mb-2">📊 探索进度</div>
+              <div className="text-[10px] font-medium text-slate-400 mb-2">{ui("📊 探索进度")}</div>
               <div className="grid grid-cols-4 gap-2 text-center">
-                <div><div className="text-sm font-bold text-emerald-400">{stats.solved}</div><div className="text-[8px] text-slate-500">已完成</div></div>
-                <div><div className="text-sm font-bold text-yellow-400">{stats.exploring}</div><div className="text-[8px] text-slate-500">进行中</div></div>
-                <div><div className="text-sm font-bold text-blue-400">{stats.unexplored}</div><div className="text-[8px] text-slate-500">待探索</div></div>
-                <div><div className="text-sm font-bold text-orange-400">{stats.needsReview}</div><div className="text-[8px] text-slate-500">待决策</div></div>
+                <div><div className="text-sm font-bold text-emerald-400">{stats.solved}</div><div className="text-[8px] text-slate-500">{ui("已完成")}</div></div>
+                <div><div className="text-sm font-bold text-yellow-400">{stats.exploring}</div><div className="text-[8px] text-slate-500">{ui("进行中")}</div></div>
+                <div><div className="text-sm font-bold text-blue-400">{stats.unexplored}</div><div className="text-[8px] text-slate-500">{ui("待探索")}</div></div>
+                <div><div className="text-sm font-bold text-orange-400">{stats.needsReview}</div><div className="text-[8px] text-slate-500">{ui("待决策")}</div></div>
               </div>
             </div>
 
             {/* 遇到的问题 */}
             {projectAnalysis.problems.length > 0 && (
               <div className="bg-orange-500/5 rounded-lg p-3 border border-orange-500/20">
-                <div className="text-[10px] font-medium text-orange-400 mb-1.5">⚠️ 遇到的问题</div>
+                <div className="text-[10px] font-medium text-orange-400 mb-1.5">{ui("⚠️ 遇到的问题")}</div>
                 <div className="space-y-1">
                   {projectAnalysis.problems.slice(0, 3).map((p, i) => (
                     <div key={i} className="text-[11px] text-slate-400 flex items-start gap-1.5">
@@ -631,7 +634,7 @@ const SimpleResearchPanel: React.FC<{
             {/* 验证/发现 */}
             {projectAnalysis.validations.length > 0 && (
               <div className="bg-emerald-500/5 rounded-lg p-3 border border-emerald-500/20">
-                <div className="text-[10px] font-medium text-emerald-400 mb-1.5">✅ 已验证发现</div>
+                <div className="text-[10px] font-medium text-emerald-400 mb-1.5">{ui("✅ 已验证发现")}</div>
                 <div className="space-y-1">
                   {projectAnalysis.validations.map((v, i) => (
                     <div key={i} className="text-[11px] text-slate-400 flex items-start gap-1.5">
@@ -646,7 +649,7 @@ const SimpleResearchPanel: React.FC<{
             {/* 改进建议 */}
             {projectAnalysis.suggestions.length > 0 && (
               <div className="bg-blue-500/5 rounded-lg p-3 border border-blue-500/20">
-                <div className="text-[10px] font-medium text-blue-400 mb-1.5">💡 改进建议</div>
+                <div className="text-[10px] font-medium text-blue-400 mb-1.5">{ui("💡 改进建议")}</div>
                 <div className="space-y-1">
                   {projectAnalysis.suggestions.map((s, i) => (
                     <div key={i} className="text-[11px] text-slate-400 flex items-start gap-1.5">
@@ -661,7 +664,7 @@ const SimpleResearchPanel: React.FC<{
             {/* 关键节点 */}
             {criticalNodes.length > 0 && (
               <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
-                <div className="text-[10px] font-medium text-yellow-400 mb-2">⭐ 关键节点</div>
+                <div className="text-[10px] font-medium text-yellow-400 mb-2">{ui("⭐ 关键节点")}</div>
                 {criticalNodes.slice(0, 3).map(node => (
                   <button key={node.id} onClick={() => onNodeSelect(node.id)} className="w-full text-left p-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg mb-1 transition-colors">
                     <div className="text-[11px] text-slate-200 truncate">{node.title}</div>
@@ -680,11 +683,11 @@ const SimpleResearchPanel: React.FC<{
             </div>
           </button>
         ))}
-        {activeSection === 'findings' && (findings.length === 0 ? <div className="text-center py-8 text-[10px] text-slate-600">暂无研究发现</div> : findings.map((f, i) => (
+        {activeSection === 'findings' && (findings.length === 0 ? <div className="text-center py-8 text-[10px] text-slate-600">{ui("暂无研究发现")}</div> : findings.map((f, i) => (
           <div key={i} className="p-2.5 bg-slate-800/30 rounded-lg border border-slate-700/30">
             <div className="flex items-start gap-2">
               <span className="text-sm">💡</span>
-              <div className="flex-1"><div className="text-[11px] text-slate-200">{f.insight}</div><div className="text-[9px] text-slate-500 mt-1">来源: {f.sourceNodeTitle}</div></div>
+              <div className="flex-1"><div className="text-[11px] text-slate-200">{f.insight}</div><div className="text-[9px] text-slate-500 mt-1">{ui("来源:")}{f.sourceNodeTitle}</div></div>
             </div>
           </div>
         )))}
@@ -693,7 +696,7 @@ const SimpleResearchPanel: React.FC<{
       {/* 底部操作 */}
       <div className="p-4 border-t border-slate-800 space-y-2">
         <button onClick={isLooping ? onStopExploration : onStartExploration} className={`w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${isLooping ? 'bg-red-600/20 text-red-400 border border-red-500/30' : 'bg-blue-600/20 text-blue-400 border border-blue-500/30'}`}>
-          {isLooping ? <><div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />停止探索</> : <>▶ 开始长期探索</>}
+          {isLooping ? <><div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />{ui("停止探索")}</> : <>{ui("▶ 开始长期探索")}</>}
         </button>
         {/* 生成报告按钮：探索未完成时变暗 */}
         {(() => {
@@ -708,12 +711,12 @@ const SimpleResearchPanel: React.FC<{
                   ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg hover:shadow-xl' 
                   : 'bg-slate-800/50 text-slate-500 border border-slate-700/50 cursor-not-allowed'
               }`}
-              title={!isExplorationComplete ? '请先完成所有探索' : ''}
+              title={!isExplorationComplete ? ui("请先完成所有探索") : ''}
             >
               {isGeneratingReport ? (
-                <><div className="w-2 h-2 bg-white rounded-full animate-ping" />生成中...</>
+                <><div className="w-2 h-2 bg-white rounded-full animate-ping" />{ui("生成中...")}</>
               ) : (
-                <>📄 生成研究报告 {!isExplorationComplete && <span className="text-[9px] opacity-60">({stats.unexplored + stats.exploring}个待完成)</span>}</>
+                <>{ui("📄 生成研究报告")}{!isExplorationComplete && <span className="text-[9px] opacity-60">({stats.unexplored + stats.exploring}{ui("个待完成)")}</span>}</>
               )}
             </button>
           );
@@ -757,12 +760,12 @@ const DelegationView: React.FC<{ nodeId: string, taskTitle: string }> = ({ nodeI
   return (
     <div className="h-screen w-screen bg-slate-950 flex flex-col items-center p-4">
       <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl flex flex-col h-full overflow-hidden">
-        <header className="p-6 border-b border-slate-800"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-xl">🤝</div><div><h2 className="text-lg font-bold text-white">需求对齐AI</h2><p className="text-xs text-slate-500">任务：{taskTitle}</p></div></div></header>
+        <header className="p-6 border-b border-slate-800"><div className="flex items-center gap-3"><div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-xl">🤝</div><div><h2 className="text-lg font-bold text-white">{ui("需求对齐AI")}</h2><p className="text-xs text-slate-500">{ui("任务：")}{taskTitle}</p></div></div></header>
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {messages.map((m, i) => (<div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}><div className={`max-w-[80%] px-5 py-3.5 rounded-2xl text-[14px] whitespace-pre-wrap ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-300 rounded-tl-none'}`}>{m.text}</div></div>))}
-          {isTyping && <div className="text-xs text-slate-500 animate-pulse">AI输入中...</div>}
+          {isTyping && <div className="text-xs text-slate-500 animate-pulse">{ui("AI输入中...")}</div>}
         </div>
-        <form onSubmit={handleSend} className="p-4 border-t border-slate-800"><div className="flex gap-2"><input value={input} onChange={e => setInput(e.target.value)} placeholder="回复或同步进度..." className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white outline-none" /><button type="submit" className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl">发送</button></div></form>
+        <form onSubmit={handleSend} className="p-4 border-t border-slate-800"><div className="flex gap-2"><input value={input} onChange={e => setInput(e.target.value)} placeholder={ui("回复或同步进度...")} className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white outline-none" /><button type="submit" className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl">{ui("发送")}</button></div></form>
       </div>
     </div>
   );
@@ -809,6 +812,7 @@ function ensureOverview(project: Project): Project {
 
 // --- 主应用 ---
 const App: React.FC = () => {
+  const { language, setLanguage } = useLanguage();
   const [user, setUser] = useState(auth.getUser());
   const [currentHash, setCurrentHash] = useState(window.location.hash);
   useEffect(() => { const h = () => setCurrentHash(window.location.hash); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
@@ -830,17 +834,27 @@ const App: React.FC = () => {
   const [loginPhone, setLoginPhone] = useState('');
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
-  const [adminUsername, setAdminUsername] = useState('');
-  const [adminPass, setAdminPass] = useState('');
   const [isLoginAsAdmin, setIsLoginAsAdmin] = useState(false);
   const [loginMethod, setLoginMethod] = useState<'wechat' | 'phone' | 'email'>('email'); // 登录方式
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [showMetaModal, setShowMetaModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [metaInput, setMetaInput] = useState('');
+  const [showSharedModels, setShowSharedModels] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [cloudStats, setCloudStats] = useState<UserStats[]>([]);
-  const [adminActiveTab, setAdminActiveTab] = useState<'stats' | 'messages'>('stats');
+  const [isBackendAdmin, setIsBackendAdmin] = useState(false);
+  const [adminInitialTab, setAdminInitialTab] = useState<'stats' | 'models'>('models');
+  useEffect(() => {
+    let active = true;
+    setIsBackendAdmin(false);
+    const check = () => {
+      if (!user || !SHARED_API) return;
+      sharedRequest<{ isAdmin: boolean }>('/shared/session').then(s => { if (active) setIsBackendAdmin(s.isAdmin); }).catch(() => { if (active) setIsBackendAdmin(false); });
+    };
+    check(); window.addEventListener('focus', check);
+    return () => { active = false; window.removeEventListener('focus', check); };
+  }, [user]);
   const [adminMessages, setAdminMessages] = useState<any[]>([]);
   const [pendingIntent, setPendingIntent] = useState<{ input: string; analysis: IntentAnalysis; } | null>(null);
   const [isAnalyzingIntent, setIsAnalyzingIntent] = useState(false);
@@ -857,12 +871,15 @@ const App: React.FC = () => {
   useEffect(() => { if (showAdminDashboard) { (async () => { setCloudStats(await monitor.fetchCloudStats()); try { const { getMessages } = await import('./services/messageService'); setAdminMessages(await getMessages()); } catch { setAdminMessages([]); } })(); } }, [showAdminDashboard]);
 
   // 删除项目
-  const handleDeleteProject = useCallback((projectId: string) => {
+  const handleDeleteProject = useCallback(async (projectId: string) => {
     if (projects.length <= 1) {
       alert('至少保留一个项目');
       return;
     }
     if (!confirm('确定要删除这个项目吗？此操作不可恢复。')) return;
+    const deleting = projects.find(p => p.id === projectId);
+    try { if (deleting) await pauseCloudProject(deleting); }
+    catch { alert('无法确认云端已停止，暂未删除项目。请恢复连接后重试，避免项目删除后后台仍继续调用模型。'); return; }
     setProjects(prev => prev.filter(p => p.id !== projectId));
     if (currentProjectId === projectId) {
       const remaining = projects.filter(p => p.id !== projectId);
@@ -1220,8 +1237,17 @@ const App: React.FC = () => {
   const refreshOverviewRef = useRef(refreshOverview);
   useEffect(() => { refreshOverviewRef.current = refreshOverview; }, [refreshOverview]);
 
+  const cloudGateRef = useRef(false);
   const runExplorationCycle = useCallback(async () => {
     if (decision || isProcessingRef.current || !isLoopingRef.current) return;
+    if (cloudGateRef.current) return;
+    cloudGateRef.current = true;
+    try {
+      if (currentProject) await assertBrowserResearchAllowed(currentProject, 'root');
+    } catch (e) {
+      setIsLooping(false); addNotification('info', '浏览器探索已暂停', e instanceof Error ? e.message : '无法核对云端状态'); return;
+    } finally { cloudGateRef.current = false; }
+    if (!isLoopingRef.current) return;
     
     // 查找待探索节点
     let unexplored = focusedNodeId ? (() => { 
@@ -1328,6 +1354,9 @@ const App: React.FC = () => {
     updateNode(cid, { status: NodeStatus.EXPLORING });
     
     try {
+      try { if (currentProject) await assertBrowserResearchAllowed(currentProject, cid); }
+      catch (e) { setIsLooping(false); updateNode(cid, { status: NodeStatus.UNEXPLORED }); isProcessingRef.current = false; addNotification('info', '浏览器探索已暂停', e instanceof Error ? e.message : '无法核对云端状态'); return; }
+      if (!isLoopingRef.current) { updateNode(cid, { status: NodeStatus.UNEXPLORED }); return; }
       const isResearch = currentProject?.explorationMode === 'research';
       
       // 添加超时控制
@@ -2473,30 +2502,30 @@ ${plan.lead.duty}
           }}
         />
       )}
+      <div className="flex justify-end mb-2"><select aria-label="Language" className="bg-slate-800 text-slate-200 rounded-lg p-2 text-sm" value={language} onChange={e => setLanguage(e.target.value as 'zh-CN' | 'en')}><option value="zh-CN">简体中文</option><option value="en">English</option></select></div>
       <div id="landing-card" className="max-w-md w-full mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-emerald-600"></div>
         <div className="text-center mb-6">
           <div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">🧭</div>
           <h2 className="text-xl sm:text-2xl font-bold">HiExplore</h2>
           {isLoginAsAdmin ? (
-            <p className="text-slate-500 text-xs sm:text-sm mt-2">管理员验证</p>
+            <p className="text-slate-500 text-xs sm:text-sm mt-2">{ui("管理员验证")}</p>
           ) : (
             /*
               首屏必须先回答「这是什么」再要东西。
               数据依据：上线首 12 天 40 访客只有 3 次登录、跳出率 86%、平均停留 47 秒——
               访客落地看到的是一个要邮箱的表单，没有任何信息告诉他为什么要填。
             */
-            <p className="text-slate-400 text-[13px] leading-6 mt-3">
-              别急着让 AI 回答问题，<br className="sm:hidden" />先算清楚这个问题<span className="text-blue-400 font-bold">值不值得答</span>
+            <p className="text-slate-400 text-[13px] leading-6 mt-3">{ui("别急着让 AI 回答问题，")}<br className="sm:hidden" />{ui("先算清楚这个问题")}<span className="text-blue-400 font-bold">{ui("值不值得答")}</span>
             </p>
           )}
         </div>
 
         {!isLoginAsAdmin && !isOtpSent && (
           <div className="mb-6 space-y-2 text-[12px] text-slate-400 leading-6">
-            <div className="flex gap-2"><span className="text-blue-400">01</span><span>给问题打分：稀缺性、深度、可验证性等六个维度，先筛掉不值得研究的</span></div>
-            <div className="flex gap-2"><span className="text-blue-400">02</span><span>值得的问题一键立项，AI 组一支分工的团队长期跑，你关掉也在继续</span></div>
-            <div className="flex gap-2"><span className="text-blue-400">03</span><span>产出是带双链的 Markdown，能直接当 Obsidian 库打开</span></div>
+            <div className="flex gap-2"><span className="text-blue-400">01</span><span>{ui("给问题打分：稀缺性、深度、可验证性等六个维度，先筛掉不值得研究的")}</span></div>
+            <div className="flex gap-2"><span className="text-blue-400">02</span><span>{ui("值得的问题一键立项，AI 组一支分工的团队长期跑，你关掉也在继续")}</span></div>
+            <div className="flex gap-2"><span className="text-blue-400">03</span><span>{ui("产出是带双链的 Markdown，能直接当 Obsidian 库打开")}</span></div>
           </div>
         )}
 
@@ -2509,25 +2538,22 @@ ${plan.lead.duty}
             <button
               onClick={() => { trackEvent('trial_start'); setUser(auth.loginAsGuest()); }}
               className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition-colors"
-            >
-              🎁 免注册，直接开始
-            </button>
-            <p className="text-center text-[11px] text-slate-500 mt-2.5 leading-5">
-              不用填任何信息 · 笔记只存在你自己的浏览器里
-            </p>
+            >{ui("🎁 免注册，直接开始")}</button>
+            <p className="text-center text-[11px] text-slate-500 mt-2.5 leading-5">{ui("不用填任何信息 · 笔记只存在你自己的浏览器里")}</p>
           </div>
         )}
 
         {!isLoginAsAdmin && !isOtpSent && hasTrialBackend() && (
           <div className="flex items-center gap-3 mb-5">
             <div className="flex-1 h-px bg-slate-800" />
-            <span className="text-[11px] text-slate-600">或登录以长期保存</span>
+            <span className="text-[11px] text-slate-600">{ui("或登录以长期保存")}</span>
             <div className="flex-1 h-px bg-slate-800" />
           </div>
         )}
 
-        {!isLoginAsAdmin ? (
+        {(!isLoginAsAdmin || hasAuthBackend()) ? (
           <div className="space-y-4">
+            {isLoginAsAdmin && <p className="text-sm text-slate-400">{ui("使用管理员邮箱接收验证码。登录后由后台确认权限，可管理模型 Key、用户额度、统计和留言。")}</p>}
             {/* 登录方式切换。托管版只有邮箱是真登录，此时这个切换条只剩一个「邮箱」按钮，
                 纯属噪音，直接整条隐藏（loginMethod 默认就是 email）。 */}
             {!isOtpSent && !hasAuthBackend() && (
@@ -2538,26 +2564,20 @@ ${plan.lead.duty}
                   onClick={() => setLoginMethod('wechat')}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'wechat' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-6.656-6.088V8.89c-.135-.01-.27-.027-.407-.03zm-2.53 3.274c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z"/></svg>
-                  微信
-                </button>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-6.656-6.088V8.89c-.135-.01-.27-.027-.407-.03zm-2.53 3.274c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z"/></svg>{ui("微信")}</button>
                 )}
                 {!hasAuthBackend() && (
                 <button
                   onClick={() => setLoginMethod('phone')}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'phone' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
-                  短信
-                </button>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>{ui("短信")}</button>
                 )}
                 <button
                   onClick={() => setLoginMethod('email')}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'email' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-                  邮箱
-                </button>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>{ui("邮箱")}</button>
               </div>
             )}
             
@@ -2568,12 +2588,12 @@ ${plan.lead.duty}
                   <div className="w-full h-full bg-slate-100 rounded-xl flex items-center justify-center">
                     <div className="text-center">
                       <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.5" className="mx-auto mb-2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h.01M7 12h.01M12 7h.01M17 7h.01M12 12h.01M17 12h.01M7 17h.01M12 17h.01M17 17h.01"/></svg>
-                      <p className="text-xs text-slate-500">微信扫码区域</p>
+                      <p className="text-xs text-slate-500">{ui("微信扫码区域")}</p>
                     </div>
                   </div>
                 </div>
-                <p className="text-xs text-slate-500">请使用微信扫一扫登录</p>
-                <button onClick={() => setUser(auth.loginWithEmail('wechat_user@demo.com'))} className="mt-4 text-xs text-blue-400 hover:text-blue-300">模拟扫码成功</button>
+                <p className="text-xs text-slate-500">{ui("请使用微信扫一扫登录")}</p>
+                <button onClick={() => setUser(auth.loginWithEmail('wechat_user@demo.com'))} className="mt-4 text-xs text-blue-400 hover:text-blue-300">{ui("模拟扫码成功")}</button>
               </div>
             )}
             
@@ -2586,57 +2606,65 @@ ${plan.lead.duty}
                     <option>+1</option>
                     <option>+852</option>
                   </select>
-                  <input type="tel" placeholder="手机号码" value={loginPhone} onChange={e => setLoginPhone(e.target.value)} className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
+                  <input type="tel" placeholder={ui("手机号码")} value={loginPhone} onChange={e => setLoginPhone(e.target.value)} className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
                 </div>
-                <button onClick={() => { if (loginPhone.length >= 11) { setIsOtpSent(true); setOtpCode('123456'); } }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">获取短信验证码</button>
+                <button onClick={() => { if (loginPhone.length >= 11) { setIsOtpSent(true); setOtpCode('123456'); } }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">{ui("获取短信验证码")}</button>
               </>
             )}
             
             {/* 邮箱验证码登录 */}
             {loginMethod === 'email' && !isOtpSent && (
               <>
-                <input type="email" placeholder="电子邮箱" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
+                <input type="email" placeholder={ui("电子邮箱")} value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
                 <button onClick={async () => {
                   if (!loginEmail.includes('@')) { alert('请输入正确的邮箱'); return; }
                   if (hasAuthBackend()) {
                     try { const d = await auth.sendEmailCode(loginEmail); setIsOtpSent(true); setOtpCode(''); if (d.devCode) alert('开发模式验证码：' + d.devCode); }
                     catch (e: any) { alert(e.message || '发送失败'); }
                   } else { setIsOtpSent(true); setOtpCode('123456'); }
-                }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">获取邮箱验证码</button>
+                }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">{ui("获取邮箱验证码")}</button>
               </>
             )}
             
             {/* 验证码输入 */}
             {isOtpSent && (
               <>
-                <div className="text-center text-xs text-slate-500 mb-2">
-                  验证码已发送至 {loginMethod === 'phone' ? loginPhone : loginEmail}
+                <div className="text-center text-xs text-slate-500 mb-2">{ui("验证码已发送至")}{loginMethod === 'phone' ? loginPhone : loginEmail}
                 </div>
-                <input type="text" placeholder="输入验证码" value={otpCode} onChange={e => setOtpCode(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-4 text-center text-xl tracking-[0.5em] font-mono text-white outline-none" />
+                <input type="text" placeholder={ui("输入验证码")} value={otpCode} onChange={e => setOtpCode(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-4 text-center text-xl tracking-[0.5em] font-mono text-white outline-none" />
                 <button onClick={async () => {
                   if (hasAuthBackend() && loginMethod === 'email') {
-                    try { setUser(await auth.verifyEmailCode(loginEmail, otpCode)); }
+                    try {
+                      const loggedIn = await auth.verifyEmailCode(loginEmail, otpCode);
+                      setUser(loggedIn);
+                      if (isLoginAsAdmin) {
+                        try {
+                          const session = await sharedRequest<{ isAdmin: boolean }>('/shared/session');
+                          if (session.isAdmin) { setIsBackendAdmin(true); setAdminInitialTab('models'); setShowAdminDashboard(true); }
+                          else alert('邮箱已登录，但此账号尚未获得后台管理员授权。');
+                        } catch (e: any) { alert('邮箱已登录，管理员权限暂时无法确认：' + e.message); }
+                      }
+                    }
                     catch (e: any) { alert(e.message || '验证失败'); }
                   } else { setUser(auth.loginWithEmail(loginMethod === 'phone' ? loginPhone : loginEmail)); }
-                }} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl">确认登录</button>
-                <button onClick={() => { setIsOtpSent(false); setOtpCode(''); }} className="w-full text-xs text-slate-500 hover:text-slate-300 py-2">返回重新获取</button>
+                }} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-xl">{ui("确认登录")}</button>
+                <button onClick={() => { setIsOtpSent(false); setOtpCode(''); }} className="w-full text-xs text-slate-500 hover:text-slate-300 py-2">{ui("返回重新获取")}</button>
               </>
             )}
           </div>
         ) : (
           <div className="space-y-4">
-            <input type="text" placeholder="管理账号" value={adminUsername} onChange={e => setAdminUsername(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white outline-none" />
-            <input type="password" placeholder="管理密码" value={adminPass} onChange={e => setAdminPass(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white outline-none" />
-            <button onClick={() => { if (auth.loginAsAdmin(adminUsername, adminPass)) setUser(auth.getUser()); else alert('账号或密码错误'); }} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 rounded-xl">管理员登录</button>
+            <p className="text-sm text-slate-400">{ui("管理员后台需要接入邮箱登录服务和共享模型后台。完成部署后，使用已授权邮箱登录。")}</p>
+            <button onClick={() => setIsLoginAsAdmin(false)} className="w-full bg-slate-800 text-white py-3 rounded-xl">{ui("返回")}</button>
           </div>
         )}
         
         {/* 没有体验后端时（自部署场景），免注册入口无法提供，此处不渲染 */}
 
         <div className="mt-6 pt-4 border-t border-slate-800 flex items-center justify-center gap-4">
-          <a href="https://github.com/chenhaiyan123/ai-auto-explorer" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-white text-xs font-medium">开源代码</a>
+          <a href="https://github.com/chenhaiyan123/ai-auto-explorer" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-white text-xs font-medium">{ui("开源代码")}</a>
           <span className="text-slate-700">·</span>
-          <button onClick={() => { setIsLoginAsAdmin(!isLoginAsAdmin); setOtpCode(''); setIsOtpSent(false); }} className="text-slate-500 hover:text-white text-xs font-medium">{isLoginAsAdmin ? '返回普通登录' : '管理员入口'}</button>
+          <button onClick={() => { setIsLoginAsAdmin(!isLoginAsAdmin); setLoginMethod('email'); setOtpCode(''); setIsOtpSent(false); }} className="text-slate-500 hover:text-white text-xs font-medium">{isLoginAsAdmin ? ui("返回普通登录") : ui("管理员入口")}</button>
         </div>
 
         {/*
@@ -2690,14 +2718,14 @@ ${plan.lead.duty}
               <button 
                 onClick={() => { setTempProjectName(currentProject.name); setEditingProjectName(true); }}
                 className="hidden sm:block p-1.5 text-slate-500 hover:text-blue-400 hover:bg-slate-800 rounded transition-colors"
-                title="重命名项目"
+                title={ui("重命名项目")}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
               </button>
             )}
           </div>
           
-          {currentProject?.explorationMode && <div className={`hidden sm:flex px-2 py-1 rounded-full text-[10px] font-bold items-center gap-1 ${currentProject.explorationMode === 'research' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'}`}>{currentProject.explorationMode === 'research' ? '🔬研究' : '🔧构建'}</div>}
+          {currentProject?.explorationMode && <div className={`hidden sm:flex px-2 py-1 rounded-full text-[10px] font-bold items-center gap-1 ${currentProject.explorationMode === 'research' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30' : 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'}`}>{currentProject.explorationMode === 'research' ? ui("🔬研究") : ui("🔧构建")}</div>}
           <button onClick={() => setShowMetaModal(true)} className="hidden sm:block p-2 text-slate-400 hover:text-blue-400"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg></button>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-3">
@@ -2707,23 +2735,21 @@ ${plan.lead.duty}
               onClick={() => setShowPremiumModal(true)} 
               className="hidden sm:flex px-2.5 py-1.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-400 border border-amber-500/30 rounded-full text-[10px] font-bold hover:from-amber-500/30 hover:to-orange-500/30 items-center gap-1.5 transition-all"
             >
-              <span>👑</span> 7×24探索
-            </button>
+              <span>👑</span>{ui("7×24探索")}</button>
           )}
           {isPremiumUser && (
             <div className="hidden sm:flex px-2.5 py-1.5 bg-gradient-to-r from-amber-600/20 to-orange-600/20 text-amber-400 border border-amber-500/30 rounded-full text-[10px] font-bold items-center gap-1.5">
-              <span>👑</span> 会员
-            </div>
+              <span>👑</span>{ui("会员")}</div>
           )}
 
           {/* 当前模型：一眼确认用的是哪个模型，点击打开设置 */}
           <button
             onClick={() => setShowSettingsModal(true)}
             className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-emerald-400 max-w-[180px]"
-            title="当前使用的模型（点击修改）"
+            title={ui("当前使用的模型（点击修改）")}
           >
             <span>🧠</span>
-            <span className="truncate">{activeModel || '未配置模型'}</span>
+            <span className="truncate">{activeModel || ui("未配置模型")}</span>
           </button>
 
           {/* 体验剩余次数：仅免配置体验模式显示，用完引导注册/填 Key */}
@@ -2731,10 +2757,10 @@ ${plan.lead.duty}
             <button
               onClick={() => setShowSettingsModal(true)}
               className={`hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-bold border transition-colors ${trialQuota.remaining > 0 ? 'bg-emerald-600/15 text-emerald-400 border-emerald-600/30 hover:bg-emerald-600/25' : 'bg-amber-600/15 text-amber-400 border-amber-600/30 hover:bg-amber-600/25'}`}
-              title={trialQuota.scope === 'anon' ? '免注册体验额度（登录可获得更多，或填入你自己的模型 Key）' : '今日体验额度（用完可填入你自己的模型 Key）'}
+              title={trialQuota.scope === 'anon' ? ui("免注册体验额度（登录可获得更多，或填入你自己的模型 Key）") : ui("今日体验额度（用完可填入你自己的模型 Key）")}
             >
               <span>🎁</span>
-              <span>体验剩余 {trialQuota.remaining}/{trialQuota.limit}</span>
+              <span>{ui("体验剩余")}{trialQuota.remaining}/{trialQuota.limit}</span>
             </button>
           )}
 
@@ -2743,8 +2769,8 @@ ${plan.lead.duty}
             <button
               onClick={() => setShowDownloadModal(true)}
               className="hidden sm:flex px-2.5 py-1.5 bg-slate-800 hover:bg-blue-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-blue-400 flex items-center gap-1"
-              title="下载桌面客户端（支持本地模型 / 7×24）"
-            >⬇ 客户端</button>
+              title={ui("下载桌面客户端（支持本地模型 / 7×24）")}
+            >{ui("⬇ 客户端")}</button>
           )}
 
           {/* 设备安全：待确认的写操作 + 急停（没注册设备时整条不渲染） */}
@@ -2758,29 +2784,29 @@ ${plan.lead.duty}
                 if (p) setSelectedNodeId(p.nodeId);
               }}
               className="px-2.5 py-1.5 bg-purple-900/40 hover:bg-purple-600 hover:text-white border border-purple-500/40 rounded-full transition-colors text-[11px] font-bold text-purple-300 flex items-center gap-1"
-              title="待执行的现实验证探针——推理停在这里了，等你去问现实"
-            >🔬 待验证<span className="text-[9px] opacity-70">{pendingProbeCount(projectProbes)}</span></button>
+              title={ui("待执行的现实验证探针——推理停在这里了，等你去问现实")}
+            >{ui("🔬 待验证")}<span className="text-[9px] opacity-70">{pendingProbeCount(projectProbes)}</span></button>
           )}
 
           {/* 问题广场：筛选有价值的问题 */}
           <button
             onClick={() => setShowQuestionBoard(true)}
             className="hidden sm:flex px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-amber-400 flex items-center gap-1"
-            title="问题广场：筛选有价值的问题"
-          >🔥 问题</button>
+            title={ui("问题广场：筛选有价值的问题")}
+          >{ui("🔥 问题")}</button>
 
           {/* 反馈入口：推广期最重要的一个按钮，放在顶栏常驻 */}
           <button
             onClick={() => { setShowFeedback(true); trackEvent('feedback_open'); }}
             className="hidden sm:flex px-2.5 py-1.5 bg-slate-800 hover:bg-emerald-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-emerald-400 flex items-center gap-1"
-            title="反馈：卡住了、报错了、觉得哪里蠢，都告诉我"
-          >💬 反馈</button>
+            title={ui("反馈：卡住了、报错了、觉得哪里蠢，都告诉我")}
+          >{ui("💬 反馈")}</button>
 
           {/* 主题切换：白天 / 深色 */}
           <button
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
             className="hidden sm:flex p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
-            title={theme === 'dark' ? '切换到白天模式' : '切换到深色模式'}
+            title={theme === 'dark' ? ui("切换到白天模式") : ui("切换到深色模式")}
           >
             {theme === 'dark' ? (
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
@@ -2789,11 +2815,12 @@ ${plan.lead.duty}
             )}
           </button>
 
+          <button onClick={() => { if (isBackendAdmin) { setAdminInitialTab('models'); setShowAdminDashboard(true); } else setShowSharedModels(true); }} className="rounded-full border border-violet-500/30 px-2 py-1.5 text-xs text-violet-300" title={ui("查看共享模型与个人使用额度")}>{ui("模型与额度")}</button>
           {/* 设置：模型接入 / IoT 设备 */}
           <button
             onClick={() => setShowSettingsModal(true)}
             className="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
-            title="设置：模型接入 / IoT 设备"
+            title={ui("设置：模型接入 / IoT 设备")}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
@@ -2818,14 +2845,14 @@ ${plan.lead.duty}
                 <div className="fixed inset-0 z-40" onClick={() => setShowNotificationPanel(false)} />
                 <div className="absolute right-0 top-full mt-2 w-80 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 max-h-[400px] overflow-hidden flex flex-col">
                   <div className="p-3 border-b border-slate-700 flex items-center justify-between">
-                    <span className="text-sm font-bold text-white">通知</span>
+                    <span className="text-sm font-bold text-white">{ui("通知")}</span>
                     {notifications.length > 0 && (
-                      <button onClick={() => setNotifications([])} className="text-[10px] text-slate-500 hover:text-slate-300">全部清除</button>
+                      <button onClick={() => setNotifications([])} className="text-[10px] text-slate-500 hover:text-slate-300">{ui("全部清除")}</button>
                     )}
                   </div>
                   <div className="flex-1 overflow-y-auto">
                     {notifications.length === 0 ? (
-                      <div className="p-8 text-center text-slate-500 text-xs">暂无通知</div>
+                      <div className="p-8 text-center text-slate-500 text-xs">{ui("暂无通知")}</div>
                     ) : (
                       notifications.map(n => (
                         <div key={n.id} className={`p-3 border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer ${n.type === 'discovery' ? 'bg-emerald-500/5' : n.type === 'warning' ? 'bg-orange-500/5' : ''}`} onClick={() => clearNotification(n.id)}>
@@ -2846,7 +2873,7 @@ ${plan.lead.duty}
             )}
           </div>
 
-          {user.role === 'admin' && <button onClick={() => setShowAdminDashboard(true)} className="p-2 sm:px-3 sm:py-1.5 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-full text-[10px] font-bold hover:bg-purple-600/30"><span className="sm:inline hidden">管理看板</span><span className="sm:hidden">📊</span></button>}
+          {isBackendAdmin && <button onClick={() => { setAdminInitialTab('models'); setShowAdminDashboard(true); }} className="p-2 sm:px-3 sm:py-1.5 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-full text-[10px] font-bold hover:bg-purple-600/30"><span className="sm:inline hidden">{ui("管理员后台")}</span><span className="sm:hidden">📊</span></button>}
           
           {/* 个人中心 */}
           <div className="relative">
@@ -2868,7 +2895,7 @@ ${plan.lead.duty}
                 <div className="absolute right-0 top-full mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 z-50" onClick={e => e.stopPropagation()}>
                   {/* 用户信息 */}
                   <div className="px-4 py-2 border-b border-slate-700">
-                    <div className="text-sm font-medium text-white">{user.username || '用户'}</div>
+                    <div className="text-sm font-medium text-white">{user.username || ui("用户")}</div>
                     <div className="text-[10px] text-slate-500">{user.email || ''}</div>
                   </div>
                   
@@ -2877,16 +2904,12 @@ ${plan.lead.duty}
                     onClick={() => { setShowProjectManager(true); setShowUserMenu(false); }} 
                     className="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-3 transition-colors"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
-                    项目管理
-                  </button>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>{ui("项目管理")}</button>
                   <button 
                     onClick={() => { setShowHelpModal(true); setShowUserMenu(false); }} 
                     className="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-3 transition-colors"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
-                    帮助与反馈
-                  </button>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>{ui("帮助与反馈")}</button>
                   
                   <div className="h-px bg-slate-700 my-1" />
                   
@@ -2894,9 +2917,7 @@ ${plan.lead.duty}
                     onClick={() => { auth.logout(); setUser(null); setShowUserMenu(false); }} 
                     className="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-red-600/10 flex items-center gap-3 transition-colors"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
-                    退出登录
-                  </button>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>{ui("退出登录")}</button>
                 </div>
               </>
             )}
@@ -2914,7 +2935,7 @@ ${plan.lead.duty}
           <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
             <h3 className="text-xs font-bold text-slate-400">EXPLORER</h3>
             <div className="flex gap-1">
-              <button onClick={() => setSidebarWidth(sidebarWidth === 320 ? 480 : 320)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title="切换宽度">
+              <button onClick={() => setSidebarWidth(sidebarWidth === 320 ? 480 : 320)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title={ui("切换宽度")}>
                 {sidebarWidth > 400 ? <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/></svg> : <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>}
               </button>
               <button onClick={() => setNotesPanelMode(0)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button>
@@ -2934,13 +2955,13 @@ ${plan.lead.duty}
           />
         )}
         
-        {notesPanelMode === 0 && <div className="w-8 h-full bg-slate-900 border-r border-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNotesPanelMode(1)}><div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">展开面板</div></div>}
+        {notesPanelMode === 0 && <div className="w-8 h-full bg-slate-900 border-r border-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNotesPanelMode(1)}><div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">{ui("展开面板")}</div></div>}
 
         {/* ===== 中间：笔记内容（Obsidian 主编辑区） ===== */}
         <div className="flex-1 relative z-0 min-w-0 bg-slate-800">
           {/* 顶部工具条 */}
           <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between gap-3 overflow-x-auto px-3 py-2 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/60 pointer-events-none">
-            <div className="text-[11px] text-slate-500 flex-shrink-0 pointer-events-auto">{currentProject && <button onClick={() => openProjectPage(currentProject.id, 'root', 'research')} className="hover:text-blue-300">◈ 项目总览</button>}</div>
+            <div className="text-[11px] text-slate-500 flex-shrink-0 pointer-events-auto">{currentProject && <button onClick={() => openProjectPage(currentProject.id, 'root', 'research')} className="hover:text-blue-300">{ui("◈ 项目总览")}</button>}</div>
             <div className="hidden md:flex items-center gap-2 flex-shrink-0 pointer-events-auto">
               <button
                 onClick={() => {
@@ -2953,8 +2974,8 @@ ${plan.lead.duty}
                   if (next) { setJustWroteId(null); addNotification('info', '♾️ 持续探索已开启', '不再一篇一停。AI 会连着写下去并自主提出新方向，保持本应用打开即可。'); }
                 }}
                 className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white animate-pulse' : 'bg-slate-700/70 text-slate-200 hover:bg-emerald-600 hover:text-white'}`}
-                title="7×24 持续探索：探索完会自主提出新方向，永不停（保持应用打开即可）"
-              >♾️ {continuousMode ? '探索中' : '持续探索'}</button>
+                title={ui("7×24 持续探索：探索完会自主提出新方向，永不停（保持应用打开即可）")}
+              >♾️ {continuousMode ? ui("探索中") : ui("持续探索")}</button>
               {/*
                 「先理框架」：没有框架的项目（含所有老项目）也能随时补一个。
                 放在「持续探索」旁边是有意的——这两个按钮代表两种相反的节奏，
@@ -2965,13 +2986,13 @@ ${plan.lead.duty}
                   onClick={() => handleProposeOutline()}
                   disabled={outlineBusy}
                   className="px-3 py-1.5 bg-slate-700/70 hover:bg-blue-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                  title="先只列出打算写哪几篇（不写正文），跟你对齐之后再一篇一篇填"
-                >🗺️ {outlineBusy ? '拟稿中…' : projectOutline ? '重理框架' : '先理框架'}</button>
+                  title={ui("先只列出打算写哪几篇（不写正文），跟你对齐之后再一篇一篇填")}
+                >🗺️ {outlineBusy ? ui("拟稿中…") : projectOutline ? '重理框架' : '先理框架'}</button>
               )}
-              <button onClick={() => setShowGraphModal(true)} className="px-3 py-1.5 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title="打开关系图谱">🕸️ 图谱</button>
-              <button onClick={() => setRightChatOpen(v => !v)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${rightChatOpen ? 'bg-blue-600 text-white' : 'bg-slate-700/70 text-slate-200 hover:bg-blue-600 hover:text-white'}`} title="切换 AI 对话栏">💬 对话</button>
+              <button onClick={() => setShowGraphModal(true)} className="px-3 py-1.5 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title={ui("打开关系图谱")}>{ui("🕸️ 图谱")}</button>
+              <button onClick={() => setRightChatOpen(v => !v)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${rightChatOpen ? 'bg-blue-600 text-white' : 'bg-slate-700/70 text-slate-200 hover:bg-blue-600 hover:text-white'}`} title={ui("切换 AI 对话栏")}>{ui("💬 对话")}</button>
             </div>
-            <button className="md:hidden pointer-events-auto text-xs text-slate-300" onClick={() => setNotesPanelMode(v => v ? 0 : 1)}>项目笔记</button>
+            <button className="md:hidden pointer-events-auto text-xs text-slate-300" onClick={() => setNotesPanelMode(v => v ? 0 : 1)}>{ui("项目笔记")}</button>
           </div>
 
           <div className="h-full pt-11 flex flex-col min-h-0">
@@ -3020,9 +3041,9 @@ ${plan.lead.duty}
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="text-5xl opacity-40">📂</div>
-                <div className="text-slate-400 text-sm font-bold">从左侧选择一个项目里的笔记，或新建项目</div>
-                <div className="text-slate-600 text-[11px] max-w-sm leading-relaxed">一个项目有统一的项目总览，里面放 5–10 个关键方向，每个方向是一篇子笔记、可由一个专门的 Agent 负责。用 <span className="text-purple-400">[[标题]]</span> 互相关联，点上方 <span className="text-purple-400">🕸️ 图谱</span> 看关系网络。</div>
-                <button onClick={() => handleCreateProject()} className="mt-2 px-4 py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">＋ 新建项目</button>
+                <div className="text-slate-400 text-sm font-bold">{ui("从左侧选择一个项目里的笔记，或新建项目")}</div>
+                <div className="text-slate-600 text-[11px] max-w-sm leading-relaxed">{ui("一个项目有统一的项目总览，里面放 5–10 个关键方向，每个方向是一篇子笔记、可由一个专门的 Agent 负责。用")}<span className="text-purple-400">{ui("[[标题]]")}</span>{ui("互相关联，点上方")}<span className="text-purple-400">{ui("🕸️ 图谱")}</span>{ui("看关系网络。")}</div>
+                <button onClick={() => handleCreateProject()} className="mt-2 px-4 py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">{ui("＋ 新建项目")}</button>
               </div>
             )}
             </div>
@@ -3034,8 +3055,8 @@ ${plan.lead.duty}
         {/* ===== 右侧：AI 对话 ===== */}
         <div className="hidden md:flex h-full flex-col bg-slate-900 border-l border-slate-800 overflow-hidden transition-all duration-300" style={{ width: rightChatOpen ? rightChatWidth : 0 }}>
           <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
-            <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5"><span>🤝</span> 团队群聊</h3>
-            <button onClick={() => setRightChatOpen(false)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title="收起"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 17 5-5-5-5M13 17l5-5-5-5"/></svg></button>
+            <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5"><span>🤝</span>{ui("团队群聊")}</h3>
+            <button onClick={() => setRightChatOpen(false)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title={ui("收起")}><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 17 5-5-5-5M13 17l5-5-5-5"/></svg></button>
           </div>
           <div className="flex-1 overflow-hidden">
             <TeamChat key={`${currentProjectId || 'none'}:${currentProject?.worktree?.activeBranchId || 'main'}`} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} />
@@ -3044,8 +3065,8 @@ ${plan.lead.duty}
 
         {/* 收起时的右侧重新展开把手 */}
         {!rightChatOpen && (
-          <div className="hidden md:flex w-8 h-full bg-slate-900 border-l border-slate-800 items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setRightChatOpen(true)} title="展开 AI 对话">
-            <div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">AI 对话</div>
+          <div className="hidden md:flex w-8 h-full bg-slate-900 border-l border-slate-800 items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setRightChatOpen(true)} title={ui("展开 AI 对话")}>
+            <div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">{ui("AI 对话")}</div>
           </div>
         )}
 
@@ -3053,8 +3074,8 @@ ${plan.lead.duty}
         {showGraphModal && (
           <div className="fixed inset-0 z-[90] flex flex-col bg-slate-950/95 backdrop-blur-sm">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/80">
-              <h3 className="text-sm font-bold text-purple-300 flex items-center gap-2"><span>🕸️</span> 关系图谱{currentProject?.name ? ` · ${currentProject.name}` : ''}</h3>
-              <button onClick={() => setShowGraphModal(false)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white transition-colors" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+              <h3 className="text-sm font-bold text-purple-300 flex items-center gap-2"><span>🕸️</span>{ui("关系图谱")}{currentProject?.name ? ` · ${currentProject.name}` : ''}</h3>
+              <button onClick={() => setShowGraphModal(false)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white transition-colors" title={ui("关闭")}><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
             </div>
             <div className="flex-1 relative">
               <GraphVisualization nodes={filteredNodes} onNodeClick={(node) => { handleNodeClick(node); setShowGraphModal(false); }} onNodeContextMenu={(node, x, y) => setContextMenu({ x, y, nodeId: node.id })} onToggleCollapse={(nodeId) => { const n = nodes.find(x => x.id === nodeId); if (n) updateNode(n.id, { isCollapsed: !n.isCollapsed }); }} onBatchUpdateNodes={(updates) => { setNodes(prev => prev.map(n => { const u = updates.find(x => x.id === n.id); return u ? { ...n, ...u.changes } : n; })); }} />
@@ -3065,18 +3086,18 @@ ${plan.lead.duty}
 
       {contextMenu && <div className="fixed z-[100] bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 w-48" style={{ top: Math.min(contextMenu.y, window.innerHeight - 350), left: Math.min(contextMenu.x, window.innerWidth - 200) }} onClick={e => e.stopPropagation()}>
         {/* 在团队群聊里讨论这个节点（选中它 + 打开右侧群聊，群聊会自动把当前笔记带进上下文） */}
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2 text-blue-400" onClick={() => { setSelectedNodeId(contextMenu.nodeId); setRightChatOpen(true); setContextMenu(null); }}>💬 在团队群聊里讨论</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2 text-blue-400" onClick={() => { setSelectedNodeId(contextMenu.nodeId); setRightChatOpen(true); setContextMenu(null); }}>{ui("💬 在团队群聊里讨论")}</button>
         <div className="h-px bg-slate-700 my-1"></div>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { setFocusedNodeId(focusedNodeId === contextMenu.nodeId ? null : contextMenu.nodeId); setContextMenu(null); }}>🎯 {focusedNodeId === contextMenu.nodeId ? '取消聚焦' : '聚焦节点'}</button>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isCritical: !n.isCritical }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isCritical ? '⭐ 取消关键' : '⭐ 设为关键'}</button>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isPinned: !n.isPinned }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isPinned ? '📍 取消固定' : '📌 固定节点'}</button>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isCollapsed: !n.isCollapsed }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isCollapsed ? '📂 展开节点' : '📁 折叠节点'}</button>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const title = prompt('标题:'); if (title) addNode(title, [contextMenu.nodeId]); setContextMenu(null); }}>➕ 增加子节点</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { setFocusedNodeId(focusedNodeId === contextMenu.nodeId ? null : contextMenu.nodeId); setContextMenu(null); }}>🎯 {focusedNodeId === contextMenu.nodeId ? ui("取消聚焦") : ui("聚焦节点")}</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isCritical: !n.isCritical }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isCritical ? ui("⭐ 取消关键") : ui("⭐ 设为关键")}</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isPinned: !n.isPinned }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isPinned ? ui("📍 取消固定") : ui("📌 固定节点")}</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); if (n) updateNode(n.id, { isCollapsed: !n.isCollapsed }); setContextMenu(null); }}>{nodes.find(n => n.id === contextMenu.nodeId)?.isCollapsed ? ui("📂 展开节点") : ui("📁 折叠节点")}</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-blue-600 flex items-center gap-2" onClick={() => { const title = prompt('标题:'); if (title) addNode(title, [contextMenu.nodeId]); setContextMenu(null); }}>{ui("➕ 增加子节点")}</button>
         <div className="h-px bg-slate-700 my-1"></div>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-amber-600 text-amber-400 hover:text-white flex items-center gap-2" onClick={() => { openDecisionRecorder(contextMenu.nodeId, 'manual'); setContextMenu(null); }}>⚖️ 记录决策</button>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-red-600 text-red-400 hover:text-white flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); openDecisionRecorder(contextMenu.nodeId, 'invalidate', { pendingAction: 'invalidate', skippable: true, presetQuestion: `是否放弃「${n?.title || ''}」这个方向？`, presetOptions: [{ label: '放弃这个方向（设为无效）', chosen: true }, { label: '继续探索', chosen: false }] }); setContextMenu(null); }}>🚫 设为无效</button>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-emerald-600 flex items-center gap-2" onClick={() => { updateNode(contextMenu.nodeId, { status: NodeStatus.SOLVED }); setContextMenu(null); }}>✅ 标记完成</button>
-        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-red-600 text-red-400 hover:text-white flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); openDecisionRecorder(contextMenu.nodeId, 'delete_node', { pendingAction: 'delete', skippable: true, presetQuestion: `是否删除「${n?.title || ''}」？`, presetOptions: [{ label: `删除「${(n?.title || '').slice(0, 12)}」`, chosen: true }, { label: '保留', chosen: false }] }); setContextMenu(null); }}>🗑️ 删除节点</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-amber-600 text-amber-400 hover:text-white flex items-center gap-2" onClick={() => { openDecisionRecorder(contextMenu.nodeId, 'manual'); setContextMenu(null); }}>{ui("⚖️ 记录决策")}</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-red-600 text-red-400 hover:text-white flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); openDecisionRecorder(contextMenu.nodeId, 'invalidate', { pendingAction: 'invalidate', skippable: true, presetQuestion: `是否放弃「${n?.title || ''}」这个方向？`, presetOptions: [{ label: '放弃这个方向（设为无效）', chosen: true }, { label: '继续探索', chosen: false }] }); setContextMenu(null); }}>{ui("🚫 设为无效")}</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-emerald-600 flex items-center gap-2" onClick={() => { updateNode(contextMenu.nodeId, { status: NodeStatus.SOLVED }); setContextMenu(null); }}>{ui("✅ 标记完成")}</button>
+        <button className="w-full text-left px-4 py-2.5 text-xs hover:bg-red-600 text-red-400 hover:text-white flex items-center gap-2" onClick={() => { const n = nodes.find(x => x.id === contextMenu.nodeId); openDecisionRecorder(contextMenu.nodeId, 'delete_node', { pendingAction: 'delete', skippable: true, presetQuestion: `是否删除「${n?.title || ''}」？`, presetOptions: [{ label: `删除「${(n?.title || '').slice(0, 12)}」`, chosen: true }, { label: '保留', chosen: false }] }); setContextMenu(null); }}>{ui("🗑️ 删除节点")}</button>
       </div>}
 
       {/* 决策记录弹窗（手动 + 关键时机） */}
@@ -3102,14 +3123,12 @@ ${plan.lead.duty}
         />
       )}
 
-      {showAdminDashboard &&<div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl p-6"><div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-5xl w-full p-8 shadow-2xl flex flex-col h-full max-h-[90vh]">
-        <div className="flex items-center justify-between mb-6"><h2 className="text-2xl font-bold text-purple-400">📊 监控看板</h2><div className="flex gap-2"><button onClick={() => setAdminActiveTab('stats')} className={`px-4 py-2 rounded-lg text-xs font-bold ${adminActiveTab === 'stats' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'}`}>用户统计</button><button onClick={() => setAdminActiveTab('messages')} className={`px-4 py-2 rounded-lg text-xs font-bold ${adminActiveTab === 'messages' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-400'}`}>用户留言</button></div></div>
-        {adminActiveTab === 'stats' && <><div className="grid grid-cols-3 gap-6 mb-6">{Object.entries(monitor.getSystemSummary()).map(([k, v]) => <div key={k} className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700 text-center"><div className="text-[10px] uppercase text-slate-500 font-bold mb-1">{k}</div><div className="text-2xl font-bold text-white">{v}</div></div>)}</div><div className="flex-1 overflow-auto border border-slate-800 rounded-2xl"><table className="w-full text-left text-sm"><thead className="bg-slate-800 text-slate-400"><tr><th className="px-4 py-4 text-[10px] uppercase">用户</th><th className="px-4 py-4 text-[10px] uppercase">会话</th><th className="px-4 py-4 text-[10px] uppercase">时长(m)</th><th className="px-4 py-4 text-[10px] uppercase">Token</th><th className="px-4 py-4 text-[10px] uppercase">最后活跃</th></tr></thead><tbody className="divide-y divide-slate-800">{cloudStats.map((s, i) => <tr key={i} className="hover:bg-slate-800/30"><td className="px-4 py-4 text-blue-400">{s.username}</td><td className="px-4 py-4">{s.sessionCount}</td><td className="px-4 py-4">{(s.totalActiveSeconds / 60).toFixed(1)}</td><td className="px-4 py-4 text-emerald-400">{(s.totalPromptTokens + s.totalCompletionTokens).toLocaleString()}</td><td className="px-4 py-4 text-slate-500 text-xs">{new Date(s.lastActiveTimestamp).toLocaleString()}</td></tr>)}</tbody></table></div></>}
-        {adminActiveTab === 'messages' && <div className="flex-1 overflow-auto space-y-3">{adminMessages.length === 0 ? <div className="text-center py-12 text-slate-500">暂无留言</div> : adminMessages.map((msg, i) => <div key={i} className="p-4 bg-slate-800/50 rounded-xl border border-slate-700"><div className="flex justify-between mb-2"><span className="text-sm font-bold text-blue-400">{msg.username}</span><span className="text-[10px] text-slate-500">{new Date(msg.createdAt).toLocaleString()}</span></div><p className="text-sm text-slate-300">{msg.content}</p></div>)}</div>}
-        <button onClick={() => setShowAdminDashboard(false)} className="mt-6 py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl">关闭</button>
-      </div></div>}
+      {showAdminDashboard && isBackendAdmin && <AdminDashboard initialTab={adminInitialTab} onClose={() => setShowAdminDashboard(false)}
+        stats={<><div className="grid grid-cols-3 gap-6 mb-6">{Object.entries(monitor.getSystemSummary()).map(([k, v]) => <div key={k} className="bg-slate-800/50 p-4 rounded-2xl border border-slate-700 text-center"><div className="text-[10px] uppercase text-slate-500 font-bold mb-1">{k}</div><div className="text-2xl font-bold text-white">{v}</div></div>)}</div><div className="flex-1 overflow-auto border border-slate-800 rounded-2xl"><table className="w-full text-left text-sm"><thead className="bg-slate-800 text-slate-400"><tr><th className="px-4 py-4 text-[10px] uppercase">{ui("用户")}</th><th className="px-4 py-4 text-[10px] uppercase">{ui("会话")}</th><th className="px-4 py-4 text-[10px] uppercase">{ui("时长(m)")}</th><th className="px-4 py-4 text-[10px] uppercase">Token</th><th className="px-4 py-4 text-[10px] uppercase">{ui("最后活跃")}</th></tr></thead><tbody className="divide-y divide-slate-800">{cloudStats.map((s, i) => <tr key={i} className="hover:bg-slate-800/30"><td className="px-4 py-4 text-blue-400">{s.username}</td><td className="px-4 py-4">{s.sessionCount}</td><td className="px-4 py-4">{(s.totalActiveSeconds / 60).toFixed(1)}</td><td className="px-4 py-4 text-emerald-400">{(s.totalPromptTokens + s.totalCompletionTokens).toLocaleString()}</td><td className="px-4 py-4 text-slate-500 text-xs">{new Date(s.lastActiveTimestamp).toLocaleString()}</td></tr>)}</tbody></table></div></>}
+        messages={<div className="flex-1 overflow-auto space-y-3">{adminMessages.length === 0 ? <div className="text-center py-12 text-slate-500">{ui("暂无留言")}</div> : adminMessages.map((msg, i) => <div key={i} className="p-4 bg-slate-800/50 rounded-xl border border-slate-700"><div className="flex justify-between mb-2"><span className="text-sm font-bold text-blue-400">{msg.username}</span><span className="text-[10px] text-slate-500">{new Date(msg.createdAt).toLocaleString()}</span></div><p className="text-sm text-slate-300">{msg.content}</p></div>)}</div>}
+      />}
 
-      {showMetaModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"><div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-8 shadow-2xl"><h2 className="text-2xl font-bold">新探索任务</h2><textarea value={metaInput} onChange={e => setMetaInput(e.target.value)} placeholder="描述你想探索的问题..." className="w-full bg-slate-800 border border-slate-700 rounded-xl p-5 mt-6 min-h-[100px] outline-none text-slate-200 resize-none" /><button disabled={!metaInput.trim()} onClick={() => { setShowMetaModal(false); setShowQVSModal(true); }} className="w-full mt-4 py-3 bg-gradient-to-r from-violet-600/20 to-blue-600/20 border border-violet-500/30 text-violet-300 rounded-xl font-bold text-sm hover:from-violet-600/30 hover:to-blue-600/30 transition-all disabled:opacity-40 flex items-center justify-center gap-2"><span>📊</span> 先评估问题价值（推荐）</button><div className="flex gap-4 mt-4"><button onClick={() => setShowMetaModal(false)} className="flex-1 py-4 bg-slate-800 rounded-xl font-bold">取消</button><button disabled={isAnalyzingIntent || !metaInput.trim()} onClick={async () => { if (!metaInput.trim()) return; setIsAnalyzingIntent(true); try { const { analysis, needsConfirmation } = await analyzeIntentWithAutoConfirm(metaInput); if (needsConfirmation) { setPendingIntent({ input: metaInput, analysis }); setShowMetaModal(false); } else createProjectWithMode(metaInput, analysis.mode, analysis); } catch { createProjectWithMode(metaInput, 'research'); } finally { setIsAnalyzingIntent(false); } }} className="flex-[2] py-4 bg-blue-600 rounded-xl font-bold disabled:opacity-50">{isAnalyzingIntent ? '分析中...' : '直接开启探索'}</button></div></div></div>}
+      {showMetaModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"><div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-8 shadow-2xl"><h2 className="text-2xl font-bold">{ui("新探索任务")}</h2><textarea value={metaInput} onChange={e => setMetaInput(e.target.value)} placeholder={ui("描述你想探索的问题...")} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-5 mt-6 min-h-[100px] outline-none text-slate-200 resize-none" /><button disabled={!metaInput.trim()} onClick={() => { setShowMetaModal(false); setShowQVSModal(true); }} className="w-full mt-4 py-3 bg-gradient-to-r from-violet-600/20 to-blue-600/20 border border-violet-500/30 text-violet-300 rounded-xl font-bold text-sm hover:from-violet-600/30 hover:to-blue-600/30 transition-all disabled:opacity-40 flex items-center justify-center gap-2"><span>📊</span>{ui("先评估问题价值（推荐）")}</button><div className="flex gap-4 mt-4"><button onClick={() => setShowMetaModal(false)} className="flex-1 py-4 bg-slate-800 rounded-xl font-bold">{ui("取消")}</button><button disabled={isAnalyzingIntent || !metaInput.trim()} onClick={async () => { if (!metaInput.trim()) return; setIsAnalyzingIntent(true); try { const { analysis, needsConfirmation } = await analyzeIntentWithAutoConfirm(metaInput); if (needsConfirmation) { setPendingIntent({ input: metaInput, analysis }); setShowMetaModal(false); } else createProjectWithMode(metaInput, analysis.mode, analysis); } catch { createProjectWithMode(metaInput, 'research'); } finally { setIsAnalyzingIntent(false); } }} className="flex-[2] py-4 bg-blue-600 rounded-xl font-bold disabled:opacity-50">{isAnalyzingIntent ? ui("分析中...") : ui("直接开启探索")}</button></div></div></div>}
 
       {/* 问题价值评估（QVS）模块 */}
       {showQVSModal && (
@@ -3134,7 +3153,7 @@ ${plan.lead.duty}
       {teamBusy && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[120] bg-slate-900 border border-blue-500/40 rounded-full px-5 py-3 shadow-2xl flex items-center gap-3">
           <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-          <span className="text-xs font-bold text-blue-300">🤝 AI 正在读懂目标、拆解方向、组建团队…</span>
+          <span className="text-xs font-bold text-blue-300">{ui("🤝 AI 正在读懂目标、拆解方向、组建团队…")}</span>
         </div>
       )}
 
@@ -3149,20 +3168,17 @@ ${plan.lead.duty}
         <div className="fixed inset-0 z-[115] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-7 text-center">
             <div className="text-3xl mb-3">☕</div>
-            <h3 className="text-base font-bold text-white mb-2">已连续探索 {UNATTENDED_BUDGET} 轮，先停一下</h3>
-            <p className="text-[12px] text-slate-400 leading-6">
-              这段时间没有检测到你的操作。自动探索每一轮都会真实调用模型并产生费用，
-              所以到这里先暂停，确认你还在看。
-            </p>
+            <h3 className="text-base font-bold text-white mb-2">{ui("已连续探索")}{UNATTENDED_BUDGET}{ui("轮，先停一下")}</h3>
+            <p className="text-[12px] text-slate-400 leading-6">{ui("这段时间没有检测到你的操作。自动探索每一轮都会真实调用模型并产生费用， 所以到这里先暂停，确认你还在看。")}</p>
             <div className="flex gap-3 mt-6">
               <button
                 onClick={() => { setUnattendedPrompt(false); }}
                 className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm font-bold"
-              >先停着</button>
+              >{ui("先停着")}</button>
               <button
                 onClick={() => { unattendedRef.current = 0; setUnattendedPrompt(false); setIsLooping(true); trackEvent('unattended_resume'); }}
                 className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold"
-              >继续探索</button>
+              >{ui("继续探索")}</button>
             </div>
           </div>
         </div>
@@ -3184,28 +3200,29 @@ ${plan.lead.duty}
       )}
 
       {/* 设置：模型接入 / IoT 设备 */}
+      {showSharedModels && <SharedModelsPanel onClose={() => setShowSharedModels(false)} />}
       {showSettingsModal && <SettingsModal onClose={() => { setShowSettingsModal(false); try { setActiveModel(loadLLMSettings().model || ''); } catch {} }} />}
 
-      {showHelpModal && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowHelpModal(false)}><div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-10 shadow-2xl flex flex-col items-center max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}><h3 className="text-xl font-bold text-white mb-8">有问题请联系</h3><div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 w-full text-center mb-8"><p className="text-slate-500 text-xs mb-3 uppercase tracking-widest font-bold">联系微信号</p><p className="text-2xl font-mono font-bold text-blue-400 select-all tracking-wider">seabird36</p></div><MessageBoard /><button onClick={() => setShowHelpModal(false)} className="mt-6 w-full py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-2xl border border-slate-700">关闭</button></div></div>}
+      {showHelpModal && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowHelpModal(false)}><div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-10 shadow-2xl flex flex-col items-center max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}><h3 className="text-xl font-bold text-white mb-8">{ui("有问题请联系")}</h3><div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 w-full text-center mb-8"><p className="text-slate-500 text-xs mb-3 uppercase tracking-widest font-bold">{ui("联系微信号")}</p><p className="text-2xl font-mono font-bold text-blue-400 select-all tracking-wider">seabird36</p></div><MessageBoard /><button onClick={() => setShowHelpModal(false)} className="mt-6 w-full py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-2xl border border-slate-700">{ui("关闭")}</button></div></div>}
 
       {/* 项目管理弹窗 */}
       {showProjectManager && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowProjectManager(false)}>
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-8 shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-bold text-white">📁 项目管理</h3>
+              <h3 className="text-xl font-bold text-white">{ui("📁 项目管理")}</h3>
               <button onClick={() => setShowProjectManager(false)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
               </button>
             </div>
             
-            <div className="text-xs text-slate-500 mb-4">共 {projects.length} 个项目</div>
+            <div className="text-xs text-slate-500 mb-4">{ui("共")}{projects.length}{ui("个项目")}</div>
             
             <div className="flex-1 overflow-y-auto space-y-3 pr-2">
               {projects.length === 0 ? (
                 <div className="text-center py-12 text-slate-500">
                   <div className="text-4xl mb-4">📭</div>
-                  <p>暂无项目</p>
+                  <p>{ui("暂无项目")}</p>
                 </div>
               ) : (
                 projects.map(p => (
@@ -3222,7 +3239,7 @@ ${plan.lead.duty}
                         <div className="flex items-center gap-2 mb-1">
                           <h4 className="text-sm font-bold text-white truncate">{p.name}</h4>
                           {p.id === currentProjectId && (
-                            <span className="px-1.5 py-0.5 bg-blue-600/20 text-blue-400 text-[9px] font-bold rounded">当前</span>
+                            <span className="px-1.5 py-0.5 bg-blue-600/20 text-blue-400 text-[9px] font-bold rounded">{ui("当前")}</span>
                           )}
                           {p.explorationMode && (
                             <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
@@ -3230,14 +3247,14 @@ ${plan.lead.duty}
                                 ? 'bg-purple-600/20 text-purple-400' 
                                 : 'bg-emerald-600/20 text-emerald-400'
                             }`}>
-                              {p.explorationMode === 'research' ? '研究' : '构建'}
+                              {p.explorationMode === 'research' ? ui("研究") : ui("构建")}
                             </span>
                           )}
                         </div>
                         <p className="text-[11px] text-slate-400 line-clamp-2 mb-2">{p.metaProblem}</p>
                         <div className="flex items-center gap-3 text-[10px] text-slate-500">
-                          <span>📊 {p.nodes?.length || 0} 节点</span>
-                          <span>✅ {p.nodes?.filter(n => n.status === NodeStatus.SOLVED).length || 0} 完成</span>
+                          <span>📊 {p.nodes?.length || 0}{ui("节点")}</span>
+                          <span>✅ {p.nodes?.filter(n => n.status === NodeStatus.SOLVED).length || 0}{ui("完成")}</span>
                           <span>📅 {new Date(p.createdAt).toLocaleDateString()}</span>
                         </div>
                       </div>
@@ -3246,14 +3263,12 @@ ${plan.lead.duty}
                           <button 
                             onClick={() => { setCurrentProjectId(p.id); setShowProjectManager(false); }}
                             className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 text-[10px] font-bold rounded-lg transition-colors"
-                          >
-                            切换
-                          </button>
+                          >{ui("切换")}</button>
                         )}
                         <button 
                           onClick={() => handleDeleteProject(p.id)}
                           className="p-1.5 hover:bg-red-600/20 text-slate-500 hover:text-red-400 rounded-lg transition-colors"
-                          title="删除项目"
+                          title={ui("删除项目")}
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                         </button>
@@ -3269,9 +3284,7 @@ ${plan.lead.duty}
                 onClick={() => { setShowProjectManager(false); setShowMetaModal(true); }}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg>
-                创建新项目
-              </button>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg>{ui("创建新项目")}</button>
             </div>
           </div>
         </div>
@@ -3287,44 +3300,42 @@ ${plan.lead.duty}
           <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-8 shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="text-center mb-6">
               <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl mx-auto flex items-center justify-center text-3xl mb-4 shadow-xl">👑</div>
-              <h3 className="text-xl font-bold text-white">7×24 长期探索会员</h3>
-              <p className="text-slate-400 text-sm mt-2">解锁后台持续探索能力</p>
+              <h3 className="text-xl font-bold text-white">{ui("7×24 长期探索会员")}</h3>
+              <p className="text-slate-400 text-sm mt-2">{ui("解锁后台持续探索能力")}</p>
             </div>
             
             <div className="bg-slate-800/50 rounded-2xl p-5 mb-6 border border-slate-700">
               <div className="flex items-baseline justify-center gap-1 mb-4">
                 <span className="text-4xl font-bold text-amber-400">¥19.9</span>
-                <span className="text-slate-500">/月</span>
+                <span className="text-slate-500">{ui("/月")}</span>
               </div>
               
               <div className="space-y-3">
                 <div className="flex items-center gap-3 text-sm">
                   <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">关闭网页后继续探索</span>
+                  <span className="text-slate-300">{ui("关闭网页后继续探索")}</span>
                 </div>
                 <div className="flex items-center gap-3 text-sm">
                   <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">7×24小时后台自动运行</span>
+                  <span className="text-slate-300">{ui("7×24小时后台自动运行")}</span>
                 </div>
                 <div className="flex items-center gap-3 text-sm">
                   <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">重要发现微信/邮件提醒</span>
+                  <span className="text-slate-300">{ui("重要发现微信/邮件提醒")}</span>
                 </div>
                 <div className="flex items-center gap-3 text-sm">
                   <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">无限探索项目数量</span>
+                  <span className="text-slate-300">{ui("无限探索项目数量")}</span>
                 </div>
                 <div className="flex items-center gap-3 text-sm">
                   <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">优先使用新功能</span>
+                  <span className="text-slate-300">{ui("优先使用新功能")}</span>
                 </div>
               </div>
             </div>
 
             <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-3 mb-6">
-              <div className="text-[11px] text-orange-400 text-center">
-                💡 普通用户每天可探索1个项目，关闭网页即停止
-              </div>
+              <div className="text-[11px] text-orange-400 text-center">{ui("💡 普通用户每天可探索1个项目，关闭网页即停止")}</div>
             </div>
 
             <div className="space-y-3">
@@ -3342,20 +3353,14 @@ ${plan.lead.duty}
                   addNotification('info', '🎉 开通成功', '您已成为7×24探索会员！');
                 }}
                 className="w-full py-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold rounded-xl transition-all shadow-lg"
-              >
-                立即开通
-              </button>
+              >{ui("立即开通")}</button>
               <button 
                 onClick={() => setShowPremiumModal(false)}
                 className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-400 font-medium rounded-xl transition-colors"
-              >
-                稍后再说
-              </button>
+              >{ui("稍后再说")}</button>
             </div>
             
-            <p className="text-[10px] text-slate-600 text-center mt-4">
-              开通即表示同意《会员服务协议》
-            </p>
+            <p className="text-[10px] text-slate-600 text-center mt-4">{ui("开通即表示同意《会员服务协议》")}</p>
           </div>
         </div>
       )}

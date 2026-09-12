@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState, useEffect, useMemo } from 'react';
 import { ProblemNode, NodeStatus, ChatMessage, AgentResult, DecisionRecord, Probe, ExplorationRoute } from '../types';
 import { TRIGGER_LABEL } from '../services/decisionService';
@@ -370,7 +371,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
               <label className="text-[9px] text-slate-500 font-bold mb-1.5 block">成果速记</label>
               <div className="flex gap-2">
                 <input className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-3 py-2.5 text-xs text-slate-300 outline-none focus:ring-1 focus:ring-blue-500" placeholder="手动记录成果..." value={manualInput} onChange={(e) => setManualInput(e.target.value)} />
-                <button onClick={() => onUpdateNodeData(node.id, { manualResults: manualInput })} className="px-4 bg-slate-700 hover:bg-slate-600 rounded-md text-xs font-bold transition-colors">保存</button>
+                <button onClick={() => onUpdateNodeData(node.id, { manualResults: manualInput })} className="px-4 bg-slate-700 hover:bg-slate-600 rounded-md text-xs font-bold transition-colors">{ui("保存")}</button>
               </div>
             </div>
             <div>
@@ -391,7 +392,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
             </div>
             <form onSubmit={async (e) => { e.preventDefault(); if(!chatInput.trim() || isSending) return; setIsSending(true); const msg = chatInput; setChatInput(''); await onSendMessage(node.id, msg); setIsSending(false); }} className="flex gap-2">
               <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="提问..." className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-4 py-3 text-xs text-white outline-none" />
-              <button type="submit" disabled={isSending} className="px-5 py-3 bg-blue-600 hover:bg-blue-500 rounded-md text-xs font-bold transition-colors">发送</button>
+              <button type="submit" disabled={isSending} className="px-5 py-3 bg-blue-600 hover:bg-blue-500 rounded-md text-xs font-bold transition-colors">{ui("发送")}</button>
             </form>
           </div>
         );
@@ -414,7 +415,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
                     <button onClick={() => onForkDecision(d.id)} className="flex-shrink-0 text-[9px] px-2 py-0.5 bg-purple-600/20 hover:bg-purple-600 border border-purple-500/40 text-purple-300 hover:text-white rounded-full font-bold transition-colors" title="用当时的快照复刻一条新分支">⑂ Fork</button>
                   )}
                 </div>
-                <div className="text-[9px] text-slate-500 mt-0.5 mb-1.5">{TRIGGER_LABEL[d.trigger]} · {new Date(d.createdAt).toLocaleString()} · 快照 {d.snapshot.length} 节点{(d.forks?.length || 0) > 0 ? ` · 已 fork ${d.forks!.length} 次` : ''}</div>
+                <div className="text-[9px] text-slate-500 mt-0.5 mb-1.5">{TRIGGER_LABEL[d.trigger]} · {new Date(d.createdAt).toLocaleString()} · 快照 {d.snapshot.length}{ui("节点")}{(d.forks?.length || 0) > 0 ? ` · 已 fork ${d.forks!.length} 次` : ''}</div>
                 {d.options.map((o, i) => (
                   <div key={i} className="text-[10px] leading-relaxed">
                     <span className={o.chosen ? 'text-emerald-400 font-bold' : 'text-red-400/80 line-through'}>{o.chosen ? '✓' : '✗'} {o.label}</span>
@@ -540,7 +541,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
           <button 
             onClick={onClose} 
             className="p-2.5 text-slate-400 hover:text-white rounded-lg transition-colors flex items-center justify-center bg-slate-700/60 min-w-[36px] min-h-[36px]"
-            title="关闭"
+            title={ui("关闭")}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
@@ -659,8 +660,8 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
               )}
               {isEditingNote ? (
                 <>
-                  <button onClick={saveNote} className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-[10px] font-bold transition-colors">保存</button>
-                  <button onClick={() => { setNoteDraft(node.fullNote || ''); setIsEditingNote(false); }} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-[10px] transition-colors">取消</button>
+                  <button onClick={saveNote} className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded text-[10px] font-bold transition-colors">{ui("保存")}</button>
+                  <button onClick={() => { setNoteDraft(node.fullNote || ''); setIsEditingNote(false); }} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-[10px] transition-colors">{ui("取消")}</button>
                 </>
               ) : (
                 <button onClick={() => { setNoteDraft(node.fullNote || node.notes || ''); setIsEditingNote(true); }} className="px-3 py-1 bg-slate-700 hover:bg-purple-600 text-slate-300 hover:text-white rounded text-[10px] font-bold transition-colors">✏️ 编辑</button>

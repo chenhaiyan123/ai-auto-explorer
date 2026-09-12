@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 
 import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import * as d3 from 'd3';
@@ -441,8 +442,7 @@ const GraphVisualization: React.FC<GraphVisualizationProps> = ({
         {Array.from(levelGroups.entries()).sort((a, b) => a[0] - b[0]).map(([level, nodesInLevel]) => (
           <div key={level}>
             <div className="text-[10px] text-slate-500 mb-1 flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)] }}></div>
-              第 {level + 1} 层 ({nodesInLevel.length})
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: LEVEL_COLORS[Math.min(level, LEVEL_COLORS.length - 1)] }}></div>{ui("第")}{level + 1} 层 ({nodesInLevel.length})
             </div>
             <div className="space-y-1">
               {nodesInLevel.map(node => (

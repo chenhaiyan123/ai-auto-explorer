@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { ProblemNode, NodeStatus, Evidence, EvidenceLayer, Hypothesis, LAYER_LABEL } from '../types';
@@ -100,8 +101,7 @@ const HypothesisPanel: React.FC<{
         </span>
         {h && <span className={`px-1.5 py-0.5 rounded-full border text-[10px] ${BELIEF_CLS[h.belief]}`}>信念 {BELIEF_LABEL[h.belief]}</span>}
         <span className="text-[10px] text-slate-500">
-          支持 {s.support} · 反对 {s.refute} · 其中现实证据 <span className={s.real ? 'text-emerald-400' : 'text-red-400'}>{s.real}</span> 条
-        </span>
+          支持 {s.support} · 反对 {s.refute} · 其中现实证据 <span className={s.real ? 'text-emerald-400' : 'text-red-400'}>{s.real}</span>{ui("条")}</span>
       </div>
 
       {h?.statement && <div className="text-[13px] text-slate-100 leading-relaxed">{h.statement}</div>}
@@ -189,7 +189,7 @@ const HypothesisPanel: React.FC<{
             placeholder="现实说了什么？例：20 个用户里 17 个说更想要导航，不是翻译"
             className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-[11px] text-slate-200 resize-none" />
           <div className="flex justify-end gap-1.5">
-            <button onClick={() => setAdding(false)} className="text-[11px] px-2 py-1 text-slate-400 hover:text-white">取消</button>
+            <button onClick={() => setAdding(false)} className="text-[11px] px-2 py-1 text-slate-400 hover:text-white">{ui("取消")}</button>
             <button onClick={addEvidence} disabled={!claim.trim()}
               className="text-[11px] px-2.5 py-1 rounded-lg bg-blue-600 text-white disabled:opacity-40 hover:bg-blue-500 transition-colors">
               记录

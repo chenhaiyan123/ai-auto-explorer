@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState } from 'react';
 import { ExplorationRoute, RouteAnchor, ANCHOR_METHOD_LABEL, ProblemNode } from '../types';
 import { currentAnchor, isSettled, routeProgress, nodesOfAnchor } from '../services/routeService';
@@ -188,7 +189,7 @@ const RouteMap: React.FC<{
                     placeholder="现实给出的结果是什么？例：20 个用户里 17 个选了导航，只有 3 个选翻译"
                     className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-[11px] text-slate-200 resize-none" />
                   <div className="flex justify-end gap-1.5">
-                    <button onClick={() => setOpen(null)} className="text-[10px] px-2 py-1 text-slate-400 hover:text-white">取消</button>
+                    <button onClick={() => setOpen(null)} className="text-[10px] px-2 py-1 text-slate-400 hover:text-white">{ui("取消")}</button>
                     <button onClick={() => submit(a)} disabled={!summary.trim() || !!busy}
                       className="text-[10px] px-2.5 py-1 rounded bg-blue-600 text-white disabled:opacity-40 hover:bg-blue-500">
                       提交并继续探索

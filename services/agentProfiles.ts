@@ -2,7 +2,7 @@ import type { InquiryRole, InquiryWorkspace } from './inquiry';
 
 export const AGENT_ROLES: InquiryRole[] = ['manager', 'thinker', 'executor', 'verifier', 'auditor'];
 export interface AgentModelConfig {
-  provider: 'default' | 'openai' | 'openai-compatible' | 'anthropic' | 'cloud-proxy' | 'trial';
+  provider: 'platform' | 'default' | 'openai' | 'openai-compatible' | 'anthropic' | 'cloud-proxy' | 'trial';
   baseUrl: string;
   model: string;
   /** Reference only. Secrets never belong to project snapshots or model prompts. */
@@ -24,6 +24,10 @@ export const agentProfile = (w: InquiryWorkspace, role: InquiryRole): AgentProfi
 export const profilesOf = (w: InquiryWorkspace): AgentProfiles => Object.fromEntries(AGENT_ROLES.map(role => [role, agentProfile(w, role)])) as AgentProfiles;
 
 export function validateAgentModel(config: AgentModelConfig): AgentModelConfig {
+  if (config.provider === 'platform') {
+    if (!/^[a-zA-Z0-9_-]{1,100}$/.test(config.model)) throw new Error('请选择平台共享模型');
+    return { provider: 'platform', baseUrl: '', model: config.model };
+  }
   if (config.provider === 'default') return { provider: 'default', baseUrl: '', model: '' };
   if (!['openai', 'openai-compatible', 'anthropic', 'cloud-proxy', 'trial'].includes(config.provider)) throw new Error('不支持的 API 协议');
   const url = new URL(config.baseUrl.trim());

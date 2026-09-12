@@ -1,0 +1,24 @@
+services:
+  wake:
+    build:
+      context: .
+      dockerfile: server/Wake.Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 5m
+    env_file: .env.wake
+    ports:
+      - "127.0.0.1:8790:8790"
+    volumes:
+      - wake-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+volumes:
+  wake-data:

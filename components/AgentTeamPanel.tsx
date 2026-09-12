@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 
 import React, { useState, useCallback } from 'react';
 import { 
@@ -225,7 +226,7 @@ const AgentTeamPanel: React.FC<AgentTeamPanelProps> = ({
             <div className="text-sm font-medium text-slate-200 truncate">{agent.name}</div>
             <div className="text-[10px] text-slate-500">{agent.description.slice(0, 15)}...</div>
           </div>
-          <div className={`w-2 h-2 rounded-full ${statusColors[agent.status] || 'bg-slate-600'}`} title={statusText[agent.status] || '未知'}></div>
+          <div className={`w-2 h-2 rounded-full ${statusColors[agent.status] || 'bg-slate-600'}`} title={statusText[agent.status] || ui("未知")}></div>
         </div>
         <div className="flex flex-wrap gap-1">
           {agent.capabilities.slice(0, 2).map((cap, i) => (
@@ -233,7 +234,7 @@ const AgentTeamPanel: React.FC<AgentTeamPanelProps> = ({
           ))}
         </div>
         {agent.completedTasks > 0 && (
-          <div className="mt-2 text-[10px] text-green-400">✓ 完成 {agent.completedTasks} 个任务</div>
+          <div className="mt-2 text-[10px] text-green-400">{ui("✓ 完成")}{agent.completedTasks}{ui("个任务")}</div>
         )}
       </div>
     );
@@ -274,15 +275,12 @@ const AgentTeamPanel: React.FC<AgentTeamPanelProps> = ({
       <div className="p-3 border-b border-slate-700/50">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold flex items-center gap-2">
-            <span>🤖</span> Agent 团队协作
-          </h3>
+            <span>🤖</span>{ui("Agent 团队协作")}</h3>
           {(team || logs.length > 0) && (
             <button 
               onClick={handleReset}
               className="text-[10px] text-slate-500 hover:text-slate-300"
-            >
-              重置
-            </button>
+            >{ui("重置")}</button>
           )}
         </div>
         
@@ -292,23 +290,18 @@ const AgentTeamPanel: React.FC<AgentTeamPanelProps> = ({
             disabled={isAnalyzing}
             className="w-full py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 rounded-lg text-sm font-medium disabled:opacity-50 transition-all"
           >
-            {isAnalyzing ? '🔄 分析中...' : '🚀 分析任务并组建团队'}
+            {isAnalyzing ? ui("🔄 分析中...") : ui("🚀 分析任务并组建团队")}
           </button>
         ) : !isWorking && !integratedOutput ? (
           <button
             onClick={handleStartWork}
             className="w-full py-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 rounded-lg text-sm font-medium transition-all"
-          >
-            ▶️ 开始团队协作
-          </button>
+          >{ui("▶️ 开始团队协作")}</button>
         ) : isWorking ? (
-          <div className="text-center py-2 text-sm text-blue-400">
-            ⏳ 团队工作中... ({currentTaskIndex + 1}/{team?.tasks.length || 0})
+          <div className="text-center py-2 text-sm text-blue-400">{ui("⏳ 团队工作中... (")}{currentTaskIndex + 1}/{team?.tasks.length || 0})
           </div>
         ) : (
-          <div className="text-center py-2 text-sm text-green-400">
-            ✅ 团队工作完成
-          </div>
+          <div className="text-center py-2 text-sm text-green-400">{ui("✅ 团队工作完成")}</div>
         )}
       </div>
 
@@ -317,10 +310,10 @@ const AgentTeamPanel: React.FC<AgentTeamPanelProps> = ({
         {/* 团队分析结果 */}
         {analysis && !team && (
           <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50">
-            <div className="text-xs font-medium text-slate-400 mb-2">📊 任务分析</div>
+            <div className="text-xs font-medium text-slate-400 mb-2">{ui("📊 任务分析")}</div>
             <div className="text-[11px] text-slate-300 space-y-1">
-              <div>工作流程：{analysis.workflow}</div>
-              <div>预计耗时：{analysis.estimatedTime}</div>
+              <div>{ui("工作流程：")}{analysis.workflow}</div>
+              <div>{ui("预计耗时：")}{analysis.estimatedTime}</div>
             </div>
           </div>
         )}
@@ -329,7 +322,7 @@ const AgentTeamPanel: React.FC<AgentTeamPanelProps> = ({
         {team && team.agents.length > 0 && (
           <div>
             <div className="text-xs font-medium text-slate-400 mb-2 flex items-center gap-1">
-              <span>👥</span> 团队成员 ({team.agents.length})
+              <span>👥</span>{ui("团队成员 (")}{team.agents.length})
             </div>
             <div className="grid grid-cols-2 gap-2">
               {team.agents.map(agent => renderAgentCard(agent))}
@@ -341,7 +334,7 @@ const AgentTeamPanel: React.FC<AgentTeamPanelProps> = ({
         {team && team.tasks.length > 0 && (
           <div>
             <div className="text-xs font-medium text-slate-400 mb-2 flex items-center gap-1">
-              <span>📋</span> 任务队列 ({team.tasks.filter(t => t.status === 'completed').length}/{team.tasks.length})
+              <span>📋</span>{ui("任务队列 (")}{team.tasks.filter(t => t.status === 'completed').length}/{team.tasks.length})
             </div>
             <div className="space-y-1.5">
               {team.tasks.map((task, i) => renderTaskCard(task, i))}
@@ -353,8 +346,7 @@ const AgentTeamPanel: React.FC<AgentTeamPanelProps> = ({
         {logs.length > 0 && (
           <div>
             <div className="text-xs font-medium text-slate-400 mb-2 flex items-center gap-1">
-              <span>📝</span> 工作日志
-            </div>
+              <span>📝</span>{ui("工作日志")}</div>
             <div className="bg-slate-800/30 rounded-lg p-2 max-h-40 overflow-auto space-y-1">
               {logs.map((log, i) => (
                 <div key={i} className="text-[10px] flex gap-2">
@@ -371,8 +363,7 @@ const AgentTeamPanel: React.FC<AgentTeamPanelProps> = ({
         {integratedOutput && (
           <div>
             <div className="text-xs font-medium text-slate-400 mb-2 flex items-center gap-1">
-              <span>📄</span> 团队成果
-            </div>
+              <span>📄</span>{ui("团队成果")}</div>
             <div className="bg-slate-800/50 rounded-lg p-3 border border-green-500/30">
               <div className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">
                 {integratedOutput}

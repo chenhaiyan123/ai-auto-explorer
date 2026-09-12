@@ -22,6 +22,7 @@ export function hasAgentCredential(owner: string | undefined, config: AgentModel
   try { return !!secretFor(owner, config); } catch { return false; }
 }
 export function resolveAgentModel(config: AgentModelConfig, owner?: string): LLMSettings {
+  if (config.provider === 'platform') { const clean = validateAgentModel(config); return { ...clean, provider: 'platform', apiKey: '' }; }
   if (config.provider === 'default') return { ...loadLLMSettings() };
   const clean = validateAgentModel(config);
   return { provider: clean.provider as LLMSettings['provider'], baseUrl: clean.baseUrl, model: clean.model, apiKey: secretFor(owner, clean) };

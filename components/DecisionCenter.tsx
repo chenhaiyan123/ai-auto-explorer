@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState } from 'react';
 import { DecisionRecord, DecisionOption, DecisionTrigger, ProblemNode } from '../types';
 import { TRIGGER_LABEL } from '../services/decisionService';
@@ -37,7 +38,7 @@ export const DecisionRecordModal: React.FC<{
     <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-5 shadow-2xl max-h-[85vh] overflow-y-auto scroll-hide">
         <div className="flex justify-between items-center mb-1">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">⚖️ 记录决策</h3>
+          <h3 className="text-sm font-bold text-white flex items-center gap-2">{ui("⚖️ 记录决策")}</h3>
           <button onClick={onCancel} className="text-slate-500 hover:text-white">✕</button>
         </div>
         <div className="text-[10px] text-slate-500 mb-4">
@@ -86,7 +87,7 @@ export const DecisionRecordModal: React.FC<{
           {draft.skippable && onSkip && (
             <button onClick={onSkip} className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl text-[11px] transition-colors" title="不记录，直接执行">跳过不记录</button>
           )}
-          <button onClick={onCancel} className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl text-[11px] transition-colors">取消</button>
+          <button onClick={onCancel} className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl text-[11px] transition-colors">{ui("取消")}</button>
         </div>
       </div>
     </div>
@@ -123,13 +124,12 @@ export const DecisionTimelineModal: React.FC<{
                   <div className="text-[12px] font-bold text-slate-100 truncate">{d.question}</div>
                   <div className="text-[9px] text-slate-500 mt-0.5">
                     <button onClick={() => { onNavigate(d.nodeId); onClose(); }} className="text-blue-400 hover:underline">「{d.nodeTitle}」</button>
-                    {' · '}{TRIGGER_LABEL[d.trigger]} · {new Date(d.createdAt).toLocaleString()} · 快照 {d.snapshot.length} 节点
-                    {(d.forks?.length || 0) > 0 && <span className="text-purple-400"> · 已 fork {d.forks!.length} 次</span>}
+                    {' · '}{TRIGGER_LABEL[d.trigger]} · {new Date(d.createdAt).toLocaleString()} · 快照 {d.snapshot.length}{ui("节点")}{(d.forks?.length || 0) > 0 && <span className="text-purple-400"> · 已 fork {d.forks!.length} 次</span>}
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   <button onClick={() => onFork(d.id)} className="text-[10px] px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600 border border-purple-500/40 text-purple-300 hover:text-white rounded-full font-bold transition-colors" title="用当时的快照复刻一条新分支">⑂ Fork</button>
-                  <button onClick={() => setExpanded(e => (e === d.id ? null : d.id))} className="text-[10px] px-2 py-1 text-slate-500 hover:text-slate-300" title="查看快照">{expanded === d.id ? '收起' : '快照'}</button>
+                  <button onClick={() => setExpanded(e => (e === d.id ? null : d.id))} className="text-[10px] px-2 py-1 text-slate-500 hover:text-slate-300" title="查看快照">{expanded === d.id ? ui("收起") : '快照'}</button>
                   <button onClick={() => { if (confirm('删除这条决策记录？（不影响现有节点）')) onDelete(d.id); }} className="text-[10px] px-1.5 py-1 text-slate-600 hover:text-red-400">🗑</button>
                 </div>
               </div>

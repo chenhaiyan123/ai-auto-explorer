@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState, useEffect, useMemo } from 'react';
 import { evaluateQuestion, quickEstimate, QVSReport } from '../services/qvsService';
 import { buildSeedQuestions, SEED_CATEGORIES } from '../services/seedQuestions';
@@ -126,7 +127,7 @@ const QuestionBoard: React.FC<{
         <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2"><span>🔥</span> 问题广场 · 筛选有价值的问题</h3>
         <div className="flex items-center gap-2">
           <button onClick={loadSeeds} className="px-3 py-1.5 bg-amber-900/40 hover:bg-amber-800/50 border border-amber-600/40 text-amber-300 rounded-lg text-[11px] font-medium transition-colors" title="并入平台精选的问题库">✨ 载入精选</button>
-          <button onClick={onClose} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white transition-colors" title="关闭"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+          <button onClick={onClose} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white transition-colors" title={ui("关闭")}><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
         </div>
       </div>
 
@@ -200,7 +201,7 @@ const QuestionBoard: React.FC<{
                     <button onClick={() => update(q.id, { upvotes: (q.upvotes || 0) + 1 })} className="text-[10px] px-2 py-1 rounded-full border border-slate-700 text-slate-400 hover:text-amber-300 hover:border-amber-500/40 transition-colors">👍 {q.upvotes || 0}</button>
                     <button onClick={() => evaluate(q)} disabled={evaluatingId === q.id} className="text-[10px] px-2 py-1 rounded-full border border-slate-700 text-blue-400 hover:border-blue-500/40 transition-colors disabled:opacity-50">{evaluatingId === q.id ? '评估中…' : '📊 评估价值'}</button>
                     <button onClick={() => { onStartProject(q.text); onClose(); }} className="text-[10px] px-2 py-1 rounded-full border border-emerald-500/40 text-emerald-400 hover:bg-emerald-900/30 transition-colors">🚀 立项</button>
-                    <button onClick={() => setQuestions(prev => prev.filter(x => x.id !== q.id))} className="text-[10px] px-2 py-1 rounded-full border border-slate-700 text-slate-500 hover:text-red-400 hover:border-red-500/40 transition-colors ml-auto">删除</button>
+                    <button onClick={() => setQuestions(prev => prev.filter(x => x.id !== q.id))} className="text-[10px] px-2 py-1 rounded-full border border-slate-700 text-slate-500 hover:text-red-400 hover:border-red-500/40 transition-colors ml-auto">{ui("删除")}</button>
                   </div>
                 </div>
               </div>

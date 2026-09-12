@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Project, ProblemNode, ChatMessage, NodeStatus } from '../types';
 import { callGemini, factMessages } from '../services/geminiService';
@@ -160,7 +161,7 @@ const TeamChat: React.FC<{
     <div className="h-full flex flex-col relative">
       {/* 成员条 */}
       <div className="px-3 py-2 border-b border-slate-800 flex items-center gap-1.5 overflow-x-auto scroll-hide">
-        <span className="text-[9px] text-slate-500 flex-shrink-0">团队</span>
+        <span className="text-[9px] text-slate-500 flex-shrink-0">{ui("团队")}</span>
         {members.map(m => (
           <button key={m} onClick={() => insertMention(m)} title={`@${m}`} className="flex-shrink-0 flex items-center gap-1 text-[9px] bg-slate-800 hover:bg-blue-600 hover:text-white border border-slate-700 rounded-full px-2 py-0.5 transition-colors">
             <span>{avatarFor(m)}</span><span className="truncate max-w-[64px]">{m}</span>
@@ -172,7 +173,7 @@ const TeamChat: React.FC<{
       <div className="flex-1 overflow-y-auto scroll-hide p-3 space-y-3">
         {msgs.length === 0 && (
           <div className="text-[11px] text-slate-500 leading-relaxed bg-slate-800/50 border border-slate-700 rounded-lg p-3">
-            这是项目的<b className="text-slate-300">团队群聊</b>。点上方成员可 @ ta 单独发言；用 <span className="text-purple-400">[[笔记名]]</span> 引用笔记（或下方「@笔记」按钮）；任何回复都能「➕ 补充到笔记」。先点「🗣️ 让团队讨论」试试。
+            这是项目的<b className="text-slate-300">{ui("团队群聊")}</b>。点上方成员可 @ ta 单独发言；用 <span className="text-purple-400">[[笔记名]]</span> 引用笔记（或下方「@笔记」按钮）；任何回复都能「➕ 补充到笔记」。先点「🗣️ 让团队讨论」试试。
           </div>
         )}
         {msgs.map((m, i) => (
@@ -202,7 +203,7 @@ const TeamChat: React.FC<{
         </div>
         <form onSubmit={e => { e.preventDefault(); send(); }} className="flex gap-2">
           <input value={input} onChange={e => setInput(e.target.value)} placeholder="对团队说… @成员 / [[笔记]]" className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-3 py-2.5 text-xs text-white outline-none focus:ring-1 focus:ring-blue-500" />
-          <button type="submit" disabled={busy} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-md text-xs font-bold transition-colors disabled:opacity-50">发送</button>
+          <button type="submit" disabled={busy} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-md text-xs font-bold transition-colors disabled:opacity-50">{ui("发送")}</button>
         </form>
       </div>
 

@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState, useMemo } from 'react';
 import { ProblemNode, NodeStatus } from '../types';
 import {
@@ -107,7 +108,7 @@ const ResearchPanel: React.FC<ResearchPanelProps> = ({
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
                   <span className="text-3xl font-bold text-white">{progress.coverageScore}%</span>
-                  <span className="text-[9px] text-slate-500">研究覆盖</span>
+                  <span className="text-[9px] text-slate-500">{ui("研究覆盖")}</span>
                 </div>
               </div>
             </div>
@@ -116,19 +117,19 @@ const ResearchPanel: React.FC<ResearchPanelProps> = ({
             <div className="grid grid-cols-2 gap-3">
               <div className="p-3 bg-slate-800/50 rounded-xl border border-slate-700/50 text-center">
                 <div className="text-2xl font-bold text-white">{progress.answeredQuestions}/{progress.totalQuestions}</div>
-                <div className="text-[10px] text-slate-500">已探索/总节点</div>
+                <div className="text-[10px] text-slate-500">{ui("已探索/总节点")}</div>
               </div>
               <div className="p-3 bg-slate-800/50 rounded-xl border border-slate-700/50 text-center">
                 <div className="text-2xl font-bold text-emerald-400">{progress.knowledgeCards}</div>
-                <div className="text-[10px] text-slate-500">知识卡片</div>
+                <div className="text-[10px] text-slate-500">{ui("知识卡片")}</div>
               </div>
               <div className="p-3 bg-slate-800/50 rounded-xl border border-slate-700/50 text-center">
                 <div className="text-2xl font-bold text-yellow-400">{progress.findings}</div>
-                <div className="text-[10px] text-slate-500">研究发现</div>
+                <div className="text-[10px] text-slate-500">{ui("研究发现")}</div>
               </div>
               <div className="p-3 bg-slate-800/50 rounded-xl border border-slate-700/50 text-center">
                 <div className="text-2xl font-bold text-purple-400">{progress.explorationDepth}</div>
-                <div className="text-[10px] text-slate-500">探索深度</div>
+                <div className="text-[10px] text-slate-500">{ui("探索深度")}</div>
               </div>
             </div>
 
@@ -144,11 +145,9 @@ const ResearchPanel: React.FC<ResearchPanelProps> = ({
             >
               {isGeneratingReport ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  生成中...
-                </>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{ui("生成中...")}</>
               ) : (
-                <>📄 生成研究报告</>
+                <>{ui("📄 生成研究报告")}</>
               )}
             </button>
           </div>
@@ -168,7 +167,7 @@ const ResearchPanel: React.FC<ResearchPanelProps> = ({
                       : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                   }`}
                 >
-                  {filter === 'all' ? '全部' :
+                  {filter === 'all' ? ui("全部") :
                    filter === 'fact' ? '事实' :
                    filter === 'theory' ? '理论' :
                    filter === 'insight' ? '洞察' :
@@ -180,7 +179,7 @@ const ResearchPanel: React.FC<ResearchPanelProps> = ({
             {/* 卡片列表 */}
             <div className="space-y-2">
               {filteredCards.length === 0 ? (
-                <div className="text-center py-8 text-slate-600 text-xs">暂无知识卡片</div>
+                <div className="text-center py-8 text-slate-600 text-xs">{ui("暂无知识卡片")}</div>
               ) : (
                 filteredCards.map(card => (
                   <div
@@ -197,14 +196,14 @@ const ResearchPanel: React.FC<ResearchPanelProps> = ({
                         card.category === 'question' ? 'bg-orange-900/50 text-orange-400' :
                         'bg-slate-700 text-slate-400'
                       }`}>
-                        {card.category || '未分类'}
+                        {card.category || ui("未分类")}
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-400 line-clamp-2">{card.content}</p>
                     <div className="flex items-center gap-2 mt-2 text-[9px] text-slate-600">
-                      <span>来源: {card.sourceNodeTitle}</span>
+                      <span>{ui("来源:")}{card.sourceNodeTitle}</span>
                       <span>·</span>
-                      <span>可信度: {Math.round((card.confidence || 0) * 100)}%</span>
+                      <span>{ui("可信度:")}{Math.round((card.confidence || 0) * 100)}%</span>
                     </div>
                   </div>
                 ))
@@ -222,23 +221,19 @@ const ResearchPanel: React.FC<ResearchPanelProps> = ({
                 className={`px-3 py-1 rounded-full text-[10px] font-medium ${
                   findingSort === 'importance' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'
                 }`}
-              >
-                按重要性
-              </button>
+              >{ui("按重要性")}</button>
               <button
                 onClick={() => setFindingSort('time')}
                 className={`px-3 py-1 rounded-full text-[10px] font-medium ${
                   findingSort === 'time' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'
                 }`}
-              >
-                按时间
-              </button>
+              >{ui("按时间")}</button>
             </div>
 
             {/* 发现列表 */}
             <div className="space-y-2">
               {sortedFindings.length === 0 ? (
-                <div className="text-center py-8 text-slate-600 text-xs">暂无研究发现</div>
+                <div className="text-center py-8 text-slate-600 text-xs">{ui("暂无研究发现")}</div>
               ) : (
                 sortedFindings.map(finding => (
                   <div
@@ -266,16 +261,15 @@ const ResearchPanel: React.FC<ResearchPanelProps> = ({
                             finding.significance === 'medium' ? 'bg-blue-600 text-white' :
                             'bg-slate-600 text-slate-300'
                           }`}>
-                            {finding.significance === 'high' ? '重要' :
+                            {finding.significance === 'high' ? ui("重要") :
                              finding.significance === 'medium' ? '一般' : '次要'}
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-400 mt-1">{finding.description || finding.insight}</p>
                         <div className="text-[9px] text-slate-600 mt-1">
-                          {finding.type === 'discovery' ? '新发现' :
+                          {finding.type === 'discovery' ? ui("新发现") :
                            finding.type === 'contradiction' ? '矛盾点' :
-                           finding.type === 'gap' ? '知识空白' : '意外关联'}
-                          · 来源: {finding.sourceNodeTitle}
+                           finding.type === 'gap' ? '知识空白' : '意外关联'}{ui("· 来源:")}{finding.sourceNodeTitle}
                         </div>
                       </div>
                     </div>

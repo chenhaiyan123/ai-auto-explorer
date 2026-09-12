@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState } from 'react';
 import { Outline } from '../types';
 import {
@@ -185,7 +186,7 @@ const OutlinePlanner: React.FC<{
         {onRegenerate && (
           <button onClick={onRegenerate} disabled={busy}
             className="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[12px] disabled:opacity-40 transition-colors">
-            {busy ? '拟稿中…' : '↻ 换一版'}
+            {busy ? ui("拟稿中…") : '↻ 换一版'}
           </button>
         )}
         {onDiscard && (
@@ -194,7 +195,7 @@ const OutlinePlanner: React.FC<{
             不用框架，直接开始
           </button>
         )}
-        <span className="text-[11px] text-slate-600 ml-auto">共 {kept.length} 篇</span>
+        <span className="text-[11px] text-slate-600 ml-auto">{ui("共")}{kept.length} 篇</span>
       </div>
     </div>
   );

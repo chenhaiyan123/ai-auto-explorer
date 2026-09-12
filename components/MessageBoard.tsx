@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState, useEffect } from 'react';
 
 // 使用 types_message 中的 Message 类型
@@ -55,7 +56,7 @@ const MessageBoard: React.FC<MessageBoardProps> = ({ username = '匿名用户' }
       {/* 留言列表 */}
       <div className="space-y-3 max-h-[300px] overflow-y-auto mb-4">
         {messages.length === 0 ? (
-          <div className="text-center py-6 text-slate-600 text-xs">暂无留言</div>
+          <div className="text-center py-6 text-slate-600 text-xs">{ui("暂无留言")}</div>
         ) : (
           messages.slice(-10).map((msg) => (
             <div key={msg.id} className="p-3 bg-slate-800/50 rounded-xl border border-slate-700/50">
@@ -86,7 +87,7 @@ const MessageBoard: React.FC<MessageBoardProps> = ({ username = '匿名用户' }
           disabled={isLoading || !newMessage.trim()}
           className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white font-medium rounded-xl transition-colors text-sm"
         >
-          {isLoading ? '...' : '发送'}
+          {isLoading ? '...' : ui("发送")}
         </button>
       </form>
     </div>

@@ -17,17 +17,6 @@ class AuthService {
     }
   }
 
-  public loginAsAdmin(username: string, password: string): boolean {
-    // 管理密码由部署者通过环境变量 VITE_ADMIN_PASSWORD 设置；未设置时禁用管理员登录
-    const adminPassword = (import.meta as any).env?.VITE_ADMIN_PASSWORD || '';
-    if (adminPassword && username === 'admin' && password === adminPassword) {
-      this.currentUser = { username: 'admin', role: 'admin' };
-      this.save();
-      return true;
-    }
-    return false;
-  }
-
   public loginWithEmail(email: string): User {
     const username = email.split('@')[0];
     this.currentUser = { username, role: 'user', email };

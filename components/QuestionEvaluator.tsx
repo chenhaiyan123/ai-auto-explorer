@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 /**
  * QuestionEvaluator — 问题体检报告组件
  *
@@ -431,9 +432,7 @@ const QuestionEvaluator: React.FC<QuestionEvaluatorProps> = ({
               <button
                 onClick={onClose}
                 className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-sm transition-all border border-slate-700"
-              >
-                稍后再说
-              </button>
+              >{ui("稍后再说")}</button>
               {report.canStart ? (
                 <button
                   onClick={handleStart}

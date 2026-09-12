@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useMemo, useState } from 'react';
 import type { Project, ProblemNode } from '../types';
 import { PROJECT_PAGES, type ProjectPage } from '../services/projectWorktree';
@@ -49,10 +50,10 @@ const ProjectNotesTree: React.FC<{
     <div style={{ paddingLeft: 28 + depth * 16 }} className="space-y-0.5 my-1">
       {(Object.keys(PROJECT_PAGES) as ProjectPage[]).filter(page => scopeId === 'root' || page !== 'worktree').map(page => (
         <button key={page} onClick={() => onOpenPage(projectId, scopeId, page)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] ${currentProjectId === projectId && !selectedNodeId && selectedPage?.scopeId === scopeId && selectedPage.page === page ? 'bg-violet-600/20 text-violet-200' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
-          <span>{PROJECT_PAGES[page].icon}</span>{page === 'research' && scopeId !== 'root' ? '想法总览' : PROJECT_PAGES[page].label}
+          <span>{PROJECT_PAGES[page].icon}</span>{page === 'research' && scopeId !== 'root' ? ui("想法总览") : ui(PROJECT_PAGES[page].label)}
         </button>
       ))}
-      {scopeId !== 'root' && <button onClick={() => onOpenNode(projectId, scopeId)} className="w-full text-left rounded-lg px-2 py-1.5 text-[11px] text-slate-400 hover:bg-slate-800">📄 正文笔记</button>}
+      {scopeId !== 'root' && <button onClick={() => onOpenNode(projectId, scopeId)} className="w-full text-left rounded-lg px-2 py-1.5 text-[11px] text-slate-400 hover:bg-slate-800">{ui("📄 正文笔记")}</button>}
     </div>
   );
 
@@ -60,7 +61,7 @@ const ProjectNotesTree: React.FC<{
   const NoteRow = (projectId: string, n: ProblemNode, depth: number, opts?: { showProject?: string; canAddChild?: boolean; childCount?: number; expanded?: boolean }) => (
     <div key={n.id} className="flex items-center group/row" style={{ paddingLeft: 16 + depth * 16 }}>
       {opts?.childCount ? (
-        <button onClick={() => toggleNode(n.id)} className="px-1 py-1.5 text-slate-500 hover:text-slate-300 flex-shrink-0" title={opts.expanded ? '收起' : `展开 ${opts.childCount} 个子项`}>
+        <button onClick={() => toggleNode(n.id)} className="px-1 py-1.5 text-slate-500 hover:text-slate-300 flex-shrink-0" title={opts.expanded ? ui("收起") : `展开 ${opts.childCount} 个子项`}>
           <span className={`text-[9px] inline-block transition-transform ${opts.expanded ? 'rotate-90' : ''}`}>▶</span>
         </button>
       ) : <span className="w-[16px] flex-shrink-0" />}
@@ -73,14 +74,14 @@ const ProjectNotesTree: React.FC<{
         <div className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-1.5 min-w-0">
             <span className="text-[11px]">{noteIcon(n)}</span>
-            <span className={`text-[11px] font-semibold truncate ${selectedNodeId === n.id ? 'text-purple-200' : 'text-slate-200'}`}>{n.title || '未命名'}</span>
+            <span className={`text-[11px] font-semibold truncate ${selectedNodeId === n.id ? 'text-purple-200' : 'text-slate-200'}`}>{n.title || ui("未命名")}</span>
             {!opts?.expanded && opts?.childCount ? <span className="flex-shrink-0 text-[9px] text-slate-600">{opts.childCount}</span> : null}
           </span>
           {n.assignedAgent && <span className="flex-shrink-0 text-[8px] text-blue-400 bg-blue-900/30 border border-blue-500/30 rounded-full px-1.5 py-0.5 truncate max-w-[72px]">🤖 {n.assignedAgent}</span>}
         </div>
         {opts?.showProject && <div className="text-[9px] text-slate-600 truncate mt-0.5 ml-5">📁 {opts.showProject}</div>}
       </button>
-      {opts?.canAddChild && <button onClick={() => onAddChild(projectId, n.id)} className="opacity-0 group-hover/row:opacity-100 px-1.5 text-slate-500 hover:text-emerald-400 text-sm flex-shrink-0" title="在这个节点下加一条三级详情">＋</button>}
+      {opts?.canAddChild && <button onClick={() => onAddChild(projectId, n.id)} className="opacity-0 group-hover/row:opacity-100 px-1.5 text-slate-500 hover:text-emerald-400 text-sm flex-shrink-0" title={ui("在这个节点下加一条三级详情")}>＋</button>}
     </div>
   );
 
@@ -90,31 +91,30 @@ const ProjectNotesTree: React.FC<{
         <input
           value={search}
           onChange={e => onSearch(e.target.value)}
-          placeholder="🔍 搜索 / 新建项目名…"
+          placeholder={ui("🔍 搜索 / 新建项目名…")}
           className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-[11px] text-slate-200 outline-none focus:ring-1 focus:ring-purple-500"
         />
-        <button onClick={() => onCreateProject()} className="w-full py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-[11px] font-bold transition-colors">
-          ＋ 新建项目{q ? `「${search.trim()}」` : ''}
+        <button onClick={() => onCreateProject()} className="w-full py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-[11px] font-bold transition-colors">{ui("＋ 新建项目")}{q ? `「${search.trim()}」` : ''}
         </button>
         {(onImport || onExportVault || onSaveToFolder) && (
           <div className="flex gap-1">
-            {onImport && <button onClick={onImport} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title="导入 .md 文件">⬆ 导入</button>}
-            {onExportVault && <button onClick={onExportVault} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title="导出当前项目为 Markdown(.zip，项目即文件夹)">⬇ 导出</button>}
-            {onSaveToFolder && <button onClick={onSaveToFolder} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title="保存到本地文件夹(Vault)">💾 本地库</button>}
+            {onImport && <button onClick={onImport} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title={ui("导入 .md 文件")}>{ui("⬆ 导入")}</button>}
+            {onExportVault && <button onClick={onExportVault} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title={ui("导出当前项目为 Markdown(.zip，项目即文件夹)")}>{ui("⬇ 导出")}</button>}
+            {onSaveToFolder && <button onClick={onSaveToFolder} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[10px] font-medium transition-colors" title={ui("保存到本地文件夹(Vault)")}>{ui("💾 本地库")}</button>}
           </div>
         )}
         <div className="text-[9px] text-slate-600 flex justify-between">
-          <span>{projects.length} 个项目</span>
-          <span>项目 › 节点 › 详情（3 级）</span>
+          <span>{projects.length}{ui("个项目")}</span>
+          <span>{ui("项目 › 节点 › 详情（3 级）")}</span>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto scroll-hide p-2 space-y-0.5">
         {q ? (
           searchResults.length === 0
-            ? <div className="text-center text-[11px] text-slate-600 py-8">没有匹配的笔记</div>
+            ? <div className="text-center text-[11px] text-slate-600 py-8">{ui("没有匹配的笔记")}</div>
             : searchResults.map(({ n, p }) => NoteRow(p.id, n, 0, { showProject: p.name }))
         ) : projects.length === 0 ? (
-          <div className="text-center text-[11px] text-slate-600 py-8">还没有项目，点上方新建</div>
+          <div className="text-center text-[11px] text-slate-600 py-8">{ui("还没有项目，点上方新建")}</div>
         ) : (
           projects.map(p => {
             const isOpen = !collapsed.has(p.id);
@@ -146,7 +146,7 @@ const ProjectNotesTree: React.FC<{
             return (
               <div key={p.id}>
                 <div className={`flex items-center group rounded-lg ${p.id === currentProjectId ? 'bg-slate-800/40' : ''}`}>
-                  <button onClick={() => toggleProject(p.id)} className="px-1 py-2 text-slate-500 text-[9px]" title={isOpen ? "收起项目" : "展开项目"}>{isOpen ? "▼" : "▶"}</button>
+                  <button onClick={() => toggleProject(p.id)} className="px-1 py-2 text-slate-500 text-[9px]" title={isOpen ? ui("收起项目") : ui("展开项目")}>{isOpen ? "▼" : "▶"}</button>
                   <button onClick={() => onOpenPage(p.id, 'root', 'research')} className="flex-1 flex items-center gap-1.5 py-2 px-1 text-left min-w-0">
                     <span className="text-[12px]">{isOpen ? '📂' : '📁'}</span>
                     <span className={`text-[11px] font-bold truncate ${p.id === currentProjectId ? 'text-purple-300' : 'text-slate-200'}`}>{p.name}</span>
@@ -177,7 +177,7 @@ const ProjectNotesTree: React.FC<{
                       );
                     })}
                     {ungrouped.map(n => renderNode(n, 0, new Set<string>()))}
-                    {pn.length === 0 && <div className="text-[9px] text-slate-600 italic pl-7 py-1">空项目</div>}
+                    {pn.length === 0 && <div className="text-[9px] text-slate-600 italic pl-7 py-1">{ui("空项目")}</div>}
                   </div>
                 )}
               </div>

@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 /**
  * FeedbackModal - 产品内反馈入口。
  *
@@ -68,7 +69,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ onClose, extraContext, on
               ? '有需要追问的地方我会用你留的联系方式找你。'
               : '这条是匿名的，所以没法回复你。下次留个联系方式，卡住的问题我可以直接帮你看。'}
           </p>
-          <button onClick={onClose} className="mt-6 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-3 rounded-xl">关闭</button>
+          <button onClick={onClose} className="mt-6 w-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-3 rounded-xl">{ui("关闭")}</button>
         </div>
       </div>
     );
@@ -82,7 +83,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ onClose, extraContext, on
             <h3 className="font-bold text-white">说点什么</h3>
             <p className="text-[11px] text-slate-500 mt-0.5">卡住、报错、觉得哪里蠢——都想知道</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white" title="关闭">
+          <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white" title={ui("关闭")}>
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
           </button>
         </div>
@@ -151,7 +152,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ onClose, extraContext, on
         </div>
 
         <div className="p-5 border-t border-slate-800 flex items-center gap-3">
-          <button onClick={onClose} className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm font-bold">取消</button>
+          <button onClick={onClose} className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm font-bold">{ui("取消")}</button>
           <button
             onClick={handleSubmit}
             disabled={tooShort || busy}

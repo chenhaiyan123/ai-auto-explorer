@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useMemo, useState } from 'react';
 import { NodeStatus } from '../types';
 import { DashboardData, DirectionCard, avatarForAgent, shortAgo } from '../services/dashboardService';
@@ -192,7 +193,7 @@ const ProjectDashboard: React.FC<Props> = ({ data, onNavigate, onMentionAgent })
               <div className={`h-full ${barColor(data.progress)} transition-all`} style={{ width: `${data.progress}%` }} />
             </div>
             <div className="flex items-center gap-3 text-[11px] flex-wrap tabular-nums">
-              <span className="text-emerald-400">完成 {data.solved}</span>
+              <span className="text-emerald-400">{ui("完成")}{data.solved}</span>
               <span className="text-amber-400">进行 {data.exploring}</span>
               <span className="text-slate-500">待探 {data.unexplored}</span>
               {data.awaitingReality > 0 && <span className="text-purple-300">🟡 等现实 {data.awaitingReality}</span>}
@@ -276,7 +277,7 @@ const ProjectDashboard: React.FC<Props> = ({ data, onNavigate, onMentionAgent })
           right={data.achievements.length > 5 ? (
             <button onClick={() => setShowAllResults(v => !v)}
               className="text-[10px] px-2.5 py-1 rounded-full border border-slate-700 text-slate-400 hover:text-white hover:border-emerald-500/60 transition-colors">
-              {showAllResults ? '收起' : `看全部 ${data.achievements.length}`}
+              {showAllResults ? ui("收起") : `看全部 ${data.achievements.length}`}
             </button>
           ) : undefined}>
           <div className="space-y-1">

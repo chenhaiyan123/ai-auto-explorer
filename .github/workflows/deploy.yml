@@ -29,12 +29,27 @@ jobs:
           # 在仓库 Settings → Secrets and variables → Actions → Variables 里设置
           # VITE_AUTH_API = https://api.hiexplore.com （不设则保持免登录）
           VITE_AUTH_API: ${{ vars.VITE_AUTH_API }}
+          VITE_WAKE_API: ${{ vars.VITE_WAKE_API }}
           # 流量统计（Umami）：不设则不启用
           VITE_UMAMI_WEBSITE_ID: ${{ vars.VITE_UMAMI_WEBSITE_ID }}
           VITE_UMAMI_SRC: ${{ vars.VITE_UMAMI_SRC }}
           # 用户聊天挂件（Tawk.to）：不设则不启用
           VITE_TAWK_PROPERTY_ID: ${{ vars.VITE_TAWK_PROPERTY_ID }}
           VITE_TAWK_WIDGET_ID: ${{ vars.VITE_TAWK_WIDGET_ID }}
+          #
+          # ⚠️ 下面两个本地 .env.local 里有、这里**故意不注入**，不要"顺手补上"：
+          #
+          # VITE_API_PROXY_URL —— 免鉴权的模型代理地址。
+          #   ① 用不上：getDefaultSettings() 里 ENV_TRIAL_API（即上面的 VITE_AUTH_API）
+          #      优先级更高，线上走的是 trial 分支，这一支根本执行不到。
+          #   ② 有害：Vite 会把 VITE_* 明文编进 JS，公开站点等于把这个地址贴在网上，
+          #      而它调用时不带 Key（apiKey: ''），谁都能拿去刷你的模型额度。
+          #
+          # VITE_ADMIN_PASSWORD —— 同理，明文进 bundle 就等于公开。
+          #   线上管理员入口目前是禁用的（authService 读不到就关掉），这是对的。
+          #   真要在线上开管理功能，校验得放后端，不能靠一个前端常量。
+      - name: Record deployed version
+        run: node -e "require('fs').writeFileSync('dist/version.json', JSON.stringify({commit:process.env.GITHUB_SHA,builtAt:new Date().toISOString()}))"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

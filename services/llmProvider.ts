@@ -9,10 +9,12 @@
  * 配置保存在 localStorage，用户可在「设置 → 模型接入」中修改。
  */
 
+import { getLanguage } from './language';
+import { sharedRequest } from './sharedModelsClient';
 import { trackEvent } from './analytics';
 import { buildModelRequest, parseModelResponse } from './modelRequest';
 
-export type LLMProviderType = 'cloud-proxy' | 'openai-compatible' | 'trial' | 'openai' | 'anthropic';
+export type LLMProviderType = 'platform' | 'cloud-proxy' | 'openai-compatible' | 'trial' | 'openai' | 'anthropic';
 
 export interface LLMSettings {
   provider: LLMProviderType;
@@ -129,7 +131,9 @@ export async function callLLM(
   options: LLMCallOptions = {},
   settings?: LLMSettings,
 ): Promise<LLMResult> {
+  if (getLanguage() === 'en') messages = [{ role: 'system', content: 'Use English for user-facing prose and generated descriptions. Keep JSON schema keys, IDs, quotations and source evidence unchanged.' }, ...messages];
   const s = settings || loadLLMSettings();
+  if (s.provider === 'platform') return sharedRequest<LLMResult>('/shared/chat', 'POST', { modelId: s.model, requestId: crypto.randomUUID(), messages, maxTokens: options.maxTokens ?? 2048, jsonMode: options.jsonMode === true }, options.timeoutMs ?? 90000);
   if (!s.baseUrl) {
     throw new Error('尚未配置模型 API，请点击右上角 ⚙️ 设置模型接入');
   }

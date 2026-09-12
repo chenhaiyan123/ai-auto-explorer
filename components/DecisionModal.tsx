@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 
 import React from 'react';
 import { DecisionPoint, ProblemNode } from '../types';
@@ -21,7 +22,7 @@ const DecisionModal: React.FC<DecisionModalProps> = ({ decision, node, onChoice,
           <button 
             onClick={onClose}
             className="absolute top-4 right-4 p-2 text-slate-500 hover:text-white transition-colors z-10"
-            title="关闭"
+            title={ui("关闭")}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
@@ -31,8 +32,7 @@ const DecisionModal: React.FC<DecisionModalProps> = ({ decision, node, onChoice,
           <h2 className="text-lg font-bold text-blue-400 flex items-center gap-2">
             🧭 方案决策建议
           </h2>
-          <div className="text-slate-300 mt-2 text-xs leading-relaxed">
-            节点 <strong>{node.title}</strong> 拆解完成，AI 识别到多条路径可能性，请选择您的倾向：
+          <div className="text-slate-300 mt-2 text-xs leading-relaxed">{ui("节点")}<strong>{node.title}</strong> 拆解完成，AI 识别到多条路径可能性，请选择您的倾向：
           </div>
           {decision.context && (
             <div className="mt-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-[11px] text-blue-200/90 leading-relaxed italic">

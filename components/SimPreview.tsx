@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useMemo, useState } from 'react';
 import { SIM_PRESETS, paramValues, SIM_DISCLAIMER } from '../services/simPresets';
 import SimChart, { SimSlider } from './SimChart';
@@ -103,7 +104,7 @@ const SimPreview: React.FC<{
         onClick={() => setShowCheck(v => !v)}
         className="w-full text-left text-[11px] px-3 py-2 rounded-xl bg-amber-950/30 border border-amber-600/30 text-amber-300 hover:bg-amber-950/50 transition-colors"
       >
-        ⚠️ 这个模型哪里靠不住？{showCheck ? '收起' : '展开'}
+        ⚠️ 这个模型哪里靠不住？{showCheck ? ui("收起") : '展开'}
       </button>
       {showCheck && (
         <div className="mt-2 space-y-2 text-[11px] leading-6 text-slate-300 border-l-2 border-amber-600/40 pl-3">

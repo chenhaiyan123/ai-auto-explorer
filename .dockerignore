@@ -1,0 +1,13 @@
+.git
+.env*
+node_modules
+dist
+release
+wake-data
+server/.wake-build
+__test__
+docs
+android
+ios
+Attachments
+*.log

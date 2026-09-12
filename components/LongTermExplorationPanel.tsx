@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useState, useEffect } from 'react';
 import { ExplorationSession, Discovery, ExplorationIntensity } from '../services/longTermExplorer';
 
@@ -74,7 +75,7 @@ const LongTermExplorationPanel: React.FC<LongTermExplorationPanelProps> = ({
         {session && (
           <div className="mt-3">
             <div className="flex justify-between text-[10px] text-slate-500 mb-1">
-              <span>探索进度</span>
+              <span>{ui("探索进度")}</span>
               <span>{session.nodesExplored}/{session.totalNodes} ({progress}%)</span>
             </div>
             <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
@@ -104,17 +105,13 @@ const LongTermExplorationPanel: React.FC<LongTermExplorationPanelProps> = ({
                 onClick={onPause}
                 className="flex-1 py-2.5 bg-yellow-600/20 text-yellow-400 border border-yellow-500/30 font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                暂停
-              </button>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>{ui("暂停")}</button>
             ) : session.status === 'paused' ? (
               <button 
                 onClick={onResume}
                 className="flex-1 py-2.5 bg-green-600/20 text-green-400 border border-green-500/30 font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                继续
-              </button>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>{ui("继续")}</button>
             ) : null}
             <button 
               onClick={onStop}

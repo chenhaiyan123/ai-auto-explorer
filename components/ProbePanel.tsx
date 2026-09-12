@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useRef, useState } from 'react';
 import { ProblemNode, Probe, ProbeResult, EvidenceLayer, LAYER_LABEL, PROBE_COST_LABEL } from '../types';
 import { designProbes, applyProbeResult } from '../services/probeService';
@@ -173,7 +174,7 @@ const ProbePanel: React.FC<{
             {runningId === p.id && progress && (
               <div className="text-[10px] text-purple-200 bg-purple-950/40 border border-purple-600/40 rounded px-2 py-1 flex items-center gap-2">
                 <span className="animate-pulse">采样中 {progress.i}/{progress.total}</span>
-                {progress.last !== undefined && <span className="text-slate-300">当前 {progress.last}{p.device?.unit || ''}</span>}
+                {progress.last !== undefined && <span className="text-slate-300">{ui("当前")}{progress.last}{p.device?.unit || ''}</span>}
                 {progress.err && <span className="text-red-300 truncate">{progress.err}</span>}
                 <button onClick={() => { abortRef.current = true; }}
                   className="ml-auto px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 hover:bg-red-700">停止</button>
@@ -241,7 +242,7 @@ const ProbePanel: React.FC<{
                   placeholder="现实回答了什么？例：20 人里 17 人说更想要导航"
                   className="w-full bg-slate-800 border border-slate-600 rounded px-2 py-1.5 text-[11px] text-slate-200 resize-none" />
                 <div className="flex justify-end gap-1.5">
-                  <button onClick={() => setFilling(null)} className="text-[10px] px-2 py-1 text-slate-400 hover:text-white">取消</button>
+                  <button onClick={() => setFilling(null)} className="text-[10px] px-2 py-1 text-slate-400 hover:text-white">{ui("取消")}</button>
                   <button onClick={() => submit(p)} disabled={!summary.trim()}
                     className="text-[10px] px-2.5 py-1 rounded bg-blue-600 text-white disabled:opacity-40 hover:bg-blue-500">记录</button>
                 </div>

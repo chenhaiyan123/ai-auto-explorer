@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 /**
  * DiscoveryModal - 发现详情弹窗组件
  */
@@ -151,9 +152,7 @@ const DiscoveryModal: React.FC<DiscoveryModalProps> = ({
           <button
             onClick={onClose}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-lg transition-all"
-          >
-            关闭
-          </button>
+          >{ui("关闭")}</button>
         </div>
       </div>
     </div>

@@ -1,3 +1,4 @@
+import { t as ui } from '../services/language';
 import React, { useMemo, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { ProblemNode, Probe, DeviceProbeSpec, ProbeMetric, NumericCondition } from '../types';
@@ -72,7 +73,7 @@ const DeviceProbeForm: React.FC<{
       <div className="rounded-lg border border-dashed border-slate-700 p-3 text-[11px] text-slate-500 space-y-1.5">
         <div>还没有可用于采集的设备。</div>
         <div className="text-slate-600">到「设置 → 🔌 IoT 设备」注册一台，并把用于读数的操作标成<span className="text-emerald-400">只读采集</span>。</div>
-        <button onClick={onCancel} className="text-[10px] text-slate-400 hover:text-white">返回</button>
+        <button onClick={onCancel} className="text-[10px] text-slate-400 hover:text-white">{ui("返回")}</button>
       </div>
     );
   }
@@ -121,7 +122,7 @@ const DeviceProbeForm: React.FC<{
       <div className="text-[10px] text-slate-500 leading-relaxed">{describeSpec(spec)}</div>
 
       <div className="flex justify-end gap-1.5">
-        <button onClick={onCancel} className="text-[10px] px-2 py-1 text-slate-400 hover:text-white">取消</button>
+        <button onClick={onCancel} className="text-[10px] px-2 py-1 text-slate-400 hover:text-white">{ui("取消")}</button>
         <button
           disabled={!ready}
           onClick={() => onCreate({
