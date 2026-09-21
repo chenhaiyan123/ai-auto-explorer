@@ -1,6 +1,6 @@
 # 微信与支付宝支付后台部署
 
-截至 2026-09-21，云端 backend 与 Caddy 已运行，`https://pay.hiexplore.com/health` 已通过可信 HTTPS 验证，HTTP 自动跳转 HTTPS。微信平台证书已从服务器真实下载并通过验签。支付仅对服务端配置的验收账号开放；Pro 与支付宝保持关闭。真实付款、退款及成果交付验收仍待完成。
+截至 2026-09-21，云端 backend 与 Caddy 已运行，`https://pay.hiexplore.com/health` 已通过可信 HTTPS 验证，HTTP 自动跳转 HTTPS。证书下载、响应验签和官方查单通过；但真实 Native 下单返回 **HTTP 403 / NO_AUTH：商户收款功能已被限制**。因此已将 `BILLING_SALES_ENABLED=false`，验收账号名单保留，Pro 与支付宝也保持关闭。需商户先在微信商户平台处理收款限制，再重新打开小额验收；目前没有成功收款，真实回调、退款及成果交付仍未完成。
 
 ## 1. 服务器与文件
 
