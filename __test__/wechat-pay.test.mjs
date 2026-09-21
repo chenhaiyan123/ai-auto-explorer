@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createCipheriv, randomBytes, randomUUID, sign, verify, X509Certificate } from 'node:crypto';
 import { createWechatProvider, validWechatCodeUrl } from '../server/wechat-provider.mjs';
 import { downloadWechatCertificates } from '../server/wechat-certificates.mjs';
-import { Billing } from '../server/billing.mjs';
+import { Billing, addCalendarMonth } from '../server/billing.mjs';
 import { WakeStorage } from '../server/wake-storage.mjs';
 import { createWakeServer } from '../server/wake-server.mjs';
 
@@ -81,6 +81,35 @@ test('微信通知：拒绝过期、伪造、密文篡改和错误商户', async
   const wrong = f.notification(f.paid(order, { mchid: 'other' })); await assert.rejects(p.verifyNotification(wrong.raw, wrong.headers), /商户或应用不匹配/);
   const event = JSON.parse(n.raw); event.resource.ciphertext = Buffer.alloc(40).toString('base64'); const raw = JSON.stringify(event);
   await assert.rejects(p.verifyNotification(raw, f.headers(raw)));
+});
+test('微信 Pro 固定收取 6900 分；签名回调开通日历月、重放与重启不重复延长', async t => {
+  const f = await fixture(t);
+  const provider = await createWechatProvider(f.env, f.fetcher);
+  const storage = new WakeStorage(path.join(f.dir, 'pro-data'), randomBytes(32)); await storage.initialize();
+  let now = Date.now();
+  const billing = new Billing(storage, { wechat: provider }, f.env, () => now);
+  const artifact = await billing.saveArtifact('buyer', { report: { title: 'Pro export', abstract: '', sections: [], conclusions: [], openQuestions: [], references: [] } });
+  await assert.rejects(billing.download('buyer', artifact.id), e => e.status === 402);
+  const order = await billing.createOrder('buyer', { sku: 'pro_month', provider: 'wechat', requestId: randomUUID(), amount: 1 });
+  assert.equal(order.amount, 6900);
+  assert.equal(f.seen.find(v => v.route.endsWith('/native')).body.amount.total, 6900);
+  assert.equal((await billing.view('buyer')).plan, 'free');
+  const wrong = f.notification(f.paid(order, { amount: { total: 399, currency: 'CNY' } }));
+  await assert.rejects(billing.notify('wechat', wrong.raw, wrong.headers), /金额/);
+  const notification = f.notification(f.paid(order));
+  await billing.notify('wechat', notification.raw, notification.headers);
+  await billing.notify('wechat', notification.raw, notification.headers);
+  const until = addCalendarMonth(now);
+  assert.equal((await billing.view('buyer')).proUntil, until);
+  const reopened = new Billing(storage, { wechat: provider }, f.env, () => now);
+  assert.equal((await reopened.view('buyer')).plan, 'pro');
+  assert.equal((await reopened.download('buyer', artifact.id)).title, 'Pro export');
+  await assert.rejects(reopened.download('other', artifact.id), e => e.status === 404);
+  now = until + 1;
+  assert.equal((await reopened.view('buyer')).plan, 'free');
+  assert.equal((await reopened.download('buyer', artifact.id)).title, 'Pro export');
+  const next = await reopened.saveArtifact('buyer', { report: { title: 'Next version', abstract: '', sections: [], conclusions: [], openQuestions: [], references: [] } });
+  await assert.rejects(reopened.download('buyer', next.id), e => e.status === 402);
 });
 test('远端下单前持久化；超时重试和重启沿用同一订单；重复回调只解锁一次', async t => {
   const f = await fixture(t); const store = new WakeStorage(path.join(f.dir, 'data'), randomBytes(32)); await store.initialize();

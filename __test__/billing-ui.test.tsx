@@ -11,6 +11,7 @@ import { zipStore } from '../services/vault';
 const html = renderToStaticMarkup(<BillingPanel />);
 assert.ok(html.includes('<table')); assert.ok(html.includes('Free')); assert.ok(html.includes('Pro'));
 assert.ok(html.includes('69')); assert.ok(html.includes('3.99')); assert.ok(html.includes('Pro 暂未开放购买'));
+assert.ok(!html.includes('更多研究空间')); assert.ok(html.includes('会员不额外赠送 Token'));
 assert.ok(!html.includes('19.9')); assert.ok(!html.includes('模拟购买成功'));
 for (const bad of ['javascript:alert(1)', 'https://evil.test/gateway.do?method=alipay.trade.page.pay', 'https://openapi.alipay.com.evil.test/gateway.do?method=alipay.trade.page.pay', 'https://user:password@openapi.alipay.com/gateway.do?method=alipay.trade.page.pay', 'http://openapi.alipay.com/gateway.do?method=alipay.trade.page.pay']) assert.equal(safeCheckoutUrl(bad), undefined);
 assert.ok(safeCheckoutUrl('https://openapi.alipay.com/gateway.do?method=alipay.trade.page.pay'));
