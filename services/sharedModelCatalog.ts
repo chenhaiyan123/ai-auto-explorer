@@ -1,4 +1,4 @@
-import type { SharedModel } from './sharedModelsClient';
+import type { SharedModel, TokenBalance } from './sharedModelsClient';
 
 // Presets contain no credentials and do not enable a model. IDs are entered from the provider console.
 export const SHARED_MODEL_PRESETS = [
@@ -13,11 +13,12 @@ export const SHARED_MODEL_PRESETS = [
   { id: 'zhipu', label: '智谱', provider: 'openai-compatible', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', deferred: true, hint: '其他可扩展接口，默认不开放' },
 ];
 
-export function sharedModelStatus(model?: SharedModel) {
+export function sharedModelStatus(model?: SharedModel, balance?: TokenBalance) {
   if (!model?.hasKey) return { available: false, label: '未配置 Key' };
   if (!model.enabled) return { available: false, label: '已暂停' };
   if (!model.model.trim()) return { available: false, label: '未配置模型' };
   if (model.dailyTokens <= model.usedToday) return { available: false, label: '今日额度受限' };
+  if (balance && balance.available <= 0) return { available: false, label: balance.held > 0 ? '额度已预留，等待结算' : '个人额度不足' };
   return { available: true, label: '可用 · 已配置 Key' };
 }
 

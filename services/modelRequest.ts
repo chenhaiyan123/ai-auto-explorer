@@ -21,6 +21,13 @@ export function buildModelRequest(s: LLMSettings, messages: { role: string; cont
   else { body.max_tokens = options.maxTokens ?? 2048; body.temperature = options.temperature ?? 0.7; }
   // Bounded JSON tasks use the non-thinking DeepSeek mode to reserve tokens for the answer.
   if (s.provider === 'openai-compatible' && new URL(base).hostname === 'api.deepseek.com' && (options.model || s.model).startsWith('deepseek-v4')) body.thinking = { type: 'disabled' };
+  // K2.6 rejects the generic 0.7 temperature. Bounded research/JSON calls use
+  // instant mode so the output budget is available for the actual answer.
+  // https://platform.kimi.com/docs/guide/kimi-k2-6-quickstart
+  if (s.provider === 'openai-compatible' && ['api.moonshot.cn', 'api.moonshot.ai'].includes(new URL(base).hostname) && /^kimi-k2\.6(?:-|$)/.test(options.model || s.model)) {
+    body.thinking = { type: 'disabled' };
+    body.temperature = 0.6;
+  }
   if (options.jsonMode) body.response_format = { type: 'json_object' };
   return { url: s.provider === 'cloud-proxy' ? base : s.provider === 'trial' ? `${base}/api/chat` : /\/chat\/completions$/.test(base) ? base : `${base}/chat/completions`, headers, body };
 }

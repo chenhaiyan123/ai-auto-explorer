@@ -12,7 +12,7 @@ function ModelStatus({ model }: { model: SharedModel }) {
 }
 const status: Record<string, string> = { reserved: '执行中·已预留', settled: '已结算', uncertain: '用量待核对', reconciled: '管理员已核对', cancelled: '未发送·已退回' };
 
-export default function SharedModelsPanel({ onClose, embedded = false }: { onClose?: () => void; embedded?: boolean }) {
+export default function SharedModelsPanel({ onClose, embedded = false, personalOnly = false }: { onClose?: () => void; embedded?: boolean; personalOnly?: boolean }) {
   const [session, setSession] = useState<{ owner: string; isAdmin: boolean }>();
   const [data, setData] = useState<SharedCatalog>(); const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -22,7 +22,7 @@ export default function SharedModelsPanel({ onClose, embedded = false }: { onClo
   const [grant, setGrant] = useState({ owner: '', modelId: '', tokens: 100000, note: '' });
   const grantId = useRef(crypto.randomUUID());
   const [reconcile, setReconcile] = useState({ callId: '', tokens: 0, note: '' });
-  const refresh = async () => { const s = await sharedRequest<{ owner: string; isAdmin: boolean }>('/shared/session'); setSession(s); setData(await sharedRequest(s.isAdmin ? '/admin/shared' : '/shared/catalog')); };
+  const refresh = async () => { const s = await sharedRequest<{ owner: string; isAdmin: boolean }>('/shared/session'); setSession({ ...s, isAdmin: s.isAdmin && !personalOnly }); setData(await sharedRequest(s.isAdmin && !personalOnly ? '/admin/shared' : '/shared/catalog')); };
   useEffect(() => { void refresh().catch(e => setError(e.message)); }, []);
   const act = async (fn: () => Promise<void>) => { setBusy(true); setError(''); setMessage(''); try { await fn(); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : '操作失败'); } finally { setBusy(false); } };
   const edit = (m: SharedModel) => { setModel({ ...m, apiKey: '' }); setEditing(true); setMessage(''); revealForm(); };

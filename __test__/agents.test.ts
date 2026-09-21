@@ -9,12 +9,36 @@ import { callLLM, loadLLMSettings } from '../services/llmProvider';
 import { agentModelCaller, saveAgentCredential, resolveAgentModel, snapshotAgentModels } from '../services/agentModel';
 import { ensureWorktree, saveStage, branchFromStage, switchExplorationBranch } from '../services/projectWorktree';
 import type { Project } from '../types';
+import { sharedModelStatus } from '../services/sharedModelCatalog';
 
 const local = new Map<string, string>();
 Object.defineProperty(globalThis, 'localStorage', { value: { getItem: (key: string) => local.get(key) || null, setItem: (key: string, value: string) => local.set(key, value), removeItem: (key: string) => local.delete(key) }, configurable: true });
 const fact = { claim: '样本中有 8/10 人选择翻译', source: '独立测试记录第2页', excerpt: '1–8选择翻译；9、10选择导航', scope: '仅测试样本，不能代表市场' };
 const confirmed = () => { const w = addFact(createInquiry('q', '为什么使用翻译？'), fact); return reviewFact(w, w.facts[0].id, 'confirmed', '已核对测试原始记录'); };
 const output = (sys: string) => sys.includes('团队的思想家') ? JSON.stringify({ summary: '竞争假设', hypotheses: [1, 2, 3].map(i => ({ statement: `H${i}`, falsification: `F${i}` })) }) : sys.includes('团队的执行者') ? JSON.stringify({ summary: '没有更多已核验资料', candidates: [] }) : JSON.stringify({ summary: '不能扩大适用范围', verdict: 'uncertain' });
+
+test('Kimi K2.6 使用可接受的固定温度，其他供应商不受影响', () => {
+  const settings = { provider: 'openai-compatible' as const, baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-k2.6', apiKey: '' };
+  const req = buildModelRequest(settings, [{ role: 'user', content: 'Return JSON' }], { jsonMode: true, maxTokens: 256, temperature: 0.7 });
+  assert.equal(req.body.temperature, 0.6);
+  assert.deepEqual(req.body.thinking, { type: 'disabled' });
+  assert.deepEqual(req.body.response_format, { type: 'json_object' });
+  assert.equal(req.body.max_tokens, 256);
+  const other = buildModelRequest({ ...settings, baseUrl: 'https://example.com/v1' }, [], { temperature: 0.7 });
+  assert.equal(other.body.temperature, 0.7);
+  assert.equal(other.body.thinking, undefined);
+});
+
+test('共享模型开放与个人可用额度分开判断', () => {
+  const model = { id: 'deepseek', label: 'DeepSeek', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat', hasKey: true, enabled: true, dailyTokens: 100000, maxOutputTokens: 2048, usedToday: 0 };
+  const balance = { available: 5000, granted: 5000, spent: 0, held: 0 };
+  assert.equal(sharedModelStatus(model).available, true);
+  assert.equal(sharedModelStatus(model, balance).available, true);
+  assert.equal(sharedModelStatus(model, { ...balance, available: 0 }).available, false);
+  assert.equal(sharedModelStatus({ ...model, enabled: false }, balance).available, false);
+  assert.equal(sharedModelStatus({ ...model, hasKey: false }, balance).available, false);
+  assert.equal(sharedModelStatus({ ...model, usedToday: 100000 }, balance).available, false);
+});
 
 test('AI 描述只更新指定角色，保留模型设置；缺少字段时原子失败', () => {
   let w = createInquiry('q', '问题');

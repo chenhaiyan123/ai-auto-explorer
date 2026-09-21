@@ -1,4 +1,5 @@
 import { useLanguage, t as ui } from './services/language';
+import PersonalCenter from './components/PersonalCenter';
 import SharedModelsPanel from './components/SharedModelsPanel';
 import { BillingModal } from './components/BillingPanel';
 import { billingRequest, BILLING_CHANGED, BILLING_API, BillingAccount } from './services/billingClient';
@@ -821,13 +822,15 @@ const App: React.FC = () => {
   const routeInfo = useMemo(() => { if (currentHash.startsWith('#/delegate/')) { const parts = currentHash.split('/'); return { type: 'delegate', nodeId: parts[2]?.split('?')[0], taskTitle: new URLSearchParams(currentHash.split('?')[1] || '').get('task') || '未知任务' }; } return { type: 'main' }; }, [currentHash]);
 
   // 主题：白天 / 深色
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    try { return (localStorage.getItem('aae-theme') as 'dark' | 'light') || 'dark'; } catch { return 'dark'; }
+  const [theme, setTheme] = useState<'dark' | 'light' | 'system'>(() => {
+    try { return (localStorage.getItem('aae-theme') as 'dark' | 'light' | 'system') || 'dark'; } catch { return 'dark'; }
   });
   useEffect(() => {
-    const root = document.documentElement;
-    if (theme === 'light') root.classList.add('light'); else root.classList.remove('light');
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const apply = () => document.documentElement.classList.toggle('light', theme === 'light' || (theme === 'system' && media.matches));
+    apply(); media.addEventListener('change', apply);
     try { localStorage.setItem('aae-theme', theme); } catch {}
+    return () => media.removeEventListener('change', apply);
   }, [theme]);
 
   const [projects, setProjects] = useState<Project[]>([]);
@@ -942,6 +945,9 @@ const App: React.FC = () => {
   // 通知系统
   const [notifications, setNotifications] = useState<Array<{id: string, type: 'discovery' | 'warning' | 'info', title: string, message: string, time: number}>>([]);
   const [showNotificationPanel, setShowNotificationPanel] = useState(false);
+  const [notificationMode, setNotificationMode] = useState<'all' | 'important'>(() => { try { return localStorage.getItem('aae-notification-mode') === 'important' ? 'important' : 'all'; } catch { return 'all'; } });
+  useEffect(() => { try { localStorage.setItem('aae-notification-mode', notificationMode); } catch {} }, [notificationMode]);
+  const visibleNotifications = notificationMode === 'important' ? notifications.filter(n => n.type !== 'info') : notifications;
   
   // 服务端核验的会员状态与收费入口
   const [isPremiumUser, setIsPremiumUser] = useState(false);
@@ -2722,41 +2728,6 @@ ${plan.lead.duty}
           <button onClick={() => setShowMetaModal(true)} className="hidden sm:block p-2 text-slate-400 hover:text-blue-400"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg></button>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-3">
-          <button onClick={() => setShowPremiumModal(true)} className="hidden sm:flex px-2.5 py-1.5 bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded-full text-[10px] font-bold hover:bg-blue-500/20 items-center gap-1.5">
-            {isPremiumUser ? 'Pro' : ui('收费与套餐', 'Plans & billing')}
-          </button>
-
-          {/* 当前模型：一眼确认用的是哪个模型，点击打开设置 */}
-          <button
-            onClick={() => setShowSettingsModal(true)}
-            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-emerald-400 max-w-[180px]"
-            title={ui("当前使用的模型（点击修改）")}
-          >
-            <span>🧠</span>
-            <span className="truncate">{activeModel || ui("未配置模型")}</span>
-          </button>
-
-          {/* 体验剩余次数：仅免配置体验模式显示，用完引导注册/填 Key */}
-          {trialQuota && (
-            <button
-              onClick={() => setShowSettingsModal(true)}
-              className={`hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-bold border transition-colors ${trialQuota.remaining > 0 ? 'bg-emerald-600/15 text-emerald-400 border-emerald-600/30 hover:bg-emerald-600/25' : 'bg-amber-600/15 text-amber-400 border-amber-600/30 hover:bg-amber-600/25'}`}
-              title={trialQuota.scope === 'anon' ? ui("免注册体验额度（登录可获得更多，或填入你自己的模型 Key）") : ui("今日体验额度（用完可填入你自己的模型 Key）")}
-            >
-              <span>🎁</span>
-              <span>{ui("体验剩余")}{trialQuota.remaining}/{trialQuota.limit}</span>
-            </button>
-          )}
-
-          {/* 下载客户端（在桌面客户端内则隐藏） */}
-          {!IS_DESKTOP && (
-            <button
-              onClick={() => setShowDownloadModal(true)}
-              className="hidden sm:flex px-2.5 py-1.5 bg-slate-800 hover:bg-blue-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-blue-400 flex items-center gap-1"
-              title={ui("下载桌面客户端（支持本地模型 / 7×24）")}
-            >{ui("⬇ 客户端")}</button>
-          )}
-
           {/* 设备安全：待确认的写操作 + 急停（没注册设备时整条不渲染） */}
           <DeviceGuard />
 
@@ -2775,50 +2746,21 @@ ${plan.lead.duty}
           {/* 问题广场：筛选有价值的问题 */}
           <button
             onClick={() => setShowQuestionBoard(true)}
-            className="hidden sm:flex px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-amber-400 flex items-center gap-1"
+            className="flex px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-amber-400 flex items-center gap-1"
             title={ui("问题广场：筛选有价值的问题")}
-          >{ui("🔥 问题")}</button>
-
-          {/* 反馈入口：推广期最重要的一个按钮，放在顶栏常驻 */}
-          <button
-            onClick={() => { setShowFeedback(true); trackEvent('feedback_open'); }}
-            className="hidden sm:flex px-2.5 py-1.5 bg-slate-800 hover:bg-emerald-600 hover:text-white border border-slate-700 rounded-full transition-colors text-[11px] font-bold text-emerald-400 flex items-center gap-1"
-            title={ui("反馈：卡住了、报错了、觉得哪里蠢，都告诉我")}
-          >{ui("💬 反馈")}</button>
-
-          {/* 主题切换：白天 / 深色 */}
-          <button
-            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-            className="hidden sm:flex p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
-            title={theme === 'dark' ? ui("切换到白天模式") : ui("切换到深色模式")}
-          >
-            {theme === 'dark' ? (
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-500"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>
-            )}
-          </button>
-
-          <button onClick={() => { if (isBackendAdmin) { setAdminInitialTab('models'); setShowAdminDashboard(true); } else setShowSharedModels(true); }} className="rounded-full border border-violet-500/30 px-2 py-1.5 text-xs text-violet-300" title={ui("查看共享模型与个人使用额度")}>{ui("模型与额度")}</button>
-          {/* 设置：模型接入 / IoT 设备 */}
-          <button
-            onClick={() => setShowSettingsModal(true)}
-            className="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
-            title={ui("设置：模型接入 / IoT 设备")}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
+          >{ui("问题广场", "Questions")}</button>
 
           {/* 通知按钮 */}
           <div className="relative">
             <button 
+              aria-label={ui("通知", "Notifications")}
               onClick={() => setShowNotificationPanel(!showNotificationPanel)} 
               className="relative p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-              {notifications.length > 0 && (
+              {visibleNotifications.length > 0 && (
                 <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                  {notifications.length > 9 ? '9+' : notifications.length}
+                  {visibleNotifications.length > 9 ? '9+' : visibleNotifications.length}
                 </span>
               )}
             </button>
@@ -2830,15 +2772,15 @@ ${plan.lead.duty}
                 <div className="absolute right-0 top-full mt-2 w-80 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 max-h-[400px] overflow-hidden flex flex-col">
                   <div className="p-3 border-b border-slate-700 flex items-center justify-between">
                     <span className="text-sm font-bold text-white">{ui("通知")}</span>
-                    {notifications.length > 0 && (
+                    {visibleNotifications.length > 0 && (
                       <button onClick={() => setNotifications([])} className="text-[10px] text-slate-500 hover:text-slate-300">{ui("全部清除")}</button>
                     )}
                   </div>
                   <div className="flex-1 overflow-y-auto">
-                    {notifications.length === 0 ? (
+                    {visibleNotifications.length === 0 ? (
                       <div className="p-8 text-center text-slate-500 text-xs">{ui("暂无通知")}</div>
                     ) : (
-                      notifications.map(n => (
+                      visibleNotifications.map(n => (
                         <div key={n.id} className={`p-3 border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer ${n.type === 'discovery' ? 'bg-emerald-500/5' : n.type === 'warning' ? 'bg-orange-500/5' : ''}`} onClick={() => clearNotification(n.id)}>
                           <div className="flex items-start gap-2">
                             <span className="text-sm">{n.type === 'discovery' ? '💡' : n.type === 'warning' ? '⚠️' : 'ℹ️'}</span>
@@ -2857,11 +2799,10 @@ ${plan.lead.duty}
             )}
           </div>
 
-          {isBackendAdmin && <button onClick={() => { setAdminInitialTab('models'); setShowAdminDashboard(true); }} className="p-2 sm:px-3 sm:py-1.5 bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-full text-[10px] font-bold hover:bg-purple-600/30"><span className="sm:inline hidden">{ui("管理员后台")}</span><span className="sm:hidden">📊</span></button>}
-          
           {/* 个人中心 */}
           <div className="relative">
             <button 
+              aria-label={ui("个人中心", "Personal center")} aria-haspopup="dialog" aria-expanded={showUserMenu}
               onClick={() => setShowUserMenu(!showUserMenu)} 
               className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
             >
@@ -2872,39 +2813,7 @@ ${plan.lead.duty}
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`text-slate-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`}><path d="m6 9 6 6 6-6"/></svg>
             </button>
             
-            {/* 下拉菜单 */}
-            {showUserMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setShowUserMenu(false); }} />
-                <div className="absolute right-0 top-full mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 z-50" onClick={e => e.stopPropagation()}>
-                  {/* 用户信息 */}
-                  <div className="px-4 py-2 border-b border-slate-700">
-                    <div className="text-sm font-medium text-white">{user.username || ui("用户")}</div>
-                    <div className="text-[10px] text-slate-500">{user.email || ''}</div>
-                  </div>
-                  
-                  {/* 菜单项 */}
-                  <button 
-                    onClick={() => { setShowProjectManager(true); setShowUserMenu(false); }} 
-                    className="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-3 transition-colors"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>{ui("项目管理")}</button>
-                  <button 
-                    onClick={() => { setShowHelpModal(true); setShowUserMenu(false); }} 
-                    className="w-full text-left px-4 py-2.5 text-xs text-slate-300 hover:bg-slate-700 flex items-center gap-3 transition-colors"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>{ui("帮助与反馈")}</button>
-                  
-                  <div className="h-px bg-slate-700 my-1" />
-                  
-                  <button 
-                    onClick={() => { auth.logout(); setUser(null); setShowUserMenu(false); }} 
-                    className="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-red-600/10 flex items-center gap-3 transition-colors"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>{ui("退出登录")}</button>
-                </div>
-              </>
-            )}
+
           </div>
         </div>
       </header>
@@ -3184,8 +3093,13 @@ ${plan.lead.duty}
       )}
 
       {/* 设置：模型接入 / IoT 设备 */}
-      {showSharedModels && <SharedModelsPanel onClose={() => setShowSharedModels(false)} />}
-      {showSettingsModal && <SettingsModal onClose={() => { setShowSettingsModal(false); try { setActiveModel(loadLLMSettings().model || ''); } catch {} }} />}
+      {showUserMenu && user && <PersonalCenter name={user.username || ui('用户', 'User')} email={user.email} pro={isPremiumUser} model={activeModel} trial={trialQuota}
+        onClose={() => setShowUserMenu(false)} onBilling={() => setShowPremiumModal(true)} onUsage={() => setShowSharedModels(true)} onSettings={() => setShowSettingsModal(true)}
+        onProjects={() => setShowProjectManager(true)} onHelp={() => setShowHelpModal(true)} onFeedback={() => { setShowFeedback(true); trackEvent('feedback_open'); }}
+        onDownload={IS_DESKTOP ? undefined : () => setShowDownloadModal(true)} onAdmin={isBackendAdmin ? () => { setAdminInitialTab('models'); setShowAdminDashboard(true); } : undefined}
+        onLogout={() => { auth.logout(); setUser(null); }} />}
+      {showSharedModels && <SharedModelsPanel personalOnly onClose={() => setShowSharedModels(false)} />}
+      {showSettingsModal && <SettingsModal theme={theme} onThemeChange={setTheme} notificationMode={notificationMode} onNotificationModeChange={setNotificationMode} onClose={() => { setShowSettingsModal(false); try { setActiveModel(loadLLMSettings().model || ''); } catch {} }} />}
 
       {showHelpModal && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowHelpModal(false)}><div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full p-10 shadow-2xl flex flex-col items-center max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}><h3 className="text-xl font-bold text-white mb-8">{ui("有问题请联系")}</h3><div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 w-full text-center mb-8"><p className="text-slate-500 text-xs mb-3 uppercase tracking-widest font-bold">{ui("联系微信号")}</p><p className="text-2xl font-mono font-bold text-blue-400 select-all tracking-wider">seabird36</p></div><MessageBoard /><button onClick={() => setShowHelpModal(false)} className="mt-6 w-full py-4 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-2xl border border-slate-700">{ui("关闭")}</button></div></div>}
 

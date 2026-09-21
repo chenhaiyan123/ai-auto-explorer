@@ -8,7 +8,7 @@ import { t as ui } from '../services/language';
 
 import { useLanguage } from '../services/language';
 import React, { useState, useEffect } from 'react';
-import BillingPanel from './BillingPanel';
+import SharedModelPicker from './SharedModelPicker';
 import {
   LLMSettings, loadLLMSettings, saveLLMSettings, testLLMConnection, PRESET_PROVIDERS,
 } from '../services/llmProvider';
@@ -22,9 +22,13 @@ import { isTrackingDisabled, setTrackingDisabled, funnelState, furthestStage, MI
 
 interface SettingsModalProps {
   onClose: () => void;
+  theme: 'dark' | 'light' | 'system';
+  onThemeChange: (value: 'dark' | 'light' | 'system') => void;
+  notificationMode: 'all' | 'important';
+  onNotificationModeChange: (value: 'all' | 'important') => void;
 }
 
-type Tab = 'llm' | 'iot' | 'billing';
+type Tab = 'general' | 'llm' | 'iot';
 
 const inputCls = 'w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500';
 const labelCls = 'text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 block';
@@ -39,9 +43,9 @@ const newDevice = (): IoTDevice => ({
   name: '', baseUrl: '', description: '', authHeader: '', actions: [newAction()], enabled: true, createdAt: Date.now(),
 });
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, theme, onThemeChange, notificationMode, onNotificationModeChange }) => {
   const { language, setLanguage, t } = useLanguage();
-  const [tab, setTab] = useState<Tab>('llm');
+  const [tab, setTab] = useState<Tab>('general');
 
   // ── LLM 状态 ──
   const [llm, setLlm] = useState<LLMSettings>(loadLLMSettings());
@@ -66,8 +70,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
   const handleTestLLM = async () => {
     setTesting(true); setTestResult(null);
-    saveLLMSettings(llm);
-    const r = await testLLMConnection();
+    const r = await testLLMConnection(llm);
     setTestResult(r);
     setTesting(false);
   };
@@ -93,18 +96,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl shadow-2xl my-auto max-h-[90vh] flex flex-col">
+      <div role="dialog" aria-modal="true" aria-label={ui("设置", "Settings")} className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl shadow-2xl my-auto max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-7 pt-6 pb-0 border-b border-slate-800">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-bold text-white flex items-center gap-2">{ui("⚙️ 设置")}</h2>
-            <button onClick={onClose} className="p-1.5 text-slate-500 hover:text-white rounded-lg hover:bg-slate-800">
+            <button aria-label={ui("关闭设置", "Close settings")} onClick={onClose} className="p-1.5 text-slate-500 hover:text-white rounded-lg hover:bg-slate-800">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
             </button>
           </div>
-          <label className="flex items-center gap-3 mb-4 text-sm text-slate-300">{t('界面语言')}<select aria-label="Language" className="bg-slate-800 rounded-lg px-3 py-2" value={language} onChange={e => setLanguage(e.target.value as 'zh-CN' | 'en')}><option value="zh-CN">简体中文</option><option value="en">English</option></select></label>
+
           <div className="flex gap-1">
-            {([['llm', '🧠 模型接入'], ['iot', '🔌 IoT 设备'], ['billing', '收费与套餐']] as [Tab, string][]).map(([t, label]) => (
+            {([['general', ui('通用', 'General')], ['llm', ui('默认模型', 'Default model')], ['iot', ui('设备与实验', 'Devices & experiments')]] as [Tab, string][]).map(([t, label]) => (
               <button key={t} onClick={() => setTab(t)}
                 className={`px-4 py-2.5 text-xs font-bold rounded-t-lg border-b-2 transition-colors ${tab === t ? 'text-blue-400 border-blue-500 bg-slate-800/50' : 'text-slate-500 border-transparent hover:text-slate-300'}`}>
                 {ui(label)}
@@ -114,11 +117,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         </div>
 
         <div className="flex-1 overflow-y-auto px-7 py-5">
-          {tab === 'billing' && <BillingPanel />}
+          {tab === 'general' && <div className="space-y-5">
+          <label className="flex items-center gap-3 mb-4 text-sm text-slate-300">{t('界面语言')}<select aria-label="Language" className="bg-slate-800 rounded-lg px-3 py-2" value={language} onChange={e => setLanguage(e.target.value as 'zh-CN' | 'en')}><option value="zh-CN">简体中文</option><option value="en">English</option></select></label>
+            <label className={labelCls}>{ui('外观', 'Appearance')}<select className={inputCls} value={theme} onChange={e => onThemeChange(e.target.value as typeof theme)}><option value="dark">{ui('深色', 'Dark')}</option><option value="light">{ui('浅色', 'Light')}</option><option value="system">{ui('跟随系统', 'System')}</option></select></label>
+            <label className={labelCls}>{ui('站内通知', 'In-app notifications')}<select className={inputCls} value={notificationMode} onChange={e => onNotificationModeChange(e.target.value as typeof notificationMode)}><option value="all">{ui('显示全部', 'Show all')}</option><option value="important">{ui('仅发现与警告', 'Discoveries and warnings only')}</option></select></label>
+            <p className="text-xs text-slate-400">{ui('这里只调整站内通知的显示；每个问题的唤醒条件在项目内设置。', 'This controls in-app notification display. Configure wake-up conditions within each project.')}</p>
+          </div>}
           {/* ════ Tab: 模型接入 ════ */}
           {tab === 'llm' && (
             <div className="space-y-4">
-              <p className="text-xs text-slate-500 leading-relaxed">{ui("所有 AI 功能（探索、评估、对话）通过这里配置的 API 调用。支持")}<b className="text-slate-300">{ui("本地模型")}</b>{ui("（Ollama / LM Studio / vLLM）或任何 OpenAI 兼容的云端 API，数据仅保存在你的浏览器。")}</p>
+              <p className="text-xs text-slate-400 leading-relaxed">{ui('配置个人默认模型。项目中已单独配置的 AI 团队保持各自的模型设置；自有 API Key 仅保存在当前浏览器。', 'Set your personal default model. Agents with their own model assignments keep them. Your own API key is stored in this browser.')}</p>
+              <label className={labelCls}>{ui('接入方式', 'Model source')}<select value={llm.provider} onChange={e => { setLlm({ provider: e.target.value as LLMSettings['provider'], baseUrl: '', apiKey: '', model: '' }); setTestResult(null); }} className={inputCls}>
+                <option value="platform">{ui('平台共享模型（无需填写 Key）', 'Platform models (no API key needed)')}</option>
+                <option value="openai-compatible">{ui('自己的 API / 本地模型', 'Your API / local models')}</option>
+                <option value="cloud-proxy">{ui('自部署云端代理', 'Your cloud proxy')}</option>
+                {llm.provider === 'trial' && <option value="trial">{ui('免配置体验', 'Trial')}</option>}
+                {llm.provider === 'openai' && <option value="openai">OpenAI</option>}
+                {llm.provider === 'anthropic' && <option value="anthropic">Claude</option>}
+              </select></label>
+              {llm.provider === 'platform' ? <SharedModelPicker value={llm.model} onChange={model => { setLlm({ ...llm, model }); setTestResult(null); }} /> : <>
+
 
               {/* 快速预设 */}
               <div>
@@ -126,7 +144,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 <div className="flex flex-wrap gap-2">
                   {PRESET_PROVIDERS.map(p => (
                     <button key={ui(p.label)} title={p.hint}
-                      onClick={() => { setLlm({ provider: 'openai-compatible', baseUrl: p.baseUrl, apiKey: llm.apiKey, model: p.model }); setTestResult(null); }}
+                      onClick={() => { setLlm({ provider: 'openai-compatible', baseUrl: p.baseUrl, apiKey: llm.baseUrl === p.baseUrl ? llm.apiKey : '', model: p.model }); setTestResult(null); }}
                       className={`px-3 py-1.5 text-[11px] font-medium rounded-full border transition-colors ${llm.baseUrl === p.baseUrl ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500'}`}>
                       {ui(p.label)}
                     </button>
@@ -134,13 +152,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               </div>
 
-              <div>
-                <label className={labelCls}>{ui("接入方式")}</label>
-                <select value={llm.provider} onChange={e => setLlm({ ...llm, provider: e.target.value as any })} className={inputCls}>
-                  <option value="openai-compatible">{ui("OpenAI 兼容 API（本地或云端，推荐）")}</option>
-                  <option value="cloud-proxy">{ui("云端代理（自部署函数计算，Key 不进浏览器）")}</option>
-                </select>
-              </div>
 
               <div>
                 <label className={labelCls}>{llm.provider === 'cloud-proxy' ? ui("代理地址") : 'API Base URL'}</label>
@@ -149,7 +160,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   className={inputCls} />
               </div>
 
-              {llm.provider === 'openai-compatible' && (
+              {['openai-compatible', 'openai', 'anthropic'].includes(llm.provider) && (
                 <div>
                   <label className={labelCls}>{ui("API Key（本地模型可留空）")}</label>
                   <input type="password" value={llm.apiKey} onChange={e => setLlm({ ...llm, apiKey: e.target.value })}
@@ -163,16 +174,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   placeholder="qwen2.5:7b / llama3.1 / qwen-turbo ..." className={inputCls} />
               </div>
 
+              </>}
               {testResult && (
                 <p className={`text-xs ${testResult.ok ? 'text-emerald-400' : 'text-red-400'}`}>{testResult.message}</p>
               )}
 
               <div className="flex gap-3 pt-2">
-                <button onClick={handleTestLLM} disabled={testing || !llm.baseUrl}
+                <button onClick={handleTestLLM} disabled={testing || !llm.model || (llm.provider !== 'platform' && !llm.baseUrl)}
                   className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-sm font-bold disabled:opacity-50">
                   {testing ? ui("测试中...") : ui("测试连接")}
                 </button>
-                <button onClick={handleSaveLLM} disabled={!llm.baseUrl}
+                <button onClick={handleSaveLLM} disabled={!llm.model || (llm.provider !== 'platform' && !llm.baseUrl)}
                   className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-bold disabled:opacity-50">
                   {saved ? ui("✅ 已保存") : ui("保存设置")}
                 </button>
@@ -181,7 +193,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           )}
 
           {/* 统计：把自己从数据里剔掉。分母只有几十的时候，自己刷十次就把结论毁了 */}
-          {tab === 'llm' && (
+          {tab === 'general' && (
             <div className="mt-4 border border-slate-800 rounded-xl px-3 py-3 space-y-2">
               <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
                 <input type="checkbox" defaultChecked={isTrackingDisabled()}
@@ -192,7 +204,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           )}
 
           {/* 手机端「现实反馈」App：把配对码和入口摆出来 */}
-          {tab === 'llm' && hasSyncBackend() && (
+          {tab === 'general' && hasSyncBackend() && (
             <div className="mt-4 border border-slate-800 rounded-xl px-3 py-3 space-y-2">
               <div className="text-[11px] font-bold text-blue-300">{ui("📱 手机端 · 现实反馈")}</div>
               <div className="text-[10px] text-slate-500 leading-relaxed">{ui("探索卡在路标、或有设备写操作等确认时，会推到手机上让你当场回答。 手机浏览器打开本站")}<span className="text-slate-300">/#/m</span>{ui("，用 Safari/Chrome 的「添加到主屏幕」装成 App。")}</div>
@@ -205,7 +217,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           )}
 
           {/* 客服按钮找回入口：ChatLauncher 上的 ✕ 是持久关闭，这里是唯一的还原口 */}
-          {tab === 'llm' && isChatEnabled() && isChatDismissed() && (
+          {tab === 'general' && isChatEnabled() && isChatDismissed() && (
             <div className="mt-4 flex items-center gap-3 border border-slate-800 rounded-xl px-3 py-2.5">
               <span className="text-[11px] text-slate-400 flex-1">{ui("客服按钮已被你关闭")}</span>
               <button onClick={() => { setChatDismissed(false); onClose(); }}
