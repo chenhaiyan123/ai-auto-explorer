@@ -8,6 +8,7 @@ import { t as ui } from '../services/language';
 
 import { useLanguage } from '../services/language';
 import React, { useState, useEffect } from 'react';
+import BillingPanel from './BillingPanel';
 import {
   LLMSettings, loadLLMSettings, saveLLMSettings, testLLMConnection, PRESET_PROVIDERS,
 } from '../services/llmProvider';
@@ -23,7 +24,7 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-type Tab = 'llm' | 'iot';
+type Tab = 'llm' | 'iot' | 'billing';
 
 const inputCls = 'w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500';
 const labelCls = 'text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1 block';
@@ -103,7 +104,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           </div>
           <label className="flex items-center gap-3 mb-4 text-sm text-slate-300">{t('界面语言')}<select aria-label="Language" className="bg-slate-800 rounded-lg px-3 py-2" value={language} onChange={e => setLanguage(e.target.value as 'zh-CN' | 'en')}><option value="zh-CN">简体中文</option><option value="en">English</option></select></label>
           <div className="flex gap-1">
-            {([['llm', '🧠 模型接入'], ['iot', '🔌 IoT 设备']] as [Tab, string][]).map(([t, label]) => (
+            {([['llm', '🧠 模型接入'], ['iot', '🔌 IoT 设备'], ['billing', '收费与套餐']] as [Tab, string][]).map(([t, label]) => (
               <button key={t} onClick={() => setTab(t)}
                 className={`px-4 py-2.5 text-xs font-bold rounded-t-lg border-b-2 transition-colors ${tab === t ? 'text-blue-400 border-blue-500 bg-slate-800/50' : 'text-slate-500 border-transparent hover:text-slate-300'}`}>
                 {ui(label)}
@@ -113,6 +114,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         </div>
 
         <div className="flex-1 overflow-y-auto px-7 py-5">
+          {tab === 'billing' && <BillingPanel />}
           {/* ════ Tab: 模型接入 ════ */}
           {tab === 'llm' && (
             <div className="space-y-4">

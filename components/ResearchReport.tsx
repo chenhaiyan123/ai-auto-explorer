@@ -6,6 +6,7 @@
  */
 
 import React, { useState } from 'react';
+import ReportExport from './ReportExport';
 
 interface ResearchReportProps {
   report: {
@@ -212,6 +213,7 @@ const ResearchReport: React.FC<ResearchReportProps> = ({
             >
               📋 复制文本
             </button>
+            <ReportExport report={report} />
             {onExport && (
               <button
                 onClick={onExport}

@@ -504,5 +504,7 @@ Object.assign(EN_UI, {
   "团队成员 (": "Team members (",
   "任务队列 (": "Task queue (",
   "工作日志": "Work log",
-  "团队成果": "Team output"
+  "团队成果": "Team output",
+  "收费与套餐": "Plans & billing",
+  "支付订单": "Payment orders"
 });

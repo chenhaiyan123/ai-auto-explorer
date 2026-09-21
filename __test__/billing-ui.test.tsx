@@ -1,0 +1,26 @@
+import React from 'react';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { renderToStaticMarkup } from 'react-dom/server';
+import BillingPanel from '../components/BillingPanel';
+import { safeCheckoutUrl, safeWechatCodeUrl } from '../services/billingClient';
+import QRCode from 'qrcode';
+import { exportFiles } from '../services/researchExport';
+import { zipStore } from '../services/vault';
+
+const html = renderToStaticMarkup(<BillingPanel />);
+assert.ok(html.includes('<table')); assert.ok(html.includes('Free')); assert.ok(html.includes('Pro'));
+assert.ok(html.includes('69')); assert.ok(html.includes('3.99')); assert.ok(html.includes('Pro 暂未开放购买'));
+assert.ok(!html.includes('19.9')); assert.ok(!html.includes('模拟购买成功'));
+for (const bad of ['javascript:alert(1)', 'https://evil.test/gateway.do?method=alipay.trade.page.pay', 'https://openapi.alipay.com.evil.test/gateway.do?method=alipay.trade.page.pay', 'https://user:password@openapi.alipay.com/gateway.do?method=alipay.trade.page.pay', 'http://openapi.alipay.com/gateway.do?method=alipay.trade.page.pay']) assert.equal(safeCheckoutUrl(bad), undefined);
+assert.ok(safeCheckoutUrl('https://openapi.alipay.com/gateway.do?method=alipay.trade.page.pay'));
+assert.equal(safeWechatCodeUrl('weixin://wxpay/bizpayurl?pr=TEST123'), 'weixin://wxpay/bizpayurl?pr=TEST123');
+for (const value of ['https://example.test', 'weixin://evil/bizpayurl?pr=TEST123', 'weixin://wxpay/bizpayurl?pr=<script>']) assert.equal(safeWechatCodeUrl(value), undefined);
+assert.ok((await QRCode.toDataURL('weixin://wxpay/bizpayurl?pr=TEST123', { width: 256 })).startsWith('data:image/png;base64,'));
+const report = { title: '<script>bad()</script>', abstract: '例子', sections: [{ title: '<img onerror=bad()>', content: '"<&' }], conclusions: ['判断待确认'], openQuestions: ['未知'], references: ['https://example.test/?a=1&b=2'] };
+const files = exportFiles({ version: 1, title: report.title, report, contentHash: 'abcd', createdAt: 0, notice: '<script>bad()</script>' });
+assert.equal(files.length, 4); assert.ok(!files[0].content.includes('<script>')); assert.ok(!files[0].content.includes('<img'));
+assert.ok(files[0].content.includes('&lt;script&gt;')); assert.ok(files[1].content.includes('References'));
+assert.deepEqual(JSON.parse(files[2].content).report, report);
+await fs.writeFile('/tmp/hiexplore-billing-export-test.zip', Buffer.from(await zipStore(files).arrayBuffer()));
+console.log('Billing UI: pricing preview, checkout URL restrictions, safe export rendering and ZIP creation passed.');

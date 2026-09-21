@@ -30,6 +30,7 @@ jobs:
           # VITE_AUTH_API = https://api.hiexplore.com （不设则保持免登录）
           VITE_AUTH_API: ${{ vars.VITE_AUTH_API }}
           VITE_WAKE_API: ${{ vars.VITE_WAKE_API }}
+          VITE_BILLING_API: ${{ vars.VITE_BILLING_API }}
           # 流量统计（Umami）：不设则不启用
           VITE_UMAMI_WEBSITE_ID: ${{ vars.VITE_UMAMI_WEBSITE_ID }}
           VITE_UMAMI_SRC: ${{ vars.VITE_UMAMI_SRC }}

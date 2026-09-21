@@ -11,3 +11,8 @@ android
 ios
 Attachments
 *.log
+*.pem
+*.key
+*.p12
+.preview
+promo

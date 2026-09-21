@@ -1,0 +1,67 @@
+# Fresh single-host deployment. Do not run alongside another worker using this ledger.
+name: hiexplore-payments
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: server/Wake.Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 5m
+    env_file: .env.wake
+    expose:
+      - "8790"
+    volumes:
+      - payment-data:/data
+      - type: bind
+        source: ${PAYMENT_SECRETS_DIR:?Set PAYMENT_SECRETS_DIR}
+        target: /run/secrets
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${WECHAT_PLATFORM_DIR:?Set WECHAT_PLATFORM_DIR}
+        target: /run/wechat-platform
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  https:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      PAYMENT_DOMAIN: ${PAYMENT_DOMAIN:?Set PAYMENT_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/payments/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  payment-data:
+  caddy-data:
+  caddy-config:

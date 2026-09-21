@@ -1,0 +1,6 @@
+{
+  "currency": "CNY",
+  "free": { "name": "Free", "amount": 0, "problems": 3, "researchRuns": 10 },
+  "pro": { "name": "Pro", "amount": 6900, "problems": 10, "researchRuns": 100 },
+  "export": { "amount": 399 }
+}

@@ -1,5 +1,7 @@
 import { useLanguage, t as ui } from './services/language';
 import SharedModelsPanel from './components/SharedModelsPanel';
+import { BillingModal } from './components/BillingPanel';
+import { billingRequest, BILLING_CHANGED, BILLING_API, BillingAccount } from './services/billingClient';
 import AdminDashboard from './components/AdminDashboard';
 import { sharedRequest, SHARED_API } from './services/sharedModelsClient';
 import RouteMap from './components/RouteMap';
@@ -941,9 +943,8 @@ const App: React.FC = () => {
   const [notifications, setNotifications] = useState<Array<{id: string, type: 'discovery' | 'warning' | 'info', title: string, message: string, time: number}>>([]);
   const [showNotificationPanel, setShowNotificationPanel] = useState(false);
   
-  // 会员与7x24探索
+  // 服务端核验的会员状态与收费入口
   const [isPremiumUser, setIsPremiumUser] = useState(false);
-  const [is24x7ExplorationEnabled, setIs24x7ExplorationEnabled] = useState(false);
   const [showPremiumModal, setShowPremiumModal] = useState(false);
   
   // AI管家聊天记录（持久化到项目中）
@@ -986,31 +987,23 @@ const App: React.FC = () => {
   const anchorPromptedRef = useRef<string | null>(null);   // 同一个锚点只提醒一次
   const settleAnchorRef = useRef<((id: string, v: 'pass' | 'fail' | 'unclear', s: string, o?: 'human' | 'probe') => void) | null>(null);
 
-  // 加载会员状态
+  // Membership is server-authoritative; legacy localStorage purchases grant no access.
   useEffect(() => {
-    if (user) {
-      const premiumKey = `premium_${user.username}`;
-      const premium = localStorage.getItem(premiumKey);
-      if (premium) {
-        const data = JSON.parse(premium);
-        if (data.expireAt > Date.now()) {
-          setIsPremiumUser(true);
-          setIs24x7ExplorationEnabled(data.is24x7Enabled || false);
-        }
-      }
-    }
-  }, [user]);
-
-  // 页面关闭时停止探索（非会员）
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (isLooping && !is24x7ExplorationEnabled) {
-        setIsLooping(false);
-      }
+    let active = true;
+    setIsPremiumUser(false);
+    const refresh = async () => {
+      if (!user || !BILLING_API) return;
+      try {
+        const account = await billingRequest<BillingAccount>('/billing/account');
+        if (active) setIsPremiumUser(account.plan === 'pro' && account.proUntil > Date.now());
+      } catch { if (active) setIsPremiumUser(false); }
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isLooping, is24x7ExplorationEnabled]);
+    void refresh();
+    const timer = window.setInterval(refresh, 60000);
+    window.addEventListener(BILLING_CHANGED, refresh);
+    window.addEventListener('focus', refresh);
+    return () => { active = false; clearInterval(timer); window.removeEventListener(BILLING_CHANGED, refresh); window.removeEventListener('focus', refresh); };
+  }, [user]);
 
   // 添加通知的函数
   const addNotification = useCallback((type: 'discovery' | 'warning' | 'info', title: string, message: string) => {
@@ -2729,18 +2722,9 @@ ${plan.lead.duty}
           <button onClick={() => setShowMetaModal(true)} className="hidden sm:block p-2 text-slate-400 hover:text-blue-400"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5v14"/></svg></button>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-3">
-          {/* 7x24会员按钮 */}
-          {!isPremiumUser && (
-            <button 
-              onClick={() => setShowPremiumModal(true)} 
-              className="hidden sm:flex px-2.5 py-1.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-400 border border-amber-500/30 rounded-full text-[10px] font-bold hover:from-amber-500/30 hover:to-orange-500/30 items-center gap-1.5 transition-all"
-            >
-              <span>👑</span>{ui("7×24探索")}</button>
-          )}
-          {isPremiumUser && (
-            <div className="hidden sm:flex px-2.5 py-1.5 bg-gradient-to-r from-amber-600/20 to-orange-600/20 text-amber-400 border border-amber-500/30 rounded-full text-[10px] font-bold items-center gap-1.5">
-              <span>👑</span>{ui("会员")}</div>
-          )}
+          <button onClick={() => setShowPremiumModal(true)} className="hidden sm:flex px-2.5 py-1.5 bg-blue-500/10 text-blue-300 border border-blue-500/30 rounded-full text-[10px] font-bold hover:bg-blue-500/20 items-center gap-1.5">
+            {isPremiumUser ? 'Pro' : ui('收费与套餐', 'Plans & billing')}
+          </button>
 
           {/* 当前模型：一眼确认用的是哪个模型，点击打开设置 */}
           <button
@@ -3294,76 +3278,7 @@ ${plan.lead.duty}
       {pendingIntent && <IntentConfirmModal analysis={pendingIntent.analysis} onConfirm={(mode, analysis) => createProjectWithMode(pendingIntent.input, mode, analysis)} onCancel={() => { setPendingIntent(null); setShowMetaModal(true); }} />}
       {researchReport && <ResearchReport report={researchReport} onClose={() => setResearchReport(null)} />}
 
-      {/* 会员购买弹窗 */}
-      {showPremiumModal && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={() => setShowPremiumModal(false)}>
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-8 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl mx-auto flex items-center justify-center text-3xl mb-4 shadow-xl">👑</div>
-              <h3 className="text-xl font-bold text-white">{ui("7×24 长期探索会员")}</h3>
-              <p className="text-slate-400 text-sm mt-2">{ui("解锁后台持续探索能力")}</p>
-            </div>
-            
-            <div className="bg-slate-800/50 rounded-2xl p-5 mb-6 border border-slate-700">
-              <div className="flex items-baseline justify-center gap-1 mb-4">
-                <span className="text-4xl font-bold text-amber-400">¥19.9</span>
-                <span className="text-slate-500">{ui("/月")}</span>
-              </div>
-              
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 text-sm">
-                  <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">{ui("关闭网页后继续探索")}</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm">
-                  <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">{ui("7×24小时后台自动运行")}</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm">
-                  <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">{ui("重要发现微信/邮件提醒")}</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm">
-                  <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">{ui("无限探索项目数量")}</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm">
-                  <span className="text-emerald-400">✓</span>
-                  <span className="text-slate-300">{ui("优先使用新功能")}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-3 mb-6">
-              <div className="text-[11px] text-orange-400 text-center">{ui("💡 普通用户每天可探索1个项目，关闭网页即停止")}</div>
-            </div>
-
-            <div className="space-y-3">
-              <button 
-                onClick={() => {
-                  // 模拟购买成功
-                  const premiumKey = `premium_${user?.username}`;
-                  localStorage.setItem(premiumKey, JSON.stringify({
-                    expireAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-                    is24x7Enabled: true
-                  }));
-                  setIsPremiumUser(true);
-                  setIs24x7ExplorationEnabled(true);
-                  setShowPremiumModal(false);
-                  addNotification('info', '🎉 开通成功', '您已成为7×24探索会员！');
-                }}
-                className="w-full py-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white font-bold rounded-xl transition-all shadow-lg"
-              >{ui("立即开通")}</button>
-              <button 
-                onClick={() => setShowPremiumModal(false)}
-                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-400 font-medium rounded-xl transition-colors"
-              >{ui("稍后再说")}</button>
-            </div>
-            
-            <p className="text-[10px] text-slate-600 text-center mt-4">{ui("开通即表示同意《会员服务协议》")}</p>
-          </div>
-        </div>
-      )}
+      {showPremiumModal && <BillingModal onClose={() => setShowPremiumModal(false)} />}
     </div>
   );
 };

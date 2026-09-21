@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { SharedModels } from './shared-models.mjs';
+import { createBilling } from './billing.mjs';
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
 import { createAwakening, enqueueWake, heartbeatAction, configureAwakening, recoverAwakening, runWake, buildModelRequest, parseModelResponse } from './.wake-build/runner.mjs';
 const ROLES = ['manager', 'thinker', 'executor', 'verifier', 'auditor'];
@@ -68,6 +69,7 @@ export async function createWakeServer(options = {}) {
   const allowedOrigins = new Set((env.WAKE_ALLOWED_ORIGINS || 'https://www.hiexplore.com,http://127.0.0.1:3000,http://localhost:3000').split(',').map(x => x.trim()));
   const allowedModels = new Set((env.WAKE_MODEL_HOSTS || 'api.openai.com,api.anthropic.com,api.deepseek.com,generativelanguage.googleapis.com,dashscope.aliyuncs.com,open.bigmodel.cn,ark.cn-beijing.volces.com,api.moonshot.cn,api.x.ai').split(',').map(x => x.trim()));
   const storage = new WakeStorage(path.resolve(env.WAKE_DATA_DIR || './wake-data'), masterKey); await storage.initialize();
+  const billing = await createBilling(storage, env, externalFetch, options.paymentProviders);
   if (claimedDirectories.has(storage.dir)) throw new Error('此数据目录已有执行器运行');
   // This deployment supports one process with a persistent volume. Never silently share a local file store across replicas.
   const lockFile = path.join(storage.dir, '.worker-lock');
@@ -156,9 +158,44 @@ export async function createWakeServer(options = {}) {
     const send = (status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
     const url = new URL(req.url, 'http://wake');
     if (url.pathname === '/health') { send(200, { service: 'hiexplore-wake', version: 1, persistent: true, testMode, now: Date.now() }); return; }
+    if (req.method === 'GET' && url.pathname === '/billing/catalog') { send(200, billing.catalog()); return; }
+    if (req.method === 'POST' && url.pathname === '/billing/notify/alipay') {
+      try {
+        if (!String(req.headers['content-type'] || '').startsWith('application/x-www-form-urlencoded')) throw new Error('通知类型错误');
+        const chunks = []; let size = 0;
+        for await (const chunk of req) { size += chunk.length; if (size > 100000) throw new Error('通知过大'); chunks.push(chunk); }
+        await billing.notify('alipay', Buffer.concat(chunks).toString('utf8'));
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('success');
+      } catch { res.writeHead(400, { 'Content-Type': 'text/plain' }); res.end('failure'); }
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/billing/notify/wechat') {
+      try {
+        if (!String(req.headers['content-type'] || '').startsWith('application/json')) throw new Error('通知类型错误');
+        const chunks = []; let size = 0;
+        for await (const chunk of req) { size += chunk.length; if (size > 100000) throw new Error('通知过大'); chunks.push(chunk); }
+        await billing.notify('wechat', Buffer.concat(chunks).toString('utf8'), req.headers);
+        res.writeHead(204); res.end();
+      } catch { send(400, { code: 'FAIL', message: '通知未通过核验，请重试' }); }
+      return;
+    }
     let owner;
     try { owner = await authenticate(req); } catch (e) { send(401, { error: e.message }); return; }
     try {
+      if (url.pathname.startsWith('/billing/') || url.pathname === '/admin/billing') {
+        if (url.pathname === '/admin/billing') {
+          if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
+          if (req.method === 'GET') { send(200, await billing.adminView()); return; }
+        }
+        if (req.method === 'GET' && url.pathname === '/billing/account') { send(200, await billing.view(owner)); return; }
+        const orderMatch = url.pathname.match(/^\/billing\/orders\/(HE[a-f0-9]{30})$/);
+        if (orderMatch && ['GET', 'POST'].includes(req.method)) { send(200, await billing.getOrder(owner, orderMatch[1], req.method === 'POST')); return; }
+        if (req.method === 'POST' && url.pathname === '/billing/orders') { send(200, await billing.createOrder(owner, await readBody(req))); return; }
+        if (req.method === 'POST' && url.pathname === '/billing/artifacts') { send(200, await billing.saveArtifact(owner, await readBody(req))); return; }
+        const artifactMatch = url.pathname.match(/^\/billing\/artifacts\/([a-f0-9]{64})\/download$/);
+        if (req.method === 'POST' && artifactMatch) { send(200, await billing.download(owner, artifactMatch[1])); return; }
+        send(404, { error: '支付接口不存在' }); return;
+      }
       if (url.pathname.startsWith('/shared/') || url.pathname.startsWith('/admin/shared')) {
         const isAdmin = admins.has(owner);
         if (url.pathname.startsWith('/admin/') && !isAdmin) { send(403, { error: '需要后台授权的管理员身份' }); return; }
