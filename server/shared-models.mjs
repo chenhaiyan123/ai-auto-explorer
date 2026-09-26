@@ -61,6 +61,20 @@ export class SharedModels {
       s.models[body.id] = model; return { model: publicModel(model) };
     });
   }
+  async starter(owner, modelId, tokens, pool) {
+    return this.transaction(s => {
+      const m = s.models[modelId];
+      if (!m?.enabled || !m.apiKey) throw fail('所选模型未开放');
+      const key = accountKey(owner);
+      if (s.starters?.[key] || Object.values(s.accounts[key]?.balances || {}).some(b => b.granted > 0) || !tokens) return;
+      const issued = Object.values(s.starters || {}).reduce((sum, n) => sum + n, 0);
+      if (issued + tokens > pool) throw fail('后台探索体验额度已领完，请使用已有额度或自有 API', 402);
+      s.starters ||= {}; s.starters[key] = tokens;
+      const account = s.accounts[key] ||= { owner, balances: {} };
+      account.balances[modelId] = { granted: tokens, available: tokens, spent: 0, held: 0 };
+      s.grants.push({ id: `starter:${key}`, owner, modelId, tokens, note: '长期关注一次性体验额度', at: Date.now(), type: 'starter' });
+    });
+  }
   async grant(admin, body) {
     if (!idOK(body.requestId) || typeof body.owner !== 'string' || !body.owner.trim() || body.owner.length > 200 || typeof body.note !== 'string' || !body.note.trim() || body.note.length > 500) throw fail('请填写用户登录邮箱、分配备注和操作标识');
     const tokens = int(body.tokens, 1, 1e9, '增加的 Token'); const owner = body.owner.trim();

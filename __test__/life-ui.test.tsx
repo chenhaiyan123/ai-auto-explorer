@@ -1,0 +1,15 @@
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import assert from 'node:assert/strict';
+import ProblemHeartbeatPanel from '../components/ProblemHeartbeatPanel';
+import ResearchActivation from '../components/ResearchActivation';
+import { createAwakening } from '../services/awakening';
+import { recordJudgments } from '../services/problemHeartbeat';
+const context = { projectId: 'p', branchId: 'main', scopeId: 'root', question: '房间降温', background: '', agents: {}, facts: [{ id: 'f', claim: '实测温度数据', source: 'https://example.test', excerpt: 'data', scope: 'room', status: 'confirmed' }] };
+const state = recordJudgments(createAwakening(context), [{ subject: '遮阳', after: '值得实验', reason: '依据实测数据', evidenceIds: ['f'] }], 'r', Date.now(), () => 'j');
+const html = renderToStaticMarkup(<ProblemHeartbeatPanel state={state} busy={false} act={async () => true} />);
+assert.match(html, /后台研究已暂停/); assert.match(html, /原判断/); assert.match(html, /实测温度数据/); assert.match(html, /待审核/);
+assert.ok(!html.includes('尚不发送邮件'));
+const activation = renderToStaticMarkup(<ResearchActivation busy={false} starterTokens={30000} mailReady={false} recipient="" onStart={async () => true} onAdvanced={() => {}} />);
+assert.match(activation, /让它替我持续关注/); assert.match(activation, /关闭电脑/);
+console.log('Life UI: paused state is honest, activation entry is visible, evidence-backed changes remain provisional.');

@@ -27,7 +27,7 @@ export async function runWake(rt: WakeRuntime): Promise<void> {
         let next = s; for (const event of events) next = enqueueWake(next, event);
         const changed = next.events.length > s.events.length;
         const quietChecks = changed ? 0 : s.quietChecks + 1;
-        return { ...next, checks: s.checks + 1, quietChecks, nextCheckAt: now + s.policy.checkEveryHours * Math.min(3, 1 + Math.floor(quietChecks / 3)) * 3600000, updatedAt: now };
+        return { ...next, checks: s.checks + 1, lastCheckedAt: rt.now(), quietChecks, nextCheckAt: now + s.policy.checkEveryHours * Math.min(3, 1 + Math.floor(quietChecks / 3)) * 3600000, updatedAt: now };
       });
     }
     if (!state.policy.enabled) return;
@@ -67,8 +67,10 @@ export async function runWake(rt: WakeRuntime): Promise<void> {
         return { ...updated, activeRunId: undefined, status: needsHuman(h) ? 'needs_user' : 'sleeping', reason: next, updatedAt: rt.now(), events: s.events.map(e => pending.some(p => p.id === e.id) ? { ...e, status: 'consumed', runId } : e), runs: s.runs.map(r => r.id === runId ? { ...r, outcome, summary, next, findings, completedAt: rt.now() } : r) };
       });
     };
-    const plan = await call('manager', '判断是否值得唤醒并制定有限任务', '返回 {"decision":"research|wait","reason":"为何值得做或为何等待","task":"最小可执行分析任务","role":"thinker|executor","stopCondition":"停止条件"}。无关、重复信息应 wait；研究必须有实质不同的预期产出。需要人提供数据或授权时 decision 必须为 wait，另返回 waits:[{kind:"data|observation|decision|permission",title:"等待事项",detail:"具体缺什么或需投入什么",owner:"负责人",source:"来源",condition:"满足什么条件后再研究"}]；无关材料不得创建人为待办。等待清单中已有事项不要重复创建，waits 默认为 []。research 时不要把后续实验的数据需求误写为当前阻塞；这类未来需求交给最终审计者记录。observation 可提供 trigger:{type:"source_match",sourceHost:"来源确切主机名",keywords:["关键词"]}，系统只对该主机与全部关键词均匹配的材料自动标记到达；没有采集器时不能承诺自动获取。其他等待仅用户回复能满足。', context);
+    const plan = await call('manager', '判断是否值得唤醒并制定有限任务', '同时返回 hypothesis（一个可证伪假设，明确尚未验证）和 missingEvidence（缺少什么证据）；不确定就写明未知。返回 {"decision":"research|wait","reason":"为何值得做或为何等待","task":"最小可执行分析任务","role":"thinker|executor","stopCondition":"停止条件"}。无关、重复信息应 wait；研究必须有实质不同的预期产出。需要人提供数据或授权时 decision 必须为 wait，另返回 waits:[{kind:"data|observation|decision|permission",title:"等待事项",detail:"具体缺什么或需投入什么",owner:"负责人",source:"来源",condition:"满足什么条件后再研究"}]；无关材料不得创建人为待办。等待清单中已有事项不要重复创建，waits 默认为 []。research 时不要把后续实验的数据需求误写为当前阻塞；这类未来需求交给最终审计者记录。observation 可提供 trigger:{type:"source_match",sourceHost:"来源确切主机名",keywords:["关键词"]}，系统只对该主机与全部关键词均匹配的材料自动标记到达；没有采集器时不能承诺自动获取。其他等待仅用户回复能满足。', context);
     const reason = text(plan.reason, 'reason');
+    const short = (v: unknown) => typeof v === 'string' ? v.trim().slice(0, 1500) : '';
+    await rt.update(s => ({ ...s, runs: s.runs.map(r => r.id === runId ? { ...r, plan: { decision: short(plan.decision), reason, task: short(plan.task), stopCondition: short(plan.stopCondition), hypothesis: short(plan.hypothesis), missingEvidence: short(plan.missingEvidence) } } : r) }));
     if (plan.decision === 'wait' || (Array.isArray(plan.waits) && plan.waits.some((w: any) => ['decision', 'permission'].includes(w.kind)))) { await finish('waiting', reason, state.context.language === 'en' ? 'Waiting for relevant evidence; scheduled checks continue.' : '等待新的相关材料；周期检查仍会继续', [], plan.waits); return; }
     if (plan.decision !== 'research' || !['thinker', 'executor'].includes(plan.role)) throw new Error('项目经理返回了不支持的研究任务');
     text(plan.task, 'task'); text(plan.stopCondition, 'stopCondition');

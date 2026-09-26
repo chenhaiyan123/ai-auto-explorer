@@ -15,8 +15,8 @@ export default function ProblemHeartbeatPanel({ state, act, busy }: { state: Awa
   const reply = async (decision: string) => { if (!await act({ action: 'reply', id: selected!.id, answer, source, decision })) return; setSelected(undefined); setAnswer(''); setSource(''); };
   return <div className="space-y-4" aria-label="Problem heartbeat">
     <div className="rounded-xl bg-slate-950/60 border border-slate-700 p-4 space-y-3">
-      <div className="flex flex-wrap justify-between gap-2"><h4 className="font-semibold text-sm">{t('问题心跳', 'Problem heartbeat')}</h4><span className="text-xs text-blue-300">{life[h.lifecycle]}</span></div>
-      <p className="text-sm text-slate-300">{unread.length ? t('有值得查看的变化或待办', 'There are updates or decisions worth your attention') : t('暂无新的重要提醒，继续安静观察。', 'Nothing important to interrupt you with. Quietly watching.')}</p>
+      <div className="flex flex-wrap justify-between gap-2"><h4 className="font-semibold text-sm">{t('问题心跳', 'Problem heartbeat')}</h4><span className="text-xs text-blue-300">{state.policy.enabled ? life[h.lifecycle] : t('后台已暂停', 'Cloud research paused')}</span></div>
+      <p className="text-sm text-slate-300">{!state.policy.enabled ? t('后台研究已暂停；已有记录仍然保留。', 'Cloud research is paused. Existing records are preserved.') : unread.length ? t('有值得查看的变化或待办', 'There are updates or decisions worth your attention') : state.policy.enabled ? t('暂无新的重要提醒，按计划等待或观察。', 'No important updates. Waiting or watching as scheduled.') : t('后台研究已暂停；已有记录仍然保留。', 'Cloud research is paused. Existing records are preserved.')}</p>
       <p className="text-xs text-slate-500">{t('距上次采纳判断', 'Since the last accepted judgment')}: {days} {t('天', 'days')} · {t('未读', 'Unread')}: {unread.length}</p>
       <div className="flex flex-wrap gap-2">
         {h.lifecycle !== 'resolved' && <button className={button} disabled={busy} onClick={() => act({ action: 'lifecycle', lifecycle: h.lifecycle === 'dormant' ? 'watching' : 'dormant' })}>{h.lifecycle === 'dormant' ? t('重新关注', 'Reactivate') : t('让问题休眠', 'Let it rest')}</button>}
@@ -28,6 +28,14 @@ export default function ProblemHeartbeatPanel({ state, act, busy }: { state: Awa
       {!unread.length && <p className="text-xs text-slate-500">{t('无变化的检查不会生成一条新提醒。', 'Unchanged checks do not create new notifications.')}</p>}
       {unread.slice(-20).reverse().map(u => <article key={u.id} className={`rounded-lg border p-3 space-y-1 ${u.level === 'now' ? 'border-amber-600/60 bg-amber-950/20' : 'border-blue-800/60 bg-blue-950/20'}`}>
         <p className="text-[11px] text-slate-400">{u.level === 'now' ? t('需要你', 'Needs you') : t('重要更新', 'Meaningful update')} · {displayDate(u.createdAt)}</p><h5 className="text-sm font-semibold">{u.title}</h5><p className="text-sm text-slate-300">{u.body}</p><p className="text-xs text-slate-400">{u.reason}</p>
+        {u.category === 'knowledge' && (() => { const j = h.judgments.find(j => j.id === u.targetId); if (!j) return null;
+          return <div className="mt-2 space-y-1 text-xs border-t border-slate-700 pt-2">
+            <p>{t('原判断 →', 'Before →')} {j.before || t('尚无已采纳判断', 'No accepted judgment yet')}</p>
+            <p>{t('当前判断 →', 'Now →')} {j.after} · {j.status === 'accepted' ? t('已采纳', 'Accepted') : t('待审核', 'Needs review')}</p>
+            <p>{t('变化依据 →', 'Evidence →')} {j.evidenceIds.map(id => state.context.facts.find(f => f.id === id)?.claim || id).join('；')}</p>
+            <p>{t('核验 →', 'Verification →')} {judgmentSupported(state, j) ? t('引用已核验事实；解释仍需复核', 'References verified facts; interpretation needs review') : t('依据已变化或撤回，请重新核验', 'Evidence changed or was withdrawn; recheck')}</p>
+            <p>{t('下一步 →', 'Next →')} {state.runs.find(r => r.id === j.runId)?.next || t('查看下方判断记录，核对后采纳或拒绝', 'Review the judgment below, then accept or reject')}</p>
+          </div>; })()}
       </article>)}
       <details className="text-xs text-slate-400"><summary>{t('已读更新', 'Read updates')} ({h.updates.filter(u => u.readAt).length})</summary>{h.updates.filter(u => u.readAt).slice(-20).reverse().map(u => <p key={u.id} className="py-2">{displayDate(u.createdAt)} · {u.title}: {u.body}</p>)}</details>
     </section>
@@ -48,6 +56,6 @@ export default function ProblemHeartbeatPanel({ state, act, busy }: { state: Awa
       </article>)}
     </section>
     <label className="block text-xs text-slate-400">{t('提醒偏好', 'Attention preferences')}<select aria-label="Attention preferences" className={`${input} mt-1`} value={h.preference} disabled={busy} onChange={e => act({ action: 'preferences', preference: e.target.value, priority: h.priority })}><option value="important">{t('只看重要变化', 'Meaningful updates only')}</option><option value="all">{t('包含更多研究更新', 'Include more research updates')}</option><option value="quiet">{t('安静模式（保留必要待办）', 'Quiet mode (required decisions remain)')}</option></select></label>
-    <p className="text-xs text-slate-500">{t('提醒保存在此问题中，重新登录仍可查看。当前为站内提醒，尚不发送邮件或手机推送。', 'Updates are saved with this question for your return. In-app notifications only; email and mobile push are not yet connected.')}</p>
+    <p className="text-xs text-slate-500">{t('提醒保存在此问题中。可在上方订阅登录邮箱的重要事件邮件；手机推送尚未接入。', 'Updates are saved with this question. Opt in above for important-event emails to your login address; mobile push is not connected.')}</p>
   </div>;
 }

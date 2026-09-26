@@ -122,3 +122,34 @@ test('问题提醒设置按范围保存，重启不丢失，未认证不可写�
  assert.equal((await f.request('/state','GET',undefined,{branchId:'other'})).body.state,null);
  await f.request('/heartbeat','POST',{action:'lifecycle',lifecycle:'resolved'});s=(await f.request('/state')).body.state;assert.equal(s.policy.enabled,false);
 });
+
+test('一键开启验证模型与额度、只领取一次，重试和重启不重复入队', async t => {
+  const f = await setup(t, { env: { WAKE_ADMIN_IDENTITIES: 'development', WAKE_STARTER_TOKENS: '30000', WAKE_STARTER_POOL_TOKENS: '30000' } });
+  const input = { context, modelId: 'deepseek', paperQuery: '', emailEnabled: false };
+  assert.equal((await f.request('/activate', 'POST', input)).status, 400);
+  assert.equal((await f.request('/state')).body.state, null);
+  await f.request('/admin/shared/models', 'PUT', { id: 'deepseek', label: 'DeepSeek', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'fake-model', apiKey: 'FAKE_TEST_ONLY', enabled: true, dailyTokens: 100000, maxOutputTokens: 2048 });
+  assert.equal((await f.request('/activate', 'POST', { ...input, emailEnabled: true })).status, 400);
+  const results = await Promise.all([f.request('/activate', 'POST', input), f.request('/activate', 'POST', input)]);
+  assert.ok(results.every(r => r.status === 200));
+  let result = (await f.request('/state')).body;
+  assert.equal(result.state.policy.enabled, true); assert.equal(result.state.events.length, 1);
+  assert.equal(result.models.default.provider, 'platform'); assert.equal(result.notifications.enabled, false);
+  assert.equal((await f.request('/shared/catalog')).body.balances.deepseek.granted, 30000);
+  await f.restart(); await f.request('/activate', 'POST', input);
+  result = (await f.request('/state')).body;
+  assert.equal(result.state.events.length, 1); assert.equal((await f.request('/shared/catalog')).body.balances.deepseek.granted, 30000);
+  await f.app.tick(); result = (await f.request('/state')).body;
+  assert.ok(result.state.runs[0].plan); assert.ok(result.state.lastCheckedAt);
+});
+test('无额度不会开启研究；邮件收件人只能由服务端认证身份决定', async t => {
+  const f = await setup(t, { env: { WAKE_ADMIN_IDENTITIES: 'development' } });
+  await f.request('/admin/shared/models', 'PUT', { id: 'deepseek', label: 'DeepSeek', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'fake-model', apiKey: 'FAKE_TEST_ONLY', enabled: true, dailyTokens: 100000, maxOutputTokens: 2048 });
+  assert.equal((await f.request('/activate', 'POST', { context, modelId: 'deepseek', paperQuery: '' })).status, 400);
+  assert.equal((await f.request('/state')).body.state, null);
+  const paid = await setup(t, { env: { WAKE_AUTH_API: 'https://auth.example.test', WAKE_DEV_TOKEN: '', RESEND_API_KEY: 'FAKE_TEST_ONLY', MAIL_FROM: 'hello@example.test', WAKE_PUBLIC_URL: 'https://pay.example.test' }, fetch: async () => Response.json({ user: { email: 'owner@example.test' } }) });
+  await paid.request('/context', 'PUT', context);
+  assert.equal((await paid.request('/notifications', 'PUT', { enabled: true, recipient: 'attacker@example.test' })).status, 200);
+  const status = (await paid.request('/state')).body.notifications;
+  assert.equal(status.recipient, 'owner@example.test'); assert.equal(status.enabled, true);
+});

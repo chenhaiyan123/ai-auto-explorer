@@ -164,3 +164,17 @@ test('进程中断后预留不会丢失或重发，实际用量超预留暂停�
   await ledger.transaction(s => { s.calls.push({ id: 'crash', status: 'reserved', owner: 'user', modelId: 'x', reserved: 100 }); });
   await ledger.initialize(); assert.equal((await ledger.view('user')).calls[0].status, 'uncertain');
 });
+
+test('长期关注体验额度按账号仅一次，跨模型和并发也不突破全站池', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'starter-test-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const storage = new WakeStorage(dir, randomBytes(32)); await storage.initialize();
+  const shared = new SharedModels(storage, new Set(['api.deepseek.com']), async () => { throw new Error('should not call'); }, async () => {});
+  await shared.initialize(); await shared.saveModel(model); await shared.saveModel({ ...model, id: 'other' });
+  await Promise.all([shared.starter('a@example.test', model.id, 30000, 30000), shared.starter('a@example.test', 'other', 30000, 30000)]);
+  const a = await shared.view('a@example.test'); assert.equal(Object.values(a.balances).reduce((s, b) => s + b.granted, 0), 30000);
+  await assert.rejects(shared.starter('b@example.test', model.id, 30000, 30000), /已领完/);
+  const restarted = new SharedModels(storage, new Set(['api.deepseek.com']), fetch, async () => {});
+  await restarted.starter('a@example.test', 'other', 30000, 30000);
+  assert.equal(Object.values((await restarted.view('a@example.test')).balances).reduce((s, b) => s + b.granted, 0), 30000);
+});

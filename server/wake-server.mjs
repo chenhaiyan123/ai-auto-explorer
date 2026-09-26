@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import { WakeNotifications } from './wake-notifications.mjs';
 import { SharedModels } from './shared-models.mjs';
 import { createBilling } from './billing.mjs';
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
@@ -60,6 +61,9 @@ export async function createWakeServer(options = {}) {
   if (testMode && !['127.0.0.1', '::1'].includes(host)) throw new Error('模拟模式只能在本机监听');
   const masterKey = Buffer.from(env.WAKE_MASTER_KEY || '', 'base64');
   if (masterKey.length !== 32) throw new Error('WAKE_MASTER_KEY 必须是 32 字节随机密钥的 base64，且需要持久保存');
+  const starterTokens = Number(env.WAKE_STARTER_TOKENS || 0);
+  const starterPool = Number(env.WAKE_STARTER_POOL_TOKENS || 0);
+  if (![starterTokens, starterPool].every(n => Number.isSafeInteger(n) && n >= 0 && n <= 10000000)) throw new Error('初始体验额度配置无效');
   const globalCap = Number(env.WAKE_GLOBAL_DAILY_CALLS || 100);
   if (!Number.isInteger(globalCap) || globalCap < 1 || globalCap > 1000) throw new Error('后台总调用上限必须是 1–1000 的整数');
   const authAPI = (env.WAKE_AUTH_API || '').replace(/\/+$/, '');
@@ -97,6 +101,8 @@ export async function createWakeServer(options = {}) {
   };
   const shared = new SharedModels(storage, allowedModels, externalFetch, reserveGlobal);
   await shared.initialize();
+  const notifications = new WakeNotifications(storage, env, externalFetch);
+  const activationQueues = new Map();
   const admins = new Set((env.WAKE_ADMIN_IDENTITIES || '').split(',').map(x => x.trim()).filter(Boolean));
   const model = async (key, role, messages, state) => {
     if (options.model) return options.model(role, messages, state);
@@ -136,7 +142,7 @@ export async function createWakeServer(options = {}) {
     finally { clearInterval(heartbeat); active.delete(key); }
   };
   let ticking = false; let closing = false;
-  const tick = async () => { if (ticking || closing) return; ticking = true; try { for (const key of await storage.keys()) { if (closing) break; await tickKey(key); } } finally { ticking = false; } };
+  const tick = async () => { if (ticking || closing) return; ticking = true; try { for (const key of await storage.keys()) { if (closing) break; await tickKey(key); } await notifications.process(); } finally { ticking = false; } };
   const interval = setInterval(() => tick().catch(e => console.error('wake tick:', e.message)), 10000);
   interval.unref();
   const authenticate = async req => {
@@ -150,6 +156,27 @@ export async function createWakeServer(options = {}) {
   };
   const readBody = async req => { let raw = ''; for await (const chunk of req) { raw += chunk.toString(); if (raw.length > 300000) throw new Error('请求内容超过限制'); } return JSON.parse(raw || '{}'); };
   const server = http.createServer(async (req, res) => {
+    const requestURL = new URL(req.url, 'http://wake');
+    if (requestURL.pathname === '/notifications/unsubscribe' && ['GET', 'POST'].includes(req.method)) {
+      const token = requestURL.searchParams.get('token');
+      if (!/^[a-f0-9]{64}$/.test(token || '')) { res.writeHead(400); res.end('Invalid link'); return; }
+      res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; form-action 'self'; frame-ancestors 'none'");
+      if (req.method === 'POST') {
+        try {
+          const removed = await notifications.unsubscribe(token);
+          res.writeHead(removed ? 200 : 404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end(removed ? '已退订此问题的邮件提醒。Unsubscribed. 云端研究不受影响。' : 'Invalid link');
+        } catch {
+          res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('暂时无法保存退订，请稍后重试。Please try again later.');
+        }
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<!doctype html><meta charset="utf-8"><title>HiExplore</title><h1>退订重要事件邮件 / Unsubscribe</h1><p>仅停止此问题的邮件，保留云端研究。</p><form method="post"><button>确认退订 / Confirm unsubscribe</button></form>');
+      }
+      return;
+    }
     const origin = req.headers.origin;
     if (origin && !allowedOrigins.has(origin)) { res.writeHead(403); res.end(); return; }
     if (origin) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
@@ -157,7 +184,7 @@ export async function createWakeServer(options = {}) {
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
     const send = (status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
     const url = new URL(req.url, 'http://wake');
-    if (url.pathname === '/health') { send(200, { service: 'hiexplore-wake', version: 1, persistent: true, testMode, now: Date.now() }); return; }
+    if (url.pathname === '/health') { send(200, { service: 'hiexplore-wake', version: 1, persistent: true, testMode, capabilities: { activation: true, importantEmail: notifications.ready }, now: Date.now() }); return; }
     if (req.method === 'GET' && url.pathname === '/billing/catalog') { send(200, billing.catalog()); return; }
     if (req.method === 'POST' && url.pathname === '/billing/notify/alipay') {
       try {
@@ -224,9 +251,53 @@ export async function createWakeServer(options = {}) {
       }
       if (req.method === 'GET' && url.pathname === '/state') {
         const state = await storage.read(key); const creds = await storage.credentials(key);
-        send(200, { state, models: Object.fromEntries(Object.entries(creds).map(([role, c]) => [role, { provider: c.provider, model: c.model, baseUrl: c.baseUrl }])), testMode }); return;
+        send(200, { state, models: Object.fromEntries(Object.entries(creds).map(([role, c]) => [role, { provider: c.provider, model: c.model, baseUrl: c.baseUrl }])), testMode, notifications: await notifications.view(owner, key), starterTokens }); return;
       }
       const body = await readBody(req);
+      if (req.method === 'POST' && url.pathname === '/activate') {
+        const previous = activationQueues.get(key) || Promise.resolve();
+        const activate = previous.catch(() => {}).then(async () => {
+          const old = await storage.read(key);
+          if (old?.policy.enabled) return old; // Retry is harmless, never resets a running project.
+          if (old?.activeRunId) throw new Error('等待当前研究结束后再开启');
+          const context = sanitizeContext(body.context);
+          if (context.projectId !== projectId || context.branchId !== branchId || context.scopeId !== scopeId) throw new Error('项目范围不一致');
+          if (typeof body.paperQuery !== 'string' || body.paperQuery.length > 300) throw new Error('观察关键词无效');
+          if (body.emailEnabled !== undefined && typeof body.emailEnabled !== 'boolean') throw new Error('邮件订阅选项无效');
+          if (body.emailEnabled && (!notifications.ready || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(owner))) throw new Error('重要事件邮件尚未就绪，请暂不勾选或由管理员完成配置');
+          // Validate policy before any credits or credentials are changed.
+          const base = old || createAwakening(context);
+          const policy = { checkEveryHours: 24, reviewEveryDays: 7, maxCallsPerDay: 8, maxCallsPerWake: 4, maxOutputTokens: 1024, paperQuery: body.paperQuery.trim(), enabled: true };
+          configureAwakening(base, policy);
+          await shared.starter(owner, body.modelId, starterTokens, starterPool);
+          const catalog = await shared.view(owner);
+          const selected = catalog.models.find(m => m.id === body.modelId && m.enabled && m.hasKey);
+          if (!selected) throw new Error('请选择已开放的共享模型');
+          if ((catalog.balances[body.modelId]?.available || 0) < 4096) throw new Error('共享模型额度不足 4096 Token，请联系管理员补充，或在唤醒设置中接入自有 API');
+          if (selected.dailyTokens - selected.usedToday < 4096) throw new Error('模型今日剩余额度不足，请选择其他模型或稍后再试');
+          const credentialPrevious = credentialQueues.get(key) || Promise.resolve();
+          const write = credentialPrevious.catch(() => {}).then(() => storage.credentials(key, { default: { provider: 'platform', model: body.modelId, baseUrl: '', owner } }));
+          credentialQueues.set(key, write); await write; if (credentialQueues.get(key) === write) credentialQueues.delete(key);
+          if (body.emailEnabled !== undefined) await notifications.subscribe(owner, key, body.emailEnabled);
+          return storage.update(key, current => {
+            if (current?.policy.enabled || current?.activeRunId) throw new Error('项目状态已变化，请刷新后重试');
+            const source = current || createAwakening(context);
+            const changed = JSON.stringify(source.context) !== JSON.stringify(context);
+            let next = { ...source, context, contextVersion: source.contextVersion + (changed ? 1 : 0), updatedAt: Date.now() };
+            next = enqueueWake(next, { id: hash(`activation:${JSON.stringify(context)}`), kind: 'input', title: '研究约定与首次规划', body: '先梳理暂定判断、可证伪假设、缺少的证据、等待条件和最小下一步。尚无证据时明确未知，不承诺执行未接入的实验或监测。', source: '用户开启长期关注', at: Date.now(), status: 'pending' });
+            if (next.problemHeartbeat?.lifecycle === 'resolved') next.problemHeartbeat = { ...next.problemHeartbeat, lifecycle: 'watching' };
+            return configureAwakening(next, policy);
+          });
+        });
+        activationQueues.set(key, activate);
+        try { send(200, { state: await activate }); } finally { if (activationQueues.get(key) === activate) activationQueues.delete(key); }
+        return;
+      }
+      if (req.method === 'PUT' && url.pathname === '/notifications') {
+        if (!(await storage.read(key))) throw new Error('请先开启或同步当前问题');
+        await notifications.subscribe(owner, key, body.enabled);
+        send(200, await notifications.view(owner, key)); return;
+      }
       if (req.method === 'POST' && url.pathname === '/pause-project') {
         let paused = 0;
         for (const candidate of await storage.keys()) {

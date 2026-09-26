@@ -29,7 +29,8 @@
     "test:wake": "npm run wake:build && esbuild __test__/awakening.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-wake-test.mjs && node node_modules/.cache/hiexplore-wake-test.mjs && node --test __test__/wake-server.test.mjs",
     "wake": "npm run wake:build && node server/wake-server.mjs",
     "test:shared": "npm run wake:build && node --test __test__/shared-models.test.mjs",
-    "test:heartbeat": "esbuild __test__/problem-heartbeat.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-heartbeat-test.mjs && node node_modules/.cache/hiexplore-heartbeat-test.mjs"
+    "test:heartbeat": "esbuild __test__/problem-heartbeat.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-heartbeat-test.mjs && node node_modules/.cache/hiexplore-heartbeat-test.mjs",
+    "test:life": "npm run wake:build && node --test __test__/wake-notifications.test.mjs && esbuild __test__/life-ui.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/hiexplore-life-ui-test.mjs && node node_modules/.cache/hiexplore-life-ui-test.mjs"
   },
   "build": {
     "appId": "com.hiexplore.app",

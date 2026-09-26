@@ -23,6 +23,7 @@ export interface WakeRun {
   contextSnapshot?: WakeContext;
   memoryChanges?: { added: string[]; withdrawn: string[]; updated: string[] };
   outcome: 'running' | 'progress' | 'waiting' | 'failed' | 'interrupted';
+  plan?: { decision: string; reason: string; task: string; stopCondition: string; hypothesis: string; missingEvidence: string };
   reason: string; summary?: string; next?: string; steps: WakeStep[];
   /** Findings remain research records until separately verified. */
   findings?: { claim: string; evidenceIds: string[]; kind: 'hypothesis' | 'limitation' | 'plan' | 'observation' }[];
@@ -30,7 +31,7 @@ export interface WakeRun {
 export interface Awakening {
   version: 1; problemHeartbeat?: ProblemHeartbeat; context: WakeContext; policy: WakePolicy; status: WakeStatus; reason: string;
   events: WakeEvent[]; runs: WakeRun[]; checks: number; quietChecks: number;
-  nextCheckAt: number; nextReviewAt: number; updatedAt: number; heartbeatAt?: number;
+  lastCheckedAt?: number; nextCheckAt: number; nextReviewAt: number; updatedAt: number; heartbeatAt?: number;
   budget: { day: string; calls: number }; activeRunId?: string; contextVersion: number;
 }
 export const WAKE_DEFAULTS: WakePolicy = { enabled: false, checkEveryHours: 24, reviewEveryDays: 7, maxCallsPerDay: 12, maxCallsPerWake: 5, maxOutputTokens: 2048, paperQuery: '' };

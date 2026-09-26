@@ -7,7 +7,7 @@ import type { Awakening, WakeContext } from './awakening';
 // Operator-controlled endpoint only. A user-entered endpoint must never receive the site's login token.
 const env = (import.meta as ImportMeta & { env?: Record<string, string | boolean> }).env;
 export const WAKE_API = String(env?.VITE_WAKE_API || '').replace(/\/+$/, '');
-export type WakeReply = { state: Awakening | null; models: Record<string, { provider: string; model: string; baseUrl: string }>; testMode: boolean };
+export type WakeReply = { state: Awakening | null; models: Record<string, { provider: string; model: string; baseUrl: string }>; testMode: boolean; starterTokens?: number; notifications?: { ready: boolean; enabled: boolean; recipient: string; lastSentAt?: number; error?: string; minIntervalHours: number; maxPerDay: number } };
 export function projectWakeContext(project: Project, scopeId: string): WakeContext {
   const { question, background, workspace } = managerScope(project, scopeId);
   return { projectId: project.id, branchId: project.worktree?.activeBranchId || 'main', scopeId, question, background, language: getLanguage(),

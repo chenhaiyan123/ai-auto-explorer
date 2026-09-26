@@ -9,6 +9,7 @@ FROM node:22-alpine
 ENV NODE_ENV=production WAKE_HOST=0.0.0.0 WAKE_DATA_DIR=/data PORT=8790
 WORKDIR /app
 COPY server/wake-server.mjs server/wake-storage.mjs server/shared-models.mjs server/billing.mjs server/alipay-provider.mjs ./server/
+COPY server/wake-notifications.mjs ./server/
 COPY server/wechat-provider.mjs server/wechat-certificates.mjs ./server/
 COPY shared/billing-plans.json ./shared/
 COPY --from=build /app/server/.wake-build ./server/.wake-build

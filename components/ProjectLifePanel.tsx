@@ -1,3 +1,4 @@
+import ResearchActivation from './ResearchActivation';
 import { t as ui } from '../services/language';
 import ProblemHeartbeatPanel from './ProblemHeartbeatPanel';
 import { useLanguage } from '../services/language';
@@ -93,6 +94,29 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
     {reply?.testMode && <p className="text-xs text-amber-300">{ui("本机模拟环境 · 不调用真实模型，结果只用于验证流程。")}</p>}
     {state && <div className="flex flex-wrap gap-x-5 gap-y-2 text-[11px] text-slate-400"><span>{ui("待处理线索")}{state.events.filter(e => e.status === 'pending').length}</span><span>{ui("今日调用")}{state.budget.day === utcDay(Date.now()) ? state.budget.calls : 0} / {state.policy.maxCallsPerDay}</span><span>{ui("下次检查")}{state.policy.enabled ? when(state.nextCheckAt) : ui("已暂停")}</span><span>{ui("策略复盘")}{state.policy.enabled ? when(state.nextReviewAt) : ui("已暂停")}</span></div>}
     {error && <p role="alert" className="text-xs text-rose-300">{error}</p>}{message && <p role="status" className="text-xs text-emerald-300">{message}</p>}
+    {WAKE_API && !state?.policy.enabled && <ResearchActivation busy={busy} starterTokens={reply?.starterTokens || 0} mailReady={!!reply?.notifications?.ready} recipient={reply?.notifications?.recipient || ''}
+      onAdvanced={() => setSettings(true)} onStart={(modelId, paperQuery, emailEnabled) => act(async () => {
+        if (browserBusy || teams.isProjectRunning(project.id)) throw new Error(t('请先暂停浏览器研究并等待完成。', 'Pause browser research and wait for it to finish first.'));
+        await wakeRequest(context, '/activate', 'POST', { context, modelId, paperQuery, emailEnabled });
+        policyLoaded.current = false;
+        setMessage(t('已开启云端长期关注，关闭电脑后也会按计划继续。首次研究将在调度器运行时开始。', 'Cloud research is enabled and continues when your computer is off. The first run starts on the scheduler.'));
+      })} />}
+    {state && <section className="rounded-xl border border-slate-700 bg-slate-950/40 p-4 space-y-2" aria-label={t('研究约定', 'Research agreement')}>
+      <h4 className="text-sm font-semibold">{t('我们接下来怎样研究', 'Our research agreement')}</h4>
+      <p className="text-sm">{state.runs.at(-1)?.plan?.hypothesis || t('尚未形成可验证假设；首轮项目经理会明确问题和证据缺口。', 'No testable hypothesis yet. The first run will clarify the question and evidence gaps.')}</p>
+      <p className="text-xs text-slate-400">{t('下一步：', 'Next: ')}{state.runs.at(-1)?.next || state.runs.at(-1)?.plan?.task || state.reason}</p>
+      <p className="text-xs text-slate-400">{t('缺少依据：', 'Missing evidence: ')}{state.runs.at(-1)?.plan?.missingEvidence || t('等待项目经理梳理；尚未确认不等于不存在。', 'Awaiting review; unknown does not mean absent.')}</p>
+      <p className="text-xs text-slate-400">{t('本轮停止条件：', 'Stop condition: ')}{state.runs.at(-1)?.plan?.stopCondition || t('无足够新依据时等待，不反复推演。', 'Wait when evidence is insufficient; avoid repeated speculation.')}</p>
+      <p className="text-xs text-slate-400">{t('观察来源：', 'Watching: ')}{state.policy.paperQuery ? `Crossref · ${state.policy.paperQuery}` : t('你提交的资料或实验结果；尚未接入自动外部来源', 'Your submitted materials or results; no automated external source configured')}</p>
+      <p className="text-xs text-slate-500">{t('最近实际检查：', 'Last actual check: ')}{when(state.lastCheckedAt)} · {t('下次检查：', 'Next check: ')}{state.policy.enabled ? when(state.nextCheckAt) : t('已暂停', 'Paused')}</p>
+    </section>}
+    {state && reply?.notifications && <section className="rounded-lg border border-slate-700 p-3 space-y-2">
+      <label className="flex gap-2 text-sm"><input type="checkbox" checked={reply.notifications.enabled} disabled={busy || (!reply.notifications.enabled && !reply.notifications.ready)} onChange={e => { const enabled = e.target.checked; void act(async () => { await wakeRequest(context, '/notifications', 'PUT', { enabled }); }); }} />{t('重要变化发送邮件', 'Email meaningful updates')}</label>
+      <p className="text-xs text-slate-400">{reply.notifications.ready ? `${t('发送到登录邮箱：', 'To your verified login email: ')}${reply.notifications.recipient}` : t('服务端发信配置尚未完成；站内提醒照常保留。', 'Server email setup is incomplete; in-app updates remain available.')}</p>
+      <p className="text-xs text-slate-500">{t('仅提醒有依据的判断变化、需要你的待办或运行受阻；不发送普通检查。每个账号每 24 小时最多 2 封，至少间隔 12 小时。安静模式不发邮件。', 'Only evidence-backed judgment changes, decisions or blocked research. No routine-check emails. At most 2 per account per 24 hours, at least 12 hours apart. Quiet mode suppresses email.')}</p>
+      {reply.notifications.lastSentAt && <p className="text-xs text-slate-500">{t('最近提交邮件服务：', 'Last accepted by email provider: ')}{when(reply.notifications.lastSentAt)}</p>}
+      {reply.notifications.error && <p role="alert" className="text-xs text-amber-300">{reply.notifications.error}</p>}
+    </section>}
     {settings && <div className="space-y-4 border-t border-slate-700 pt-4">
       <p className="text-xs text-slate-400">{ui("当前问题、当前探索分支独立配置。云端使用最后同步的背景和事实；其他分支已开启的研究会继续，需分别暂停。")}</p>
       <div className="grid sm:grid-cols-3 gap-3">{([{ key: 'checkEveryHours', label: '基础检查间隔（小时）', min: 1, max: 168 }, { key: 'reviewEveryDays', label: '策略复盘间隔（天）', min: 1, max: 30 }, { key: 'maxCallsPerDay', label: '每日最多模型调用', min: 4, max: 100 }] as const).map(item => <label key={item.key} className="text-xs text-slate-400">{ui(item.label)}<input className={`${field} mt-1`} type="number" min={item.min} max={item.max} value={policy[item.key]} onChange={e => setPolicy(p => ({ ...p, [item.key]: Number(e.target.value) }))} /></label>)}</div>
