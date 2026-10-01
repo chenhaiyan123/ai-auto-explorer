@@ -1,3 +1,4 @@
+import { platform } from './native';
 import plans from '../shared/billing-plans.json';
 import { t } from './language';
 const env = (import.meta as ImportMeta & { env?: Record<string, string | boolean> }).env;
@@ -9,6 +10,7 @@ export interface BillingAccount { plan: 'free' | 'pro'; proUntil: number; purcha
 export interface BillingCatalog { salesEnabled: boolean; proSalesEnabled: boolean; salesRestricted: boolean; providers: { id: string; ready: boolean }[]; researchBenefitsReady: boolean }
 export interface ReportSnapshot { title: string; abstract: string; sections: { title: string; content: string }[]; conclusions: string[]; openQuestions: string[]; references: string[] }
 export async function billingRequest<T>(path: string, method = 'GET', body?: unknown, publicRequest = false): Promise<T> {
+  if (platform() === 'ios' && path === '/billing/orders' && method === 'POST') throw new Error(t('iOS 版暂未开放应用内购买', 'In-app purchases are not available in this iOS version'));
   if (!BILLING_API) throw new Error(t('支付服务尚未开放，当前不会扣款', 'Payments are not available yet. No charge will be made.'));
   const url = new URL(BILLING_API);
   const local = !!env?.DEV && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);

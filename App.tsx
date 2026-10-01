@@ -1,3 +1,4 @@
+import { platform } from './services/native';
 import { useLanguage, t as ui } from './services/language';
 import PersonalCenter from './components/PersonalCenter';
 import SharedModelsPanel from './components/SharedModelsPanel';
@@ -815,6 +816,7 @@ function ensureOverview(project: Project): Project {
 
 // --- 主应用 ---
 const App: React.FC = () => {
+  const nativeIOS = platform() === 'ios';
   const { language, setLanguage } = useLanguage();
   const [user, setUser] = useState(auth.getUser());
   const [currentHash, setCurrentHash] = useState(window.location.hash);
@@ -2689,7 +2691,7 @@ ${plan.lead.duty}
 
   return (
     <div
-      className="flex flex-col h-screen w-screen bg-slate-950 text-slate-200 overflow-hidden"
+      className="app-shell flex flex-col h-screen w-screen bg-slate-950 text-slate-200 overflow-hidden"
       onClick={() => { setContextMenu(null); unattendedRef.current = 0; }}
       onKeyDown={() => { unattendedRef.current = 0; }}
     >
@@ -2821,7 +2823,7 @@ ${plan.lead.duty}
       <main className="flex-1 flex overflow-hidden relative">
         {/* 可调整大小的侧边栏 */}
         <aside 
-          className={`h-full bg-slate-900 border-r border-slate-800 flex flex-col z-20 overflow-hidden ${notesPanelMode === 0 ? 'w-0 border-none' : ''}`}
+          className={`app-notes h-full bg-slate-900 border-r border-slate-800 flex flex-col z-20 overflow-hidden ${notesPanelMode === 0 ? 'w-0 border-none' : ''}`}
           style={{ width: notesPanelMode === 0 ? 0 : sidebarWidth }}
         >
           {notesPanelMode !== 0 && <>
@@ -2848,7 +2850,7 @@ ${plan.lead.duty}
           />
         )}
         
-        {notesPanelMode === 0 && <div className="w-8 h-full bg-slate-900 border-r border-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNotesPanelMode(1)}><div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">{ui("展开面板")}</div></div>}
+        {notesPanelMode === 0 && <div className="app-notes-handle w-8 h-full bg-slate-900 border-r border-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNotesPanelMode(1)}><div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">{ui("展开面板")}</div></div>}
 
         {/* ===== 中间：笔记内容（Obsidian 主编辑区） ===== */}
         <div className="flex-1 relative z-0 min-w-0 bg-slate-800">
@@ -2946,7 +2948,7 @@ ${plan.lead.duty}
         </div>
 
         {/* ===== 右侧：AI 对话 ===== */}
-        <div className="hidden md:flex h-full flex-col bg-slate-900 border-l border-slate-800 overflow-hidden transition-all duration-300" style={{ width: rightChatOpen ? rightChatWidth : 0 }}>
+        <div data-open={rightChatOpen} className="app-team-chat hidden md:flex h-full flex-col bg-slate-900 border-l border-slate-800 overflow-hidden transition-all duration-300" style={{ width: rightChatOpen ? rightChatWidth : 0 }}>
           <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
             <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5"><span>🤝</span>{ui("团队群聊")}</h3>
             <button onClick={() => setRightChatOpen(false)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title={ui("收起")}><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 17 5-5-5-5M13 17l5-5-5-5"/></svg></button>
@@ -2976,6 +2978,12 @@ ${plan.lead.duty}
           </div>
         )}
       </main>
+      {nativeIOS && <nav aria-label={ui('主要导航', 'Main navigation')} className="ios-navigation grid grid-cols-4 shrink-0 border-t border-slate-800 bg-slate-950 md:hidden">
+        <button className="py-3 text-xs" onClick={() => { setRightChatOpen(false); setNotesPanelMode(0); if (currentProject) openProjectPage(currentProject.id, 'root', 'research'); }}>{ui('◈ 总览', '◈ Overview')}</button>
+        <button className="py-3 text-xs" onClick={() => { setRightChatOpen(false); setNotesPanelMode(v => v ? 0 : 1); }}>{ui('▤ 项目与笔记', '▤ Notes')}</button>
+        <button className="py-3 text-xs" onClick={() => { setNotesPanelMode(0); setRightChatOpen(v => !v); }}>{ui('◎ AI 团队', '◎ AI team')}</button>
+        <button className="py-3 text-xs" onClick={() => setShowUserMenu(true)}>{ui('◉ 我的', '◉ Account')}</button>
+      </nav>}
 
       {contextMenu && <div className="fixed z-[100] bg-slate-800 border border-slate-700 rounded-xl shadow-2xl py-2 w-48" style={{ top: Math.min(contextMenu.y, window.innerHeight - 350), left: Math.min(contextMenu.x, window.innerWidth - 200) }} onClick={e => e.stopPropagation()}>
         {/* 在团队群聊里讨论这个节点（选中它 + 打开右侧群聊，群聊会自动把当前笔记带进上下文） */}

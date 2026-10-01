@@ -4,8 +4,7 @@
  * 同一套代码要跑在三个地方：浏览器、PWA（添加到主屏）、Capacitor 原生 App。
  * 这个文件把「只有原生壳里才有」的能力收在一处，其余代码不用到处判断环境。
  *
- * 所有 Capacitor 插件都用**动态 import + try/catch**，浏览器里插件不存在也不会炸——
- * 这样 web 构建不需要装任何原生依赖，dist 也不会变大。
+ * 插件用可静态解析的动态 import 打包；只在原生平台上调用。
  */
 
 type AnyFn = (...a: any[]) => any;
@@ -40,20 +39,29 @@ export function isStandalone(): boolean {
   }
 }
 
-const load = async (name: string): Promise<any | null> => {
-  try {
-    // @vite-ignore：这些包只在原生构建里存在，web 构建不应该因为解析不到就失败
-    return await import(/* @vite-ignore */ name);
-  } catch {
-    return null;
-  }
+// Literal imports allow Vite to bundle the plugin bridge into offline iOS assets.
+const loaders: Record<string, () => Promise<any>> = {
+  '@capacitor/app': () => import('@capacitor/app'),
+  '@capacitor/status-bar': () => import('@capacitor/status-bar'),
+  '@capacitor/splash-screen': () => import('@capacitor/splash-screen'),
+  '@capacitor/haptics': () => import('@capacitor/haptics'),
+  '@capacitor/toast': () => import('@capacitor/toast'),
 };
+const load = async (name: string): Promise<any | null> => {
+  if (!isNative()) return null;
+  try { return await loaders[name]?.() || null; } catch { return null; }
+};
+let initialization: Promise<void> | undefined;
+export function initNative(opts: { onBack?: () => boolean } = {}): Promise<void> {
+  if (!isNative()) return Promise.resolve();
+  return initialization ||= initializeNative(opts);
+}
 
 /**
  * 原生壳启动初始化：状态栏配色、收起启动图、安卓返回键。
  * 在浏览器里调用是空操作。
  */
-export async function initNative(opts: { onBack?: () => boolean } = {}): Promise<void> {
+async function initializeNative(opts: { onBack?: () => boolean } = {}): Promise<void> {
   if (!isNative()) return;
 
   const sb = await load('@capacitor/status-bar');
@@ -68,6 +76,9 @@ export async function initNative(opts: { onBack?: () => boolean } = {}): Promise
   // 安卓物理返回键：交给页面自己决定；页面说"我处理了"就不退出，
   // 否则再按一次才退出——直接退出会让人一不小心就把 App 关掉。
   const appPlugin = await load('@capacitor/app');
+  await appPlugin?.App?.addListener('appStateChange', ({ isActive }: { isActive: boolean }) => {
+    if (isActive) window.dispatchEvent(new Event('focus'));
+  });
   if (appPlugin?.App && platform() === 'android') {
     let lastBack = 0;
     appPlugin.App.addListener('backButton', () => {
@@ -118,18 +129,9 @@ export async function haptic(kind: 'light' | 'medium' = 'light'): Promise<void> 
  * 这三样都还没有，所以现在调用它只会返回 null，不会假装成功。
  */
 export async function registerPush(onToken: (token: string) => void): Promise<boolean> {
-  if (!isNative()) return false;
-  const pn = await load('@capacitor/push-notifications');
-  if (!pn?.PushNotifications) return false;
-  try {
-    const perm = await pn.PushNotifications.requestPermissions();
-    if (perm.receive !== 'granted') return false;
-    pn.PushNotifications.addListener('registration', (t: any) => onToken(t?.value || ''));
-    await pn.PushNotifications.register();
-    return true;
-  } catch {
-    return false;
-  }
+  // APNs registration is intentionally off until server delivery is configured.
+  void onToken;
+  return false;
 }
 
 /** 给 App 图标打角标（待办数）。iOS 需要通知权限；安卓看桌面启动器是否支持 */

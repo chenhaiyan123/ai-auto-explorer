@@ -23,14 +23,17 @@
     "auth": "node server/auth-server.mjs",
     "mobile:sync": "npm run build && npx cap sync",
     "mobile:android": "npm run mobile:sync && npx cap open android",
-    "mobile:ios": "npm run mobile:sync && npx cap open ios",
+    "mobile:ios": "npm run ios:open",
     "mobile:apk": "npm run mobile:sync && cd android && ./gradlew assembleDebug",
     "wake:build": "esbuild services/wakeRunner.ts --bundle --platform=node --format=esm --outfile=server/.wake-build/runner.mjs",
     "test:wake": "npm run wake:build && esbuild __test__/awakening.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-wake-test.mjs && node node_modules/.cache/hiexplore-wake-test.mjs && node --test __test__/wake-server.test.mjs",
     "wake": "npm run wake:build && node server/wake-server.mjs",
     "test:shared": "npm run wake:build && node --test __test__/shared-models.test.mjs",
     "test:heartbeat": "esbuild __test__/problem-heartbeat.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-heartbeat-test.mjs && node node_modules/.cache/hiexplore-heartbeat-test.mjs",
-    "test:life": "npm run wake:build && node --test __test__/wake-notifications.test.mjs && esbuild __test__/life-ui.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/hiexplore-life-ui-test.mjs && node node_modules/.cache/hiexplore-life-ui-test.mjs"
+    "test:life": "npm run wake:build && node --test __test__/wake-notifications.test.mjs && esbuild __test__/life-ui.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/hiexplore-life-ui-test.mjs && node node_modules/.cache/hiexplore-life-ui-test.mjs",
+    "ios:prepare": "node scripts/build-ios.mjs",
+    "ios:open": "npm run ios:prepare && npx cap open ios",
+    "test:ios": "esbuild __test__/ios.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/hiexplore-ios-test.mjs && node node_modules/.cache/hiexplore-ios-test.mjs"
   },
   "build": {
     "appId": "com.hiexplore.app",

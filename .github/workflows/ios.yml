@@ -1,0 +1,31 @@
+name: Build iOS simulator app
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/ios-app]
+permissions:
+  contents: read
+jobs:
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run ios:prepare
+      - run: npm run test:ios
+      - name: Compile without distribution signing
+        run: |
+          xcodebuild -version
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/hiexplore-ios CODE_SIGNING_ALLOWED=NO build
+      - name: Package simulator app
+        run: ditto -c -k --sequesterRsrc --keepParent /tmp/hiexplore-ios/Build/Products/Debug-iphonesimulator/App.app HiExplore-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HiExplore-iOS-simulator
+          path: HiExplore-simulator.zip
+          retention-days: 14

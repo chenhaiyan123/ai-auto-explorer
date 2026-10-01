@@ -36,7 +36,19 @@ docs/推广/
 # 想让 CI 能构建的话，把 android/ 提交进来（去掉下面这行），
 # 但 keystore / google-services.json / GoogleService-Info.plist 永远不要提交。
 android/
-ios/
+# Keep iOS source; exclude generated assets and personal signing state.
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/App/Pods/
+ios/App/build/
+ios/**/xcuserdata/
+ios/**/.build/
+ios/**/DerivedData/
+*.ipa
+*.mobileprovision
+*.p12
+dist-ios/
 *.keystore
 *.jks
 google-services.json

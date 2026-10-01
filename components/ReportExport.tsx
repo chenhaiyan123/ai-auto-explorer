@@ -1,3 +1,4 @@
+import { platform } from '../services/native';
 import React, { useRef, useState } from 'react';
 import { billingRequest, BillingAccount, BillingCatalog, BillingOrder, ReportSnapshot } from '../services/billingClient';
 import { downloadResearchExport } from '../services/researchExport';
@@ -37,6 +38,7 @@ export default function ReportExport({ report }: { report: ReportSnapshot }) {
     try { setOrder(await billingRequest<BillingOrder>('/billing/orders', 'POST', { sku: 'export', provider, artifactId: artifact.id, requestId: requestId.current })); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
+  if (platform() === 'ios') return <p className="text-xs text-slate-400">{t('本版可在线查看研究成果；成果包下载暂未在 iOS 开放。', 'Read research in the app. Export downloads are not available in this iOS version yet.')}</p>;
   return <>
     <button onClick={() => setOpen(true)} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-lg">{t('导出成果包', 'Export package')}</button>
     {open && <div className="fixed inset-0 z-[130] bg-black/85 p-4 flex items-center justify-center" role="dialog" aria-modal="true" aria-label={t('导出成果包', 'Export package')}><div className="max-w-xl w-full max-h-[90vh] overflow-auto bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4 text-slate-200">

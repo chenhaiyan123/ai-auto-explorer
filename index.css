@@ -81,3 +81,20 @@ html.light select[class~="text-white"] { color: #0f172a !important; }
 
 /* ---------- 滚动条隐藏（沿用） ---------- */
 .scroll-hide::-webkit-scrollbar { display: none; }
+
+/* Native iOS shell: preserve the notch/home indicator and use full-width panels. */
+html[data-native="ios"], html[data-native="ios"] body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+html[data-native="ios"] #root { height: 100dvh; box-sizing: border-box; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); background: #020617; }
+html[data-native="ios"] .app-shell { width: 100%; height: 100%; }
+html[data-native="ios"] .app-shell > header { flex-shrink: 0; }
+html[data-native="ios"] input, html[data-native="ios"] textarea, html[data-native="ios"] select { font-size: 16px; }
+@media (max-width: 767px) {
+  html[data-native="ios"] .app-notes { position: absolute; inset: 0; width: 100% !important; z-index: 40; }
+  html[data-native="ios"] .app-notes.w-0 { display: none; }
+  html[data-native="ios"] .app-notes-handle { display: none; }
+  html[data-native="ios"] .app-team-chat[data-open="true"] { display: flex; position: absolute; inset: 0; width: 100% !important; z-index: 40; }
+  html[data-native="ios"] .ios-navigation button { min-height: 48px; }
+}
+
+html[data-native="ios"] #root > .min-h-screen { min-height: 100%; height: 100%; width: 100%; align-items: flex-start; }
+html[data-native="ios"] [role="dialog"] { max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); }

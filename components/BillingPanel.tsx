@@ -1,3 +1,4 @@
+import { platform } from '../services/native';
 import React, { useEffect, useRef, useState } from 'react';
 import { useLanguage, displayDate } from '../services/language';
 import { billingRequest, BILLING_API, BILLING_CHANGED, BillingAccount, BillingCatalog, BillingOrder, plans, safeCheckoutUrl, safeWechatCodeUrl } from '../services/billingClient';
@@ -40,7 +41,7 @@ export function Checkout({ order: initial, onPaid, onClose }: { order: BillingOr
   </div>;
 }
 
-export default function BillingPanel() {
+function WebBillingPanel() {
   const { t } = useLanguage(); const [catalog, setCatalog] = useState<BillingCatalog | null>(null); const [account, setAccount] = useState<BillingAccount | null>(null);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [order, setOrder] = useState<BillingOrder | null>(null);
   const requestId = useRef(crypto.randomUUID()); const [provider, setProvider] = useState('wechat');
@@ -94,4 +95,11 @@ export function BillingModal({ onClose }: { onClose: () => void }) {
   const { t } = useLanguage();
   useEffect(() => { const close = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', close); return () => window.removeEventListener('keydown', close); }, [onClose]);
   return <div className="fixed inset-0 z-[120] bg-black/80 backdrop-blur p-3 sm:p-6 flex items-center justify-center" role="dialog" aria-modal="true" aria-label={t('收费与套餐', 'Plans & billing')}><div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-4xl w-full max-h-[92vh] flex flex-col"><div className="p-4 flex justify-between border-b border-slate-800"><h2 className="font-bold">{t('收费与套餐', 'Plans & billing')}</h2><button onClick={onClose} className="text-slate-400 px-3">{t('关闭', 'Close')}</button></div><div className="overflow-y-auto p-4 sm:p-6"><BillingPanel /></div></div></div>;
+}
+
+// The first iOS build has no external digital-goods checkout or purchase links.
+export default function BillingPanel() {
+  const { t } = useLanguage();
+  if (platform() === 'ios') return <section className="space-y-3"><h2 className="text-xl font-bold">{t('套餐与权益', 'Plan & access')}</h2><p>{t('iOS 首版暂未开放应用内购买。你可以继续使用项目总览、事实看板和 AI 团队。', 'In-app purchases are not available in this first iOS release. Continue using the overview, fact board and AI team.')}</p></section>;
+  return <WebBillingPanel />;
 }

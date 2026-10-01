@@ -1,15 +1,16 @@
+import IOSWelcome from './components/IOSWelcome';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import MobileInbox from './components/MobileInbox';
 import ErrorBoundary from './components/ErrorBoundary';
 import { initAnalytics, initChatWidget } from './services/analytics';
-import { isNative } from './services/native';
+import { isNative, platform, initNative } from './services/native';
 import { recordVisit } from './services/funnel';
 
 // 流量统计 + 用户聊天挂件（未配置环境变量时不会加载任何东西）
-initAnalytics();
-initChatWidget();
+if (!isNative()) { initAnalytics(); initChatWidget(); }
+if (isNative()) { document.documentElement.dataset.native = platform(); void initNative(); }
 // 留存与漏斗：算「第二天/第七天还回来吗」，并记下漏斗第一级
 recordVisit();
 
@@ -21,6 +22,7 @@ recordVisit();
  * 手机端也就不用把桌面版那一大坨状态全初始化一遍。
  */
 const Root: React.FC = () => {
+  const [intro, setIntro] = React.useState(() => platform() === 'ios' && localStorage.getItem('hiexplore-ios-welcome') !== '1');
   const [hash, setHash] = React.useState(() => window.location.hash);
   React.useEffect(() => {
     const h = () => setHash(window.location.hash);
@@ -28,11 +30,11 @@ const Root: React.FC = () => {
     return () => window.removeEventListener('hashchange', h);
   }, []);
 
-  // 原生壳（Android / iOS App）永远直接进现实反馈端——App 的存在意义就是这个，
-  // 不该让用户在手机上先看到一个挤成一团的桌面三栏布局。
+  if (intro) return <IOSWelcome onContinue={() => { localStorage.setItem('hiexplore-ios-welcome', '1'); setIntro(false); }} />;
+  // iOS opens the full research workspace. Preserve the existing Android/PWA inbox route.
   const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches
     || (window.navigator as any).standalone === true;
-  const mobile = isNative() || hash.startsWith('#/m') || (standalone && window.innerWidth < 768);
+  const mobile = platform() === 'android' || (!isNative() && (hash.startsWith('#/m') || (standalone && window.innerWidth < 768)));
 
   if (mobile) {
     // 原生 App 里不给"去桌面版"的出口：那边在手机上根本没法用
@@ -56,7 +58,7 @@ root.render(
 );
 
 // PWA：注册 Service Worker（只为「装到主屏 + 断网能打开」，不缓存任何 API 请求，见 public/sw.js）
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
+if (!isNative() && 'serviceWorker' in navigator && location.protocol === 'https:') {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(e => console.warn('[PWA] SW 注册失败', e));
   });
