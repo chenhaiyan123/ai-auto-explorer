@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { WakeNotifications } from './wake-notifications.mjs';
+import { ProjectSync, readWorkspaceBody } from './project-sync.mjs';
 import { SharedModels } from './shared-models.mjs';
 import { createBilling } from './billing.mjs';
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
@@ -73,6 +74,7 @@ export async function createWakeServer(options = {}) {
   const allowedOrigins = new Set((env.WAKE_ALLOWED_ORIGINS || 'https://www.hiexplore.com,http://127.0.0.1:3000,http://localhost:3000').split(',').map(x => x.trim()));
   const allowedModels = new Set((env.WAKE_MODEL_HOSTS || 'api.openai.com,api.anthropic.com,api.deepseek.com,generativelanguage.googleapis.com,dashscope.aliyuncs.com,open.bigmodel.cn,ark.cn-beijing.volces.com,api.moonshot.cn,api.x.ai').split(',').map(x => x.trim()));
   const storage = new WakeStorage(path.resolve(env.WAKE_DATA_DIR || './wake-data'), masterKey); await storage.initialize();
+  const projectSync = new ProjectSync(storage.dir, masterKey); await projectSync.initialize();
   const billing = await createBilling(storage, env, externalFetch, options.paymentProviders);
   if (claimedDirectories.has(storage.dir)) throw new Error('此数据目录已有执行器运行');
   // This deployment supports one process with a persistent volume. Never silently share a local file store across replicas.
@@ -209,6 +211,11 @@ export async function createWakeServer(options = {}) {
     let owner;
     try { owner = await authenticate(req); } catch (e) { send(401, { error: e.message }); return; }
     try {
+      if (url.pathname === '/projects/workspace') {
+        if (req.method === 'GET') { send(200, await projectSync.read(owner)); return; }
+        if (req.method === 'PUT') { send(200, await projectSync.write(owner, await readWorkspaceBody(req))); return; }
+        send(405, { error: '方法不支持' }); return;
+      }
       if (url.pathname.startsWith('/billing/') || url.pathname === '/admin/billing') {
         if (url.pathname === '/admin/billing') {
           if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }

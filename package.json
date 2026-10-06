@@ -33,7 +33,8 @@
     "test:life": "npm run wake:build && node --test __test__/wake-notifications.test.mjs && esbuild __test__/life-ui.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/hiexplore-life-ui-test.mjs && node node_modules/.cache/hiexplore-life-ui-test.mjs",
     "ios:prepare": "node scripts/build-ios.mjs",
     "ios:open": "npm run ios:prepare && npx cap open ios",
-    "test:ios": "esbuild __test__/ios.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/hiexplore-ios-test.mjs && node node_modules/.cache/hiexplore-ios-test.mjs"
+    "test:ios": "esbuild __test__/ios.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/hiexplore-ios-test.mjs && node node_modules/.cache/hiexplore-ios-test.mjs",
+    "test:sync": "npm run wake:build && node --test __test__/project-sync.test.mjs && esbuild __test__/project-sync-client.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/project-sync-test.mjs && node node_modules/.cache/project-sync-test.mjs"
   },
   "build": {
     "appId": "com.hiexplore.app",

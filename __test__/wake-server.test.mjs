@@ -45,7 +45,7 @@ test('密钥持久化为密文，不出现在状态、上下文、模型返回�
   const fake = 'FAKE-UNUSABLE-TEST-KEY-123';
   assert.equal((await f.request('/model', 'PUT', { role: 'default', baseUrl: 'https://api.deepseek.com', model: 'test-model', provider: 'openai-compatible', apiKey: fake })).status, 200);
   const response = JSON.stringify((await f.request('/state')).body); assert.ok(!response.includes(fake)); assert.ok(!response.includes('MUST-DROP')); assert.ok(response.includes('test-model'));
-  for (const filename of await fs.readdir(f.dir)) assert.ok(!(await fs.readFile(path.join(f.dir, filename), 'utf8')).includes(fake));
+  for (const entry of await fs.readdir(f.dir, { withFileTypes: true })) if (entry.isFile()) assert.ok(!(await fs.readFile(path.join(f.dir, entry.name), 'utf8')).includes(fake));
   await f.restart(); const key = scopeKey('development', 'p', 'main', 'root'); assert.equal((await f.app.storage.credentials(key)).default.apiKey, fake);
 });
 test('相同输入去重；暂停后有线索也不运行；崩溃保留记录并停用', async t => {

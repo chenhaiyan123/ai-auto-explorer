@@ -8,7 +8,7 @@ export default function IOSWelcome({ onContinue }: { onContinue: () => void }) {
     <h1 className="text-3xl font-semibold leading-tight">{t('让值得关心的问题，\n继续生长。', 'Keep your curiosity alive.')}</h1>
     <p className="mt-5 text-slate-300 leading-7">{t('随时查看项目、核对事实，与 AI 团队交流。开启云端长期关注后，即使退出 App，研究也会按计划继续。', 'Review projects and evidence, and talk with your AI team. Enable ongoing cloud research to keep watching while the app is closed.')}</p>
     <div className="mt-7 rounded-2xl border border-slate-800 p-4 text-sm text-slate-400 space-y-3">
-      <p>{t('笔记目前保存在此设备，网页登录后的笔记不会自动同步到手机。请保留原设备的数据备份。', 'Notes currently stay on this device. Website notes do not automatically sync to your phone. Keep a backup on your original device.')}</p>
+      <p>{t('在个人中心开启「项目同步」，可与同一邮箱的网页账号交换项目和笔记。首次请先在原网页端同步，再到手机载入。', 'Enable Project sync in your account to share projects and notes with the website using the same email. First sync from the original browser, then load on your phone.')}</p>
       <p>{t('重要变化可以发到登录邮箱。原生推送和应用内购买尚未开放。', 'Important updates can go to your login email. Native push and in-app purchases are not enabled yet.')}</p>
     </div>
     <button onClick={onContinue} className="mt-8 min-h-12 rounded-xl bg-blue-600 text-white font-medium py-3">{t('开始探索', 'Start exploring')}</button>

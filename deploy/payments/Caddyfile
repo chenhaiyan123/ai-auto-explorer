@@ -3,7 +3,12 @@
 }
 
 {$PAYMENT_DOMAIN} {
-	request_body {
+	@projectSync path /projects/workspace
+	request_body @projectSync {
+		max_size 12MB
+	}
+	@otherRequests not path /projects/workspace
+	request_body @otherRequests {
 		max_size 300KB
 	}
 	# No access log, request body logging or application payload transformations.

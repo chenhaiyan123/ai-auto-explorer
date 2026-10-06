@@ -42,9 +42,11 @@ export async function idbSet(key: string, value: any): Promise<void> {
   try {
     const db = await openDB();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite').objectStore(STORE).put(value, key);
-      tx.onsuccess = () => resolve();
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(value, key);
+      tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('storage transaction aborted'));
     });
   } catch (e) {
     try { localStorage.setItem(key, JSON.stringify(value)); }

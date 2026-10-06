@@ -65,7 +65,8 @@ import {
 } from './services/routeService';
 import { ExplorationRoute, RouteAnchor, ANCHOR_METHOD_LABEL, Outline, ExplorationPace } from './types';
 import { loadLLMSettings, isTrialMode, getTrialQuota, hasTrialBackend } from './services/llmProvider';
-import { getWithMigration, idbSet } from './services/storage';
+import { loadWorkspace, saveWorkspace } from './services/projectSync';
+import ProjectSyncPanel from './components/ProjectSyncPanel';
 
 // ========== Agent 类型 ==========
 interface Agent {
@@ -836,6 +837,9 @@ const App: React.FC = () => {
   }, [theme]);
 
   const [projects, setProjects] = useState<Project[]>([]);
+  const [loadedOwner, setLoadedOwner] = useState<string | null>(null);
+  const [showProjectSync, setShowProjectSync] = useState(false);
+  const [projectSyncStatus, setProjectSyncStatus] = useState('');
   const inquiryTeams = useInquiryTeams(projects, setProjects, user?.username);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPhone, setLoginPhone] = useState('');
@@ -1080,15 +1084,16 @@ const App: React.FC = () => {
   }, [notesPanelMode]);
 
   useEffect(() => {
+    setLoadedOwner(null); setShowProjectSync(false); setProjectSyncStatus('');
     if (!user) { setProjects([]); setCurrentProjectId(null); return; }
-    const k = `exploration_projects_${user.username}`;
     let cancelled = false;
     (async () => {
       let p: Project[] | undefined;
-      try { p = await getWithMigration<Project[]>(k); } catch { p = undefined; }
+      try { p = await loadWorkspace(user.username); } catch { p = undefined; }
       if (cancelled) return;
       const list = (Array.isArray(p) ? p : []).map(ensureOverview).map(project => ensureWorktree({ ...project, inquiries: Object.fromEntries(Object.entries(project.inquiries || {}).map(([id, workspace]) => [id, recoverInquiry(workspace)])) }));
       setProjects(list);
+      setLoadedOwner(user.username);
       setCurrentProjectId(null);
       if (list.length === 0) setShowMetaModal(true);
     })();
@@ -1113,7 +1118,7 @@ const App: React.FC = () => {
   const filteredNodes = useMemo(() => { if (!focusedNodeId) return nodes; const vis = new Set<string>([focusedNodeId]); const findA = (id: string) => { const n = nodes.find(x => x.id === id); if (n) n.dependencies.forEach(d => { if (!vis.has(d)) { vis.add(d); findA(d); } }); }; const findD = (id: string) => { nodes.forEach(n => { if (n.dependencies.includes(id) && !vis.has(n.id)) { vis.add(n.id); findD(n.id); } }); }; findA(focusedNodeId); findD(focusedNodeId); return nodes.filter(n => vis.has(n.id)); }, [nodes, focusedNodeId]);
   const criticalNodes = useMemo(() => nodes.filter(n => n.isCritical), [nodes]);
 
-  useEffect(() => { if (user && projects.length > 0) idbSet(`exploration_projects_${user.username}`, projects).catch(e => console.warn('[HiExplore] 保存项目失败', e)); }, [projects, user?.username]);
+  useEffect(() => { if (user && loadedOwner === user.username) saveWorkspace(user.username, projects).catch(() => setProjectSyncStatus(ui('本地保存失败，请保留此页面并检查设备空间', 'Local save failed. Keep this page open and check storage.'))); }, [projects, user?.username, loadedOwner]);
   useEffect(() => {
     const p = projects.find(x => x.id === currentProjectId);
     if (p) {
@@ -3102,10 +3107,12 @@ ${plan.lead.duty}
 
       {/* 设置：模型接入 / IoT 设备 */}
       {showUserMenu && user && <PersonalCenter name={user.username || ui('用户', 'User')} email={user.email} pro={isPremiumUser} model={activeModel} trial={trialQuota}
+        onSync={user.email ? () => setShowProjectSync(true) : undefined} syncStatus={projectSyncStatus}
         onClose={() => setShowUserMenu(false)} onBilling={() => setShowPremiumModal(true)} onUsage={() => setShowSharedModels(true)} onSettings={() => setShowSettingsModal(true)}
         onProjects={() => setShowProjectManager(true)} onHelp={() => setShowHelpModal(true)} onFeedback={() => { setShowFeedback(true); trackEvent('feedback_open'); }}
         onDownload={IS_DESKTOP ? undefined : () => setShowDownloadModal(true)} onAdmin={isBackendAdmin ? () => { setAdminInitialTab('models'); setShowAdminDashboard(true); } : undefined}
         onLogout={() => { auth.logout(); setUser(null); }} />}
+      {user?.email && loadedOwner === user.username && <ProjectSyncPanel key={user.username} owner={user.username} projects={projects} busy={worktreeBusy} open={showProjectSync} onClose={() => setShowProjectSync(false)} onStatus={setProjectSyncStatus} />}
       {showSharedModels && <SharedModelsPanel personalOnly onClose={() => setShowSharedModels(false)} />}
       {showSettingsModal && <SettingsModal theme={theme} onThemeChange={setTheme} notificationMode={notificationMode} onNotificationModeChange={setNotificationMode} onClose={() => { setShowSettingsModal(false); try { setActiveModel(loadLLMSettings().model || ''); } catch {} }} />}
 

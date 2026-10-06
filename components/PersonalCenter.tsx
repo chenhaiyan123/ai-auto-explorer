@@ -8,6 +8,7 @@ interface Props {
   onSettings: () => void; onProjects: () => void; onHelp: () => void;
   onFeedback: () => void; onLogout: () => void;
   onDownload?: () => void; onAdmin?: () => void;
+  onSync?: () => void; syncStatus?: string;
 }
 
 export default function PersonalCenter(p: Props) {
@@ -38,6 +39,7 @@ export default function PersonalCenter(p: Props) {
       <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
         {tile(ui('套餐与订单', 'Plans & orders'), ui('查看 Free / Pro、支付订单与下载权益', 'View plans, payment orders and download access'), p.onBilling)}
         {tile(ui('用量与额度', 'Usage & credits'), ui('查看各模型剩余额度与使用记录', 'Check model balances and usage history'), p.onUsage)}
+        {p.onSync && tile(ui('项目同步', 'Project sync'), p.syncStatus || ui('同步网页与 iPhone 上的项目、笔记和事实', 'Sync web and iPhone projects, notes and facts'), p.onSync)}
       </div>
       <button onClick={action(p.onSettings)} className="mt-3 w-full rounded-xl border border-slate-700 p-4 text-left hover:bg-slate-800"><span className="font-medium text-slate-100">{ui('设置', 'Settings')} <span aria-hidden="true" className="float-right text-slate-500">→</span></span><span className="mt-1 block text-xs text-slate-400">{ui('默认模型 · 自有 API · 语言 · 外观 · 通知 · 设备', 'Default model · Your API · Language · Appearance · Notifications · Devices')}</span><span className="mt-2 block text-xs text-slate-500">{ui('默认模型：', 'Default model: ')}{p.model || ui('未配置', 'Not configured')}{p.trial && ` · ${ui('体验剩余', 'Trial remaining')} ${p.trial.remaining}/${p.trial.limit}`}</span></button>
       <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-slate-300">
