@@ -11,6 +11,25 @@ const publicModel = ({ apiKey, ...model }) => ({ ...model, hasKey: !!apiKey });
 const accountKey = owner => createHash('sha256').update(owner).digest('hex');
 const wallet = (s, owner, modelId) => s.accounts[accountKey(owner)]?.balances[modelId];
 const usedToday = (s, id) => s.calls.filter(c => c.modelId === id && c.day === day()).reduce((n, c) => n + (c.charged ?? c.reserved), 0);
+const prepareMessages = messages => {
+  if (!Array.isArray(messages) || !messages.length || messages.length > 100 || messages.some(m => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string')) throw fail('仅支持纯文本对话');
+  const prepared = messages.map(({ role, content }) => ({ role, content }));
+  if (Buffer.byteLength(JSON.stringify(prepared)) > 120000) throw fail('上下文过长，请缩小任务范围');
+  return prepared;
+};
+// Shared by preflight and dispatch; keep the conservative reservation unchanged.
+function checkFunding(s, owner, body, messages) {
+  const settings = s.models[body.modelId]; if (!settings?.enabled || !settings.apiKey) throw fail('共享模型尚未启用或已暂停');
+  if (s.calls.length >= 10000) throw fail('用量记录已达首版上限，请由运维归档');
+  if (s.calls.some(c => c.owner === owner && c.modelId === body.modelId && c.status === 'uncertain')) throw fail('此模型有待核对用量，请联系管理员处理后继续', 409);
+  const maxTokens = Math.min(int(body.maxTokens ?? 2048, 1, 16384, '请求输出上限'), settings.maxOutputTokens);
+  const reserved = Buffer.byteLength(JSON.stringify(messages)) * 2 + 2048 + maxTokens;
+  const available = wallet(s, owner, body.modelId)?.available || 0;
+  if (available < reserved) throw fail(`此模型额度不足：当前可用 ${available} Token，本次需预留 ${reserved} Token，还差 ${reserved - available} Token。预留是保守上限，不是实际费用；可缩小材料范围、换用有额度的模型或接入自有 API`, 402);
+  if (usedToday(s, body.modelId) + reserved > settings.dailyTokens) throw fail(`此共享模型今日额度不足：剩余 ${Math.max(0, settings.dailyTokens - usedToday(s, body.modelId))} Token，本次需预留 ${reserved} Token；等待 UTC 次日重置或选择其他模型`, 429);
+  if (s.calls.some(c => c.owner === owner && c.status === 'reserved')) throw fail('已有共享模型请求执行中，请等待返回', 429);
+  return { settings, maxTokens, reserved };
+}
 
 /** One encrypted ledger and one serialization queue. Requires the wake server's single-process lock. */
 export class SharedModels {
@@ -111,24 +130,23 @@ export class SharedModels {
     if (typeof body.note !== 'string' || !body.note.trim() || body.note.length > 500) throw fail('请填写核对供应商用量的依据');
     return this.settle(body.callId, body.tokens, 'reconciled', body.note.trim(), admin);
   }
+  async preflight(owner, body) {
+    if (!idOK(body.modelId)) throw fail('模型标识无效');
+    const messages = prepareMessages(body.messages);
+    return this.transaction(s => {
+      const { reserved } = checkFunding(s, owner, body, messages);
+      return { requiredTokens: reserved, availableTokens: wallet(s, owner, body.modelId).available };
+    });
+  }
   async invoke(owner, body, scope = {}) {
     if (!idOK(body.requestId) || !idOK(body.modelId)) throw fail('请求标识或共享模型标识无效');
-    if (!Array.isArray(body.messages) || !body.messages.length || body.messages.length > 100 || body.messages.some(m => !m || !['system', 'user', 'assistant'].includes(m.role) || typeof m.content !== 'string')) throw fail('仅支持纯文本对话');
-    const messages = body.messages.map(({ role, content }) => ({ role, content }));
-    const bytes = Buffer.byteLength(JSON.stringify(messages)); if (bytes > 120000) throw fail('上下文过长，请缩小任务范围');
+    const messages = prepareMessages(body.messages);
     const id = createHash('sha256').update(`${owner}:${body.requestId}`).digest('hex');
     // Conservative reservation, not a tokenizer or a promised invoice amount. Actual provider usage settles it.
     const reservation = await this.transaction(s => {
       if (s.calls.some(c => c.id === id)) throw fail('此请求已受理，不会重复调用或扣款；请查看使用记录', 409);
-      const settings = s.models[body.modelId]; if (!settings?.enabled || !settings.apiKey) throw fail('共享模型尚未启用或已暂停');
-      if (s.calls.length >= 10000) throw fail('用量记录已达首版上限，请由运维归档');
-      if (s.calls.some(c => c.owner === owner && c.modelId === body.modelId && c.status === 'uncertain')) throw fail('此模型有待核对用量，请联系管理员处理后继续', 409);
-      const maxTokens = Math.min(int(body.maxTokens ?? 2048, 1, 16384, '请求输出上限'), settings.maxOutputTokens);
-      const reserved = bytes * 2 + 2048 + maxTokens;
+      const { settings, maxTokens, reserved } = checkFunding(s, owner, body, messages);
       const balance = wallet(s, owner, body.modelId);
-      if (!balance || balance.available < reserved) throw fail(`此模型额度不足，本次需预留 ${reserved} Token；可联系管理员增加额度或使用自己的 API Key`, 402);
-      if (usedToday(s, body.modelId) + reserved > settings.dailyTokens) throw fail('此共享模型今日额度已用完', 429);
-      if (s.calls.some(c => c.owner === owner && c.status === 'reserved')) throw fail('已有共享模型请求执行中，请等待返回', 429);
       balance.available -= reserved; balance.held += reserved;
       s.calls.push({ id, requestId: body.requestId, owner, modelId: body.modelId, model: settings.model, provider: settings.provider,
         reserved, status: 'reserved', day: day(), at: Date.now(), scope });

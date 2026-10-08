@@ -40,6 +40,45 @@ async function fund(f, tokens) {
   assert.equal((await f.req('/admin/shared/models', 'PUT', model, 'admin')).status, 200);
   assert.equal((await f.req('/admin/shared/grants', 'POST', grant('user@example.test', tokens), 'admin')).status, 200);
 }
+test('额度预检与真实预留相同，预检不扣额度、不生成调用且不向供应商发请求', async t => {
+  const f = await fixture(t); await fund(f, 100000);
+  const shared = new SharedModels(f.app.storage, new Set(['api.deepseek.com']), async () => { throw new Error('unexpected network'); }, async () => { throw new Error('unexpected quota'); });
+  const body = { ...chat(), messages: [{ role: 'user', content: '中文材料'.repeat(500) }], maxTokens: 8000 };
+  const before = (await f.req('/shared/catalog')).body;
+  const quote = await shared.preflight('user@example.test', body);
+  assert.equal(quote.requiredTokens, Buffer.byteLength(JSON.stringify(body.messages)) * 2 + 2048 + model.maxOutputTokens);
+  assert.deepEqual((await f.req('/shared/catalog')).body, before); assert.equal(f.requests.length, 0);
+  assert.equal((await f.req('/shared/chat', 'POST', body)).status, 200);
+  const after = (await f.req('/shared/catalog')).body;
+  assert.equal(after.calls[0].reserved, quote.requiredTokens);
+  assert.equal(after.balances[model.id].spent, 100);
+});
+test('超过固定门槛的余额仍可能不足：激活和高级恢复均在创建研究前拒绝', async t => {
+  const f = await fixture(t); await fund(f, 5000);
+  const input = { context: { ...ctx, background: '长篇背景资料'.repeat(1000) }, modelId: model.id, paperQuery: '' };
+  const result = await f.req('/activate' + query, 'POST', input);
+  assert.equal(result.status, 402); assert.match(result.body.error, /当前可用 5000 Token.*需预留.*还差/);
+  assert.equal((await f.req('/state' + query)).body.state, null);
+  assert.deepEqual((await f.req('/state' + query)).body.models, {});
+  await f.req('/context' + query, 'PUT', input.context);
+  await f.req('/model' + query, 'PUT', { role: 'default', provider: 'platform', model: model.id });
+  const before = (await f.req('/state' + query)).body.state;
+  const resume = await f.req('/policy' + query, 'PUT', { enabled: true });
+  assert.equal(resume.status, 402);
+  assert.deepEqual((await f.req('/state' + query)).body.state, before);
+  const catalog = (await f.req('/shared/catalog')).body;
+  assert.equal(catalog.balances[model.id].available, 5000); assert.equal(catalog.calls.length, 0); assert.equal(f.requests.length, 0);
+});
+test('预检不预支整轮保证：启用后新增材料，调度仍按最新请求拒绝不足额度', async t => {
+  const f = await fixture(t); await fund(f, 30000);
+  assert.equal((await f.req('/activate' + query, 'POST', { context: ctx, modelId: model.id, paperQuery: '' })).status, 200);
+  assert.equal(f.requests.length, 0);
+  await f.req('/context' + query, 'PUT', { ...ctx, background: '新增的大量中文资料'.repeat(1000) });
+  await f.app.tick();
+  const result = (await f.req('/state' + query)).body.state;
+  assert.equal(result.status, 'blocked'); assert.match(result.reason, /需预留/); assert.equal(f.requests.length, 0);
+  assert.equal((await f.req('/shared/catalog')).body.balances[model.id].available, 30000);
+});
 test('只有服务端指定的真实身份能管理模型，前端 admin 标志无效', async t => {
   const f = await fixture(t);
   assert.equal((await f.req('/admin/shared')).status, 403);
@@ -87,7 +126,14 @@ test('共享密钥不回显且加密落盘；调用只使用后台模型和密�
   assert.equal(outgoing.options.headers.Authorization, `Bearer ${model.apiKey}`);
   assert.equal(JSON.parse(outgoing.options.body).model, 'fake-model');
   for (const route of ['/shared/catalog', '/admin/shared']) assert.ok(!JSON.stringify((await f.req(route, 'GET', undefined, 'admin')).body).includes(model.apiKey));
-  for (const name of await fs.readdir(f.dir)) assert.ok(!(await fs.readFile(path.join(f.dir, name), 'utf8')).includes(model.apiKey));
+  const inspect = async dir => {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) await inspect(file);
+      else assert.ok(!(await fs.readFile(file, 'utf8')).includes(model.apiKey));
+    }
+  };
+  await inspect(f.dir);
   const denied = await f.req('/admin/shared/models', 'PUT', { ...model, baseUrl: 'https://127.0.0.1' }, 'admin'); assert.equal(denied.status, 400);
 });
 test('额度按实际 Token 结算、不同用户与模型隔离、重复请求不会再调用', async t => {

@@ -1,9 +1,28 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createAwakening, configureAwakening, enqueueWake, recoverAwakening, availableCalls, visibleWakeStatus, wakePolicy, type Awakening, type WakeEvent } from '../services/awakening';
-import { runWake, type WakeRuntime } from '../services/wakeRunner';
+import { runWake, previewWakeRequest, type WakeRuntime } from '../services/wakeRunner';
 
 const event = (id = 'e1'): WakeEvent => ({ id, kind: 'input', title: '实验失败', body: '翻译测试在噪声条件下失败，需重新设计验证', source: '用户测试日志', at: 1000, status: 'pending' });
+test('首请求预检使用真实调度提示词，但不消费线索、预算或调用模型', async () => {
+  const f = fixture(); f.enqueue();
+  f.state.context.language = 'en';
+  f.state.nextReviewAt = f.rt.now();
+  const before = structuredClone(f.state);
+  const preview = await previewWakeRequest(f.state, f.rt.now());
+  assert.ok(preview.request); assert.deepEqual(f.state, before); assert.equal(f.calls.length, 0);
+  let actual; const original = f.rt.model;
+  f.rt.model = async (role, messages, state) => { actual ||= { role, messages, maxTokens: state.policy.maxOutputTokens }; return original(role, messages, state); };
+  await runWake(f.rt);
+  assert.deepEqual(preview.request, actual);
+});
+test('没有待处理线索时预检不伪造请求；预算不足时给出原调度阻塞原因', async () => {
+  const f = fixture();
+  assert.equal((await previewWakeRequest(f.state, f.rt.now())).request, undefined);
+  f.enqueue(); f.state.budget.calls = f.state.policy.maxCallsPerDay;
+  const result = await previewWakeRequest(f.state, f.rt.now());
+  assert.equal(result.request, undefined); assert.match(result.blockedReason!, /预算重置/);
+});
 function fixture() {
   let now = Date.UTC(2026, 8, 9, 10); let serial = 0;
   let state = createAwakening({ projectId: 'p', branchId: 'b', scopeId: 'root', question: '眼镜能否在噪声中可靠翻译？', background: '', facts: [], agents: {} }, now);

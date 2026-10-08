@@ -145,7 +145,7 @@ test('一键开启验证模型与额度、只领取一次，重试和重启不�
 test('无额度不会开启研究；邮件收件人只能由服务端认证身份决定', async t => {
   const f = await setup(t, { env: { WAKE_ADMIN_IDENTITIES: 'development' } });
   await f.request('/admin/shared/models', 'PUT', { id: 'deepseek', label: 'DeepSeek', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'fake-model', apiKey: 'FAKE_TEST_ONLY', enabled: true, dailyTokens: 100000, maxOutputTokens: 2048 });
-  assert.equal((await f.request('/activate', 'POST', { context, modelId: 'deepseek', paperQuery: '' })).status, 400);
+  assert.equal((await f.request('/activate', 'POST', { context, modelId: 'deepseek', paperQuery: '' })).status, 402);
   assert.equal((await f.request('/state')).body.state, null);
   const paid = await setup(t, { env: { WAKE_AUTH_API: 'https://auth.example.test', WAKE_DEV_TOKEN: '', RESEND_API_KEY: 'FAKE_TEST_ONLY', MAIL_FROM: 'hello@example.test', WAKE_PUBLIC_URL: 'https://pay.example.test' }, fetch: async () => Response.json({ user: { email: 'owner@example.test' } }) });
   await paid.request('/context', 'PUT', context);

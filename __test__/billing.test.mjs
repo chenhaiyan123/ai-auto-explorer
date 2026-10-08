@@ -126,7 +126,14 @@ test('真实 RSA2 测试签名回调原子开通，重放与重启不重复延�
   assert.equal((await f.req('/billing/account')).body.proUntil, account.proUntil);
   assert.equal((await f.req('/billing/account', 'GET', undefined, 'other')).body.plan, 'free');
   assert.equal((await f.req('/admin/billing', 'GET', undefined, 'admin')).body.totals.paidAmount, 6900);
-  for (const file of await fs.readdir(f.env.WAKE_DATA_DIR)) assert.ok(!(await fs.readFile(path.join(f.env.WAKE_DATA_DIR, file), 'utf8')).includes('user@example.test'));
+  const inspect = async dir => {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) await inspect(file);
+      else assert.ok(!(await fs.readFile(file, 'utf8')).includes('user@example.test'));
+    }
+  };
+  await inspect(f.env.WAKE_DATA_DIR);
 });
 test('丢失回调可经验签查单恢复，其他订单的结果不能错配', async t => {
   const f = await fixture(t); const o = (await f.req('/billing/orders', 'POST', pro())).body;

@@ -8,7 +8,7 @@ import { ProjectSync, readWorkspaceBody } from './project-sync.mjs';
 import { SharedModels } from './shared-models.mjs';
 import { createBilling } from './billing.mjs';
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
-import { createAwakening, enqueueWake, heartbeatAction, configureAwakening, recoverAwakening, runWake, buildModelRequest, parseModelResponse } from './.wake-build/runner.mjs';
+import { createAwakening, enqueueWake, heartbeatAction, configureAwakening, recoverAwakening, runWake, previewWakeRequest, buildModelRequest, parseModelResponse } from './.wake-build/runner.mjs';
 const ROLES = ['manager', 'thinker', 'executor', 'verifier', 'auditor'];
 const hash = text => createHash('sha256').update(text).digest('hex');
 const claimedDirectories = new Set();
@@ -105,6 +105,13 @@ export async function createWakeServer(options = {}) {
   await shared.initialize();
   const notifications = new WakeNotifications(storage, env, externalFetch);
   const activationQueues = new Map();
+  const preflightStart = async (state, credentials) => {
+    const manager = credentials.manager || credentials.default;
+    if (manager?.provider !== 'platform') return;
+    const preview = await previewWakeRequest(state);
+    if (preview.blockedReason) throw new Error(preview.blockedReason);
+    if (preview.request) await shared.preflight(manager.owner, { modelId: manager.model, messages: preview.request.messages, maxTokens: preview.request.maxTokens });
+  };
   const admins = new Set((env.WAKE_ADMIN_IDENTITIES || '').split(',').map(x => x.trim()).filter(Boolean));
   const model = async (key, role, messages, state) => {
     if (options.model) return options.model(role, messages, state);
@@ -276,24 +283,29 @@ export async function createWakeServer(options = {}) {
           const base = old || createAwakening(context);
           const policy = { checkEveryHours: 24, reviewEveryDays: 7, maxCallsPerDay: 8, maxCallsPerWake: 4, maxOutputTokens: 1024, paperQuery: body.paperQuery.trim(), enabled: true };
           configureAwakening(base, policy);
-          await shared.starter(owner, body.modelId, starterTokens, starterPool);
-          const catalog = await shared.view(owner);
-          const selected = catalog.models.find(m => m.id === body.modelId && m.enabled && m.hasKey);
-          if (!selected) throw new Error('请选择已开放的共享模型');
-          if ((catalog.balances[body.modelId]?.available || 0) < 4096) throw new Error('共享模型额度不足 4096 Token，请联系管理员补充，或在唤醒设置中接入自有 API');
-          if (selected.dailyTokens - selected.usedToday < 4096) throw new Error('模型今日剩余额度不足，请选择其他模型或稍后再试');
-          const credentialPrevious = credentialQueues.get(key) || Promise.resolve();
-          const write = credentialPrevious.catch(() => {}).then(() => storage.credentials(key, { default: { provider: 'platform', model: body.modelId, baseUrl: '', owner } }));
-          credentialQueues.set(key, write); await write; if (credentialQueues.get(key) === write) credentialQueues.delete(key);
-          if (body.emailEnabled !== undefined) await notifications.subscribe(owner, key, body.emailEnabled);
-          return storage.update(key, current => {
-            if (current?.policy.enabled || current?.activeRunId) throw new Error('项目状态已变化，请刷新后重试');
+          const prepareActivation = current => {
             const source = current || createAwakening(context);
             const changed = JSON.stringify(source.context) !== JSON.stringify(context);
             let next = { ...source, context, contextVersion: source.contextVersion + (changed ? 1 : 0), updatedAt: Date.now() };
             next = enqueueWake(next, { id: hash(`activation:${JSON.stringify(context)}`), kind: 'input', title: '研究约定与首次规划', body: '先梳理暂定判断、可证伪假设、缺少的证据、等待条件和最小下一步。尚无证据时明确未知，不承诺执行未接入的实验或监测。', source: '用户开启长期关注', at: Date.now(), status: 'pending' });
             if (next.problemHeartbeat?.lifecycle === 'resolved') next.problemHeartbeat = { ...next.problemHeartbeat, lifecycle: 'watching' };
             return configureAwakening(next, policy);
+          };
+          await shared.starter(owner, body.modelId, starterTokens, starterPool);
+          const catalog = await shared.view(owner);
+          const selected = catalog.models.find(m => m.id === body.modelId && m.enabled && m.hasKey);
+          if (!selected) throw new Error('请选择已开放的共享模型');
+          const credentials = { default: { provider: 'platform', model: body.modelId, baseUrl: '', owner } };
+          await preflightStart(prepareActivation(old), credentials);
+          const credentialPrevious = credentialQueues.get(key) || Promise.resolve();
+          const write = credentialPrevious.catch(() => {}).then(() => storage.credentials(key, credentials));
+          credentialQueues.set(key, write); await write; if (credentialQueues.get(key) === write) credentialQueues.delete(key);
+          if (body.emailEnabled !== undefined) await notifications.subscribe(owner, key, body.emailEnabled);
+          return storage.update(key, async current => {
+            if (current?.policy.enabled || current?.activeRunId) throw new Error('项目状态已变化，请刷新后重试');
+            const next = prepareActivation(current);
+            await preflightStart(next, credentials);
+            return next;
           });
         });
         activationQueues.set(key, activate);
@@ -333,7 +345,11 @@ export async function createWakeServer(options = {}) {
           const creds = await storage.credentials(key);
           if (!creds.default && !ROLES.every(role => creds[role])) throw new Error('请先设置后台通用模型，或为全部角色分别配置模型');
         }
-        const state = await storage.update(key, s => configureAwakening(s, body, Date.now()));
+        const state = await storage.update(key, async s => {
+          const next = configureAwakening(s, body, Date.now());
+          if (body.enabled === true && !s.policy.enabled && !s.activeRunId) await preflightStart(next, await storage.credentials(key));
+          return next;
+        });
         send(200, { state }); return;
       }
       if (req.method === 'POST' && url.pathname === '/events') {
