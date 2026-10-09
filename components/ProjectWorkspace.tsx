@@ -1,4 +1,4 @@
-import { t as ui } from '../services/language';
+import { t as ui, useLanguage } from '../services/language';
 import ProjectManagerPanel from './ProjectManagerPanel';
 import ProjectLifePanel from './ProjectLifePanel';
 import React from 'react';
@@ -14,6 +14,7 @@ export default function ProjectWorkspace({ project, scopeId, page, teams, onPage
   onPage: (page: ProjectPage, scopeId?: string) => void; onNote: (id: string) => void;
   worktree: WorktreeActions; busy: boolean; onStop: () => void; onGenerateReport?: () => void; generating?: boolean; onSaveBrief?: (text: string) => void; onSaveSummary?: (id: string, text: string) => void; routePanel?: React.ReactNode;
 }) {
+  const { t } = useLanguage();
   const idea = project.nodes.find(n => n.id === scopeId);
   const scope = idea ? scopeId : 'root';
   return <div className="h-full flex flex-col min-h-0 bg-slate-950 text-slate-200">
@@ -24,7 +25,10 @@ export default function ProjectWorkspace({ project, scopeId, page, teams, onPage
     </header>
     <div className={`flex-1 min-h-0 ${page === 'team' || page === 'facts' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
       <div className={page === 'research' ? 'max-w-6xl mx-auto px-4 pt-4 md:px-6 md:pt-6' : 'hidden'}><ProjectLifePanel key={`${project.id}:${project.worktree?.activeBranchId || 'main'}:${scope}`} project={project} scopeId={scope} teams={teams} browserBusy={busy} onFacts={() => onPage('facts', scope)} onPage={onPage} onNote={onNote} /></div>
-      {page === 'research' && <ProjectHome project={project} scopeId={scope} onPage={onPage} onNote={onNote} onGenerateReport={onGenerateReport} generating={generating} onSaveBrief={onSaveBrief} onSaveSummary={onSaveSummary} routePanel={routePanel} manager={scope === 'root' ? <details className="rounded-xl border border-blue-500/30 p-4"><summary className="cursor-pointer text-sm font-semibold text-blue-300">{ui("与 AI 项目经理沟通 · 梳理进展与下一步")}</summary><div className="mt-3"><ProjectManagerPanel key={project.id} project={project} teams={teams} onTeam={() => onPage('team', 'root')} /></div></details> : undefined} />}
+      {page === 'research' && <div className="max-w-6xl mx-auto p-4 md:px-6 space-y-4">
+        {scope === 'root' && <details className="rounded-xl border border-blue-500/30 p-4"><summary className="cursor-pointer text-sm font-semibold text-blue-300">{ui("与 AI 项目经理沟通 · 梳理进展与下一步")}</summary><div className="mt-3"><ProjectManagerPanel key={project.id} project={project} teams={teams} onTeam={() => onPage('team', 'root')} /></div></details>}
+        <details className="rounded-xl border border-slate-700 p-4"><summary className="cursor-pointer text-sm">{t('项目资料、笔记与研究详情', 'Project materials, notes & research details')}</summary><ProjectHome project={project} scopeId={scope} onPage={onPage} onNote={onNote} onGenerateReport={onGenerateReport} generating={generating} onSaveBrief={onSaveBrief} onSaveSummary={onSaveSummary} routePanel={routePanel} /></details>
+      </div>}
       {(page === 'team' || page === 'facts') && <InquiryPanel key={`${project.id}:${scope}`} project={project} nodes={project.nodes} scopeId={scope} mode={page} teams={teams} onOpenFacts={() => onPage('facts', scope)} />}
       {page === 'worktree' && <ExplorationWorktree project={project} actions={worktree} busy={busy} onStop={onStop} />}
     </div>

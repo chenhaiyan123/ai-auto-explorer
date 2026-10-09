@@ -1,3 +1,4 @@
+import ProjectBrief from './ProjectBrief';
 import ResearchActivation from './ResearchActivation';
 import ExplorationLoop from './ExplorationLoop';
 import type { ProjectPage } from '../services/projectWorktree';
@@ -8,7 +9,7 @@ import SharedModelPicker from './SharedModelPicker';
 import React, { useEffect, useRef, useState } from 'react';
 import type { Project } from '../types';
 import { INQUIRY_ROLES } from '../services/inquiry';
-import { WAKE_DEFAULTS, visibleWakeStatus, utcDay, type WakePolicy, type Awakening } from '../services/awakening';
+import { WAKE_DEFAULTS, utcDay, type WakePolicy, type Awakening } from '../services/awakening';
 import { WAKE_API, projectWakeContext, wakeRequest, type WakeReply } from '../services/wakeClient';
 import type { useInquiryTeams } from '../services/useInquiryTeams';
 
@@ -20,8 +21,11 @@ const kinds = { hypothesis: '假设', plan: '待执行计划', observation: '候
 
 export default function ProjectLifePanel({ project, scopeId, teams, onFacts, browserBusy, onPage, onNote }: { project: Project; scopeId: string; teams: ReturnType<typeof useInquiryTeams>; onFacts: () => void; browserBusy?: boolean; onPage?: (page: ProjectPage, scopeId?: string) => void; onNote?: (id: string) => void }) {
   const { t } = useLanguage();
-  const heartbeatPanel = useRef<HTMLDivElement>(null);
-  const runsPanel = useRef<HTMLDivElement>(null);
+  const heartbeatPanel = useRef<HTMLDetailsElement>(null);
+  const runsPanel = useRef<HTMLDetailsElement>(null);
+  const openDetails = (ref: React.RefObject<HTMLDetailsElement | null>) => {
+    if (ref.current) { ref.current.open = true; ref.current.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+  };
   const context = projectWakeContext(project, scopeId);
   const current = useRef(context); current.current = context;
   const [reply, setReply] = useState<WakeReply>();
@@ -33,7 +37,6 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
   const [clue, setClue] = useState(''); const [source, setSource] = useState('');
   const [model, setModel] = useState({ role: 'default', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: '', apiKey: '' });
   const state = reply?.state || undefined;
-  const status = visibleWakeStatus(state, connected);
   const refresh = async (signal?: AbortSignal) => {
     const result = await wakeRequest(current.current, '/state', 'GET', undefined, signal);
     if (!alive.current) return;
@@ -92,20 +95,19 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
     onFacts();
   };
   return <section aria-label={ui("智能生命体")} className="rounded-xl border border-emerald-800/60 bg-slate-900/70 p-4 space-y-4">
-    <div className="flex flex-wrap items-center gap-2"><span aria-hidden className={`h-2.5 w-2.5 rounded-full ${status.active ? 'bg-emerald-400 shadow-[0_0_10px_#34d399]' : status.status === 'blocked' ? 'bg-amber-400' : 'bg-slate-600'}`} /><h3 className="text-sm font-semibold">{ui("AI 项目经理 ·")}{ui(status.label)}</h3><button className={`${button} ml-auto`} onClick={() => setSettings(!settings)}>{ui("唤醒设置")}</button></div>
-    <p className="text-xs text-slate-400">{state?.reason || ui("有新线索时推进，有证据时更新认知，其余时间安静等待。")}</p>
-    <ExplorationLoop project={project} scopeId={scopeId} state={state} connected={connected} runningScopes={Object.keys(project.inquiries || {}).filter(id => teams.isRunning(project.id, id))} onPage={onPage} onNote={onNote} onHeartbeat={() => heartbeatPanel.current?.scrollIntoView({ block: 'start' })} onRuns={() => runsPanel.current?.scrollIntoView({ block: 'start' })} />
+    <div className="flex items-center justify-between gap-2"><h3 className="text-xs text-slate-400">{t('AI 项目经理 · 项目近况', 'AI project manager · Brief')}</h3><button className={button} aria-expanded={settings} onClick={() => setSettings(!settings)}>{t('研究设置', 'Research settings')}</button></div>
+    <ProjectBrief project={project} scopeId={scopeId} state={state} connected={connected} runningScopes={Object.keys(project.inquiries || {}).filter(id => teams.isRunning(project.id, id))} onFacts={onFacts} onReview={() => openDetails(heartbeatPanel)} onSettings={() => setSettings(true)} onTeam={() => onPage?.('team', scopeId)} />
     {!WAKE_API && <p className="text-xs text-amber-300">{ui("云端执行器待接入。目前关闭页面后不会继续研究。")}</p>}
     {reply?.testMode && <p className="text-xs text-amber-300">{ui("本机模拟环境 · 不调用真实模型，结果只用于验证流程。")}</p>}
-    {state && <div className="flex flex-wrap gap-x-5 gap-y-2 text-[11px] text-slate-400"><span>{ui("待处理线索")}{state.events.filter(e => e.status === 'pending').length}</span><span>{ui("今日调用")}{state.budget.day === utcDay(Date.now()) ? state.budget.calls : 0} / {state.policy.maxCallsPerDay}</span><span>{ui("下次检查")}{state.policy.enabled ? when(state.nextCheckAt) : ui("已暂停")}</span><span>{ui("策略复盘")}{state.policy.enabled ? when(state.nextReviewAt) : ui("已暂停")}</span></div>}
+    {settings && state && <div className="flex flex-wrap gap-x-5 gap-y-2 text-[11px] text-slate-400"><span>{ui("待处理线索")}{state.events.filter(e => e.status === 'pending').length}</span><span>{ui("今日调用")}{state.budget.day === utcDay(Date.now()) ? state.budget.calls : 0} / {state.policy.maxCallsPerDay}</span><span>{ui("下次检查")}{state.policy.enabled ? when(state.nextCheckAt) : ui("已暂停")}</span><span>{ui("策略复盘")}{state.policy.enabled ? when(state.nextReviewAt) : ui("已暂停")}</span></div>}
     {error && <p role="alert" className="text-xs text-rose-300">{error}</p>}{message && <p role="status" className="text-xs text-emerald-300">{message}</p>}
-    {WAKE_API && !state?.policy.enabled && <ResearchActivation busy={busy} starterTokens={reply?.starterTokens || 0} mailReady={!!reply?.notifications?.ready} recipient={reply?.notifications?.recipient || ''}
+    {WAKE_API && !state?.policy.enabled && <details className="rounded-lg border border-emerald-800/50 p-3"><summary className="cursor-pointer text-sm text-emerald-300">{t('开启或恢复长期关注', 'Start or resume ongoing research')}</summary><div className="mt-3"><ResearchActivation busy={busy} starterTokens={reply?.starterTokens || 0} mailReady={!!reply?.notifications?.ready} recipient={reply?.notifications?.recipient || ''}
       onAdvanced={() => setSettings(true)} onStart={(modelId, paperQuery, emailEnabled) => act(async () => {
         if (browserBusy || teams.isProjectRunning(project.id)) throw new Error(t('请先暂停浏览器研究并等待完成。', 'Pause browser research and wait for it to finish first.'));
         await wakeRequest(context, '/activate', 'POST', { context, modelId, paperQuery, emailEnabled });
         policyLoaded.current = false;
         setMessage(t('已开启云端长期关注，关闭电脑后也会按计划继续。首次研究将在调度器运行时开始。', 'Cloud research is enabled and continues when your computer is off. The first run starts on the scheduler.'));
-      })} />}
+      })} /></div></details>}
     {state && <details className="rounded-xl border border-slate-700 bg-slate-950/40 p-4 space-y-2" aria-label={t('研究约定', 'Research agreement')}>
       <summary className="text-sm font-semibold cursor-pointer">{t('我们接下来怎样研究', 'Our research agreement')}</summary>
       <p className="text-sm">{state.runs.at(-1)?.plan?.hypothesis || t('尚未形成可验证假设；首轮项目经理会明确问题和证据缺口。', 'No testable hypothesis yet. The first run will clarify the question and evidence gaps.')}</p>
@@ -115,7 +117,7 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
       <p className="text-xs text-slate-400">{t('观察来源：', 'Watching: ')}{state.policy.paperQuery ? `Crossref · ${state.policy.paperQuery}` : t('你提交的资料或实验结果；尚未接入自动外部来源', 'Your submitted materials or results; no automated external source configured')}</p>
       <p className="text-xs text-slate-500">{t('最近实际检查：', 'Last actual check: ')}{when(state.lastCheckedAt)} · {t('下次检查：', 'Next check: ')}{state.policy.enabled ? when(state.nextCheckAt) : t('已暂停', 'Paused')}</p>
     </details>}
-    {state && reply?.notifications && <section className="rounded-lg border border-slate-700 p-3 space-y-2">
+    {settings && state && reply?.notifications && <section className="rounded-lg border border-slate-700 p-3 space-y-2">
       <label className="flex gap-2 text-sm"><input type="checkbox" checked={reply.notifications.enabled} disabled={busy || (!reply.notifications.enabled && !reply.notifications.ready)} onChange={e => { const enabled = e.target.checked; void act(async () => { await wakeRequest(context, '/notifications', 'PUT', { enabled }); }); }} />{t('重要变化发送邮件', 'Email meaningful updates')}</label>
       <p className="text-xs text-slate-400">{reply.notifications.ready ? `${t('发送到登录邮箱：', 'To your verified login email: ')}${reply.notifications.recipient}` : t('服务端发信配置尚未完成；站内提醒照常保留。', 'Server email setup is incomplete; in-app updates remain available.')}</p>
       <p className="text-xs text-slate-500">{t('仅提醒有依据的判断变化、需要你的待办或运行受阻；不发送普通检查。每个账号每 24 小时最多 2 封，至少间隔 12 小时。安静模式不发邮件。', 'Only evidence-backed judgment changes, decisions or blocked research. No routine-check emails. At most 2 per account per 24 hours, at least 12 hours apart. Quiet mode suppresses email.')}</p>
@@ -141,8 +143,9 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
       </div></details>
     </div>}
     {WAKE_API && <details><summary className="cursor-pointer text-xs text-blue-300">{ui("提供新线索，唤醒下一步研究")}</summary><div className="mt-3 space-y-2"><textarea aria-label={ui("新线索内容")} className={field} rows={3} value={clue} maxLength={12000} onChange={e => setClue(e.target.value)} placeholder={ui("实验结果、失败记录、新发现或想进一步追问的问题…")} /><input aria-label={ui("线索来源")} className={field} value={source} onChange={e => setSource(e.target.value)} placeholder={ui("来源链接、数据文件位置或实验记录（可选）")} /><button className={button} disabled={busy || !clue.trim()} onClick={submit}>{ui("保存线索")}</button></div></details>}
-    {state && <div ref={heartbeatPanel}><ProblemHeartbeatPanel state={state} busy={busy} act={body => act(async () => { await wakeRequest(context, '/heartbeat', 'POST', body); })} /></div>}
-    {!!state?.runs.length && <div ref={runsPanel} className="space-y-3"><div className="flex items-center justify-between"><h4 className="text-xs font-semibold">{ui("这段时间的进展")}</h4><button className="text-xs text-blue-300" onClick={() => { const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `research-${project.id}-${scopeId}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }}>{ui("导出完整记录")}</button></div>
+    <details className="rounded-lg border border-slate-700 p-3" ref={heartbeatPanel}><summary className="cursor-pointer text-sm">{t('重要更新、待办与判断记录', 'Updates, decisions & judgments')}</summary><div className="mt-4">{state ? <ProblemHeartbeatPanel state={state} busy={busy} act={body => act(async () => { await wakeRequest(context, '/heartbeat', 'POST', body); })} /> : <p className="text-xs text-slate-400">{t('尚无云端记录，可先查看事实看板或开启长期关注。', 'No cloud records yet. Review the fact board or start ongoing research.')}</p>}</div></details>
+    <details className="rounded-lg border border-slate-700 p-3"><summary className="cursor-pointer text-sm">{t('探索循环 · 查看当前环节', 'Exploration loop · view current stage')}</summary><div className="mt-4"><ExplorationLoop project={project} scopeId={scopeId} state={state} connected={connected} runningScopes={Object.keys(project.inquiries || {}).filter(id => teams.isRunning(project.id, id))} onPage={onPage} onNote={onNote} onHeartbeat={() => openDetails(heartbeatPanel)} onRuns={() => openDetails(runsPanel)} /></div></details>
+    {!!state?.runs.length && <details ref={runsPanel} className="rounded-lg border border-slate-700 p-3"><summary className="cursor-pointer text-sm">{t('完整运行记录', 'Full run history')} · {state.runs.length}</summary><div className="space-y-3 mt-4"><div className="flex items-center justify-between"><h4 className="text-xs font-semibold">{ui("这段时间的进展")}</h4><button className="text-xs text-blue-300" onClick={() => { const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `research-${project.id}-${scopeId}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }}>{ui("导出完整记录")}</button></div>
       {state.runs.slice(-10).reverse().map(run => <details key={run.id} className="rounded-lg border border-slate-700 p-3"><summary className="cursor-pointer text-xs"><span className="text-emerald-300">{ui(resultLabels[run.outcome])}</span><span className="ml-2 text-slate-500">{when(run.startedAt)}</span><p className="mt-2 text-slate-300">{run.summary || run.reason}</p></summary><div className="mt-3 space-y-3 text-xs"><p>{ui("唤醒原因：")}{run.reason}</p><p className="text-amber-200">{ui("下一步：")}{run.next || ui("研究中")}</p>
         {run.findings?.map((f, i) => <div key={i} className="border-l-2 border-blue-600 pl-3"><p>{ui(kinds[f.kind])}：{f.claim}</p><p className="text-[11px] text-slate-500 break-all">{ui("依据：")}{f.evidenceIds.join('、') || ui("规划性推断，无已确认事实")}</p>{['observation', 'limitation'].includes(f.kind) && <button className="mt-1 text-blue-300" onClick={() => adopt(run, i)}>{ui("送事实看板核验 →")}</button>}</div>)}
         <p className="text-slate-500">{ui("记忆依据：本轮读取")}{run.contextSnapshot?.facts.filter(f => f.status === 'confirmed').length || 0}{ui("条已确认事实。候选发现不会自动写入已验证记忆。")}</p>
@@ -151,6 +154,6 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
         {state.events.filter(e => run.eventIds.includes(e.id)).map(e => <details key={e.id}><summary className="cursor-pointer text-blue-300">{ui("线索：")}{e.title}</summary><pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-400">{e.body}</pre>{/^https?:\/\//i.test(e.source) ? <a className="break-all text-blue-300" href={e.source} target="_blank" rel="noreferrer">{ui("查看来源 ↗")}</a> : <p>{e.source}</p>}</details>)}
         {run.steps.map((step, i) => <details key={i}><summary className="cursor-pointer text-slate-400">{ui(INQUIRY_ROLES[step.role].name)} · {step.purpose} · {step.completedAt ? ui("已返回") : ui("尚未返回")}</summary><pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-400">{step.result || ui("请求已预留预算；中断时不会自动重试。")}</pre></details>)}
       </div></details>)}
-    </div>}
+    </div></details>}
   </section>;
 }

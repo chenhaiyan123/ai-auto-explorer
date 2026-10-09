@@ -9,6 +9,7 @@
     "url": "git+https://github.com/chenhaiyan123/ai-auto-explorer.git"
   },
   "scripts": {
+    "test:brief": "esbuild __test__/project-brief.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/project-brief.test.mjs && node node_modules/.cache/project-brief.test.mjs",
     "test:analytics": "node --test __test__/analytics.test.mjs",
     "test:loop": "esbuild __test__/exploration-loop.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/exploration-loop.test.mjs && node node_modules/.cache/exploration-loop.test.mjs",
     "test:billing": "npm run wake:build && node --test __test__/billing.test.mjs __test__/wechat-pay.test.mjs && esbuild __test__/billing-ui.test.tsx --bundle --platform=node --format=esm --packages=external --outfile=node_modules/.cache/hiexplore-billing-ui-test.mjs && node node_modules/.cache/hiexplore-billing-ui-test.mjs",

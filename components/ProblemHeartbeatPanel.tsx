@@ -56,6 +56,6 @@ export default function ProblemHeartbeatPanel({ state, act, busy }: { state: Awa
       </article>)}
     </section>
     <label className="block text-xs text-slate-400">{t('提醒偏好', 'Attention preferences')}<select aria-label="Attention preferences" className={`${input} mt-1`} value={h.preference} disabled={busy} onChange={e => act({ action: 'preferences', preference: e.target.value, priority: h.priority })}><option value="important">{t('只看重要变化', 'Meaningful updates only')}</option><option value="all">{t('包含更多研究更新', 'Include more research updates')}</option><option value="quiet">{t('安静模式（保留必要待办）', 'Quiet mode (required decisions remain)')}</option></select></label>
-    <p className="text-xs text-slate-500">{t('提醒保存在此问题中。可在上方订阅登录邮箱的重要事件邮件；手机推送尚未接入。', 'Updates are saved with this question. Opt in above for important-event emails to your login address; mobile push is not connected.')}</p>
+    <p className="text-xs text-slate-500">{t('提醒保存在此问题中。可在研究设置中订阅登录邮箱的重要事件邮件；手机推送尚未接入。', 'Updates are saved with this question. Opt in through Research settings for important-event emails to your login address; mobile push is not connected.')}</p>
   </div>;
 }
