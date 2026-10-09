@@ -31,7 +31,28 @@ function noTrack(): boolean {
   }
 }
 
-/** Umami：无 cookie、匿名、轻量（~2KB），符合隐私要求，不用弹 cookie 提示 */
+// Only buffer while our script is loading, in memory and for a bounded time.
+// Never replay across visits: a blocked tracker must not accumulate user activity.
+type AnalyticsEvent = { name: string; data?: Record<string, string | number> };
+let loadingAnalytics = false;
+let pendingEvents: AnalyticsEvent[] = [];
+let loadDeadline: ReturnType<typeof setTimeout> | undefined;
+
+function discardPending(): void {
+  loadingAnalytics = false;
+  pendingEvents = [];
+  if (loadDeadline !== undefined) clearTimeout(loadDeadline);
+  loadDeadline = undefined;
+}
+
+function sendEvent(event: AnalyticsEvent): void {
+  try {
+    // A failed network request must not cause an unhandled rejection or retries.
+    void Promise.resolve((window as any).umami?.track?.(event.name, event.data)).catch(() => {});
+  } catch { /* Analytics must never interrupt the application. */ }
+}
+
+/** Load the configured Umami tracker. */
 export function initAnalytics(): void {
   const websiteId = env('VITE_UMAMI_WEBSITE_ID');
   if (!websiteId || noTrack() || document.querySelector('script[data-website-id]')) return;
@@ -40,14 +61,27 @@ export function initAnalytics(): void {
   s.defer = true;
   s.src = env('VITE_UMAMI_SRC') || 'https://cloud.umami.is/script.js';
   s.setAttribute('data-website-id', websiteId);
+  loadingAnalytics = true;
+  loadDeadline = setTimeout(discardPending, 30_000);
+  s.onload = () => {
+    const queued = pendingEvents;
+    discardPending();
+    if (noTrack()) return;
+    for (const event of queued) sendEvent(event);
+  };
+  s.onerror = discardPending;
   document.head.appendChild(s);
 }
 
 /** 自定义事件埋点（Umami 未启用、或本机已排除时静默忽略） */
 export function trackEvent(name: string, data?: Record<string, string | number>): void {
   try {
-    if (noTrack()) return;
-    (window as any).umami?.track?.(name, data);
+    if (noTrack()) { discardPending(); return; }
+    if (loadingAnalytics) {
+      if (pendingEvents.length < 100) pendingEvents.push({ name, data: data ? { ...data } : undefined });
+    } else {
+      sendEvent({ name, data });
+    }
   } catch { /* 忽略 */ }
 }
 
