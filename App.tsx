@@ -1,3 +1,4 @@
+import ServiceMarket from './components/ServiceMarket';
 import { platform } from './services/native';
 import { useLanguage, t as ui } from './services/language';
 import PersonalCenter from './components/PersonalCenter';
@@ -905,6 +906,7 @@ const App: React.FC = () => {
   const [notesSearch, setNotesSearch] = useState('');
   const [showGraphModal, setShowGraphModal] = useState(false); // 图谱弹出层
   const [showFeedback, setShowFeedback] = useState(false); // 反馈弹窗
+  const [showServiceMarket, setShowServiceMarket] = useState(false);
   const [showQuestionBoard, setShowQuestionBoard] = useState(false); // 问题广场
   const [showDownloadModal, setShowDownloadModal] = useState(false); // 下载客户端
   const [teamBusy, setTeamBusy] = useState(false); // AI 组队进行中
@@ -2757,6 +2759,7 @@ ${plan.lead.duty}
             title={ui("问题广场：筛选有价值的问题")}
           >{ui("问题广场", "Questions")}</button>
 
+          <button onClick={() => setShowServiceMarket(true)} className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-[11px] font-medium text-slate-200">{ui('服务广场', 'Services')}</button>
           {/* 通知按钮 */}
           <div className="relative">
             <button 
@@ -3066,6 +3069,7 @@ ${plan.lead.duty}
       {/* 下载客户端 */}
       {showDownloadModal && <DownloadModal onClose={() => setShowDownloadModal(false)} />}
 
+      {showServiceMarket && <ServiceMarket projects={projectsView} currentProjectId={currentProjectId} onClose={() => setShowServiceMarket(false)} onProject={c => { const p = projectsView.find(p => p.id === c.projectId); if (!p) return; openProjectPage(c.projectId, c.branchId === (p.worktree?.activeBranchId || 'main') ? c.scopeId : 'root', c.branchId === (p.worktree?.activeBranchId || 'main') ? 'research' : 'worktree'); setShowServiceMarket(false); }} />}
       {/* 问题广场 */}
       {showQuestionBoard && <QuestionBoard userKey={user?.username || 'guest'} onClose={() => setShowQuestionBoard(false)} onStartProject={(text) => handleCreateProject(text)} />}
 
