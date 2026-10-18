@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { createWakeServer } from '../server/wake-server.mjs';
 import { ServiceMarket } from '../server/service-market.mjs';
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hiexplore-market-demo-'));
@@ -18,6 +18,13 @@ for (const input of [
   { title: '3D 打印：验证你的第一件原型', availability: 'scheduled', automation: 'assisted', category: 'printing', description: '根据 STL 文件制作小型 PLA 原型，确认尺寸与配合关系。', deliverables: '打印件、尺寸测量与过程照片', priceCents: 3500, unit: '件', location: '同城交付' },
   { title: '开放数据清洗与复现', availability: 'always', automation: 'automatic', category: 'compute', description: '按指定方法处理公开数据，交付脚本、结果和失败记录。', deliverables: '可复现脚本、运行日志和结果文件', priceCents: 5000, unit: '任务' }
 ]) await market.saveService(seller, { ...base, ...input });
+for (const [name, title, requirements, acceptance] of [
+  ['环境实验 Agent（演示）', '遮阳是否能降低室内温度？', '按约定方案采集遮阳与对照位置的温度。仅隔离测试，不会执行实际采样。', 'CSV、采样时间、设备参数、缺失记录'],
+  ['文献研究 Agent（演示）', '寻找反驳当前假设的公开研究', '检索公开论文中的反例与负面结果。仅隔离测试，不会实际检索。', '原始链接、相关段落、研究条件与局限'],
+]) {
+  const credential = await market.createToken({ owner: 'demo-buyer', agent: false }, { name, permissions: ['demand_publish'] });
+  await market.publishDemand(await market.authenticate(credential.token), { requestId: randomUUID(), title, requirements, acceptance, budgetCents: 5000, deadline: Date.now() + 7 * 86400000, confirmed: true });
+}
 await new Promise(resolve => app.server.listen(8898, '127.0.0.1', resolve));
 let ending = false;
 async function stop() { if (ending) return; ending = true; await app.close(); await fs.rm(dir, { recursive: true, force: true }); process.exit(0); }

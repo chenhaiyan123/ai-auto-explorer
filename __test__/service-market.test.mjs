@@ -134,6 +134,52 @@ test('HTTP lifecycle: agent scoped auth, private order, persistent delivery inbo
 });
 
 const need = () => ({ requestId: randomUUID(), title: 'Need a calibration run', requirements: 'Collect 60 public readings', acceptance: 'CSV with units and calibration record', budgetCents: 1000, deadline: Date.now() + 86400000, confirmed: true, context: { projectId: 'private-project', branchId: 'main', scopeId: 'root' } });
+test('demand contacts stay private until award and never reach unrelated users or agents', async t => {
+  const f = await setup(t);
+  const d = await f.market.publishDemand(buyer, need());
+  await f.market.respondDemand(seller, d.id, { providerName: 'Test provider', proposal: 'Test measurements', priceCents: 200, deliveryDays: 1, contact: 'private-provider-contact', confirmed: true });
+  for (const actor of [buyer, seller, stranger]) assert.ok(!JSON.stringify((await f.market.view(actor)).demands).includes('private-provider-contact'));
+  const current = (await f.market.view(buyer)).demands[0];
+  await f.market.demandAction(buyer, d.id, { revision: current.revision, action: 'award', bidId: current.bids[0].id, contact: 'private-requester-contact', confirmed: true });
+  assert.equal((await f.market.view(buyer)).orders[0].sellerContact, 'private-provider-contact');
+  assert.equal((await f.market.view(seller)).orders[0].buyerContact, 'private-requester-contact');
+  assert.equal((await f.market.view(stranger)).orders.length, 0);
+  const token = await f.market.createToken(buyer, { name: 'Unrelated agent' });
+  assert.ok(!JSON.stringify(await f.market.view(await f.market.authenticate(token.token))).includes('private-provider-contact'));
+});
+test('two agents over HTTP: publish need, bid, award, deliver, accept and retain unverified evidence', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'market-agents-http-'));
+  const app = await createWakeServer({ env: { WAKE_DATA_DIR: dir, WAKE_MASTER_KEY: randomBytes(32).toString('base64'), WAKE_AUTH_API: 'https://auth.example.test', WAKE_HOST: '127.0.0.1' }, fetch: async (url, opts) => {
+    assert.equal(String(url), 'https://auth.example.test/auth/me', 'No model, payment or device calls');
+    return Response.json({ email: opts.headers.Authorization.replace('Bearer ', '') });
+  } });
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
+  const req = async (actor, route, method = 'GET', body) => {
+    const r = await fetch(`http://127.0.0.1:${app.server.address().port}${route}`, { method, headers: { Authorization: `Bearer ${actor}`, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const result = await r.json(); assert.equal(r.status, 200, JSON.stringify(result)); return result;
+  };
+  const context = { projectId: 'agent-test', branchId: 'main', scopeId: 'root' };
+  await req(buyer.owner, '/context?' + new URLSearchParams(context), 'PUT', { ...context, question: 'Does shading change temperature?', background: '', facts: [], agents: {} });
+  const a = await req(buyer.owner, '/market/tokens', 'POST', { name: 'Environment agent', context, permissions: ['demand_publish', 'order_commit'], maxOrderCents: 500, totalBudgetCents: 500 });
+  const b = await req(seller.owner, '/market/tokens', 'POST', { name: 'Measurement agent', permissions: ['demand_respond', 'order_execute'] });
+  const d = await req(a.token, '/market/demands', 'POST', need());
+  assert.equal(d.requestedBy, 'Environment agent'); assert.deepEqual(d.context, context);
+  await req(b.token, `/market/demands/${d.id}/respond`, 'POST', { proposal: 'Return synthetic readings for software testing only', priceCents: 400, deliveryDays: 1, confirmed: true });
+  const view = (await req(a.token, '/market/state')).demands.find(x => x.id === d.id);
+  assert.equal(view.bids[0].providerName, 'Measurement agent');
+  await req(a.token, `/market/demands/${d.id}/action`, 'POST', { revision: view.revision, action: 'award', bidId: view.bids[0].id, confirmed: true });
+  let o = (await req(b.token, '/market/state')).orders[0];
+  assert.equal(o.status, 'accepted'); assert.equal(o.context, null);
+  o = await req(b.token, `/market/orders/${o.id}/action`, 'POST', { revision: o.revision, action: 'deliver', summary: 'Synthetic test data', source: 'https://example.test/synthetic.csv', limitation: 'No real sensor used' });
+  o = await req(a.token, `/market/orders/${o.id}/action`, 'POST', { revision: o.revision, action: 'complete', note: 'Verified software handoff only, not a scientific finding' });
+  assert.equal(o.status, 'completed'); assert.equal(o.settlement.buyerReportedPaid, false);
+  await app.tick(); await app.tick();
+  const research = await app.storage.read(scopeKey(buyer.owner, context.projectId, context.branchId, context.scopeId));
+  assert.equal(research.events.filter(e => e.title.includes('服务交付')).length, 1);
+  assert.match(research.events.find(e => e.title.includes('服务交付')).body, /尚未核验/);
+  assert.equal(research.context.facts.length, 0); assert.equal(research.runs.length, 0); assert.equal(research.policy.enabled, false);
+});
 test('demand privacy, scoped delegation, concurrent award and lifetime quote caps', async t => {
   const f = await setup(t);
   const bt = await f.market.createToken(buyer, { name: 'Buyer agent', permissions: ['demand_publish','order_commit'], maxOrderCents: 700, totalBudgetCents: 1000, context: { projectId: 'private-project', branchId: 'main', scopeId: 'root' } });

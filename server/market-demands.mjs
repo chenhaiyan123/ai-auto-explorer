@@ -20,7 +20,7 @@ export function demandView(d, actor) {
   const mine = d.owner === actor.owner && (!actor.agent || d.tokenId === actor.tokenId);
   const { owner, tokenId, context, requestKey, requestHash, bids, ...safe } = d;
   return { ...safe, mine, context: mine ? context : null, bidCount: bids.length,
-    bids: bids.filter(b => mine || (b.owner === actor.owner && (!actor.agent || b.tokenId === actor.tokenId))).map(({ owner, tokenId, ...b }) => ({ ...b, mine: owner === actor.owner && (!actor.agent || tokenId === actor.tokenId) })) };
+    bids: bids.filter(b => mine || (b.owner === actor.owner && (!actor.agent || b.tokenId === actor.tokenId))).map(({ owner, tokenId, contact, ...b }) => ({ ...b, mine: owner === actor.owner && (!actor.agent || tokenId === actor.tokenId) })) };
 }
 export function publishDemand(s, actor, input) {
   permitted(s, actor, 'demand_publish');
@@ -42,10 +42,11 @@ export function respondDemand(s, actor, id, input) {
   if (d.owner === actor.owner) throw fail('不能响应自己的需求');
   const prior = d.bids.find(b => b.owner === actor.owner && b.tokenId === (actor.tokenId || null));
   const proposal = text(input.proposal, 2500), priceCents = moneyLimit(input.priceCents), deliveryDays = Number(input.deliveryDays);
-  if (prior) { if (prior.proposal === proposal && prior.priceCents === priceCents && prior.deliveryDays === deliveryDays) return demandView(d, actor); throw fail('已提交方案，首版不支持修改报价', 409); }
+  const contact = input.contact === undefined || input.contact === '' ? '' : text(input.contact, 300);
+  if (prior) { if (prior.proposal === proposal && prior.priceCents === priceCents && prior.deliveryDays === deliveryDays && (prior.contact || '') === contact) return demandView(d, actor); throw fail('已提交方案，首版不支持修改报价', 409); }
   if (d.bids.length >= 50 || priceCents > d.budgetCents || !Number.isInteger(deliveryDays) || deliveryDays < 1 || deliveryDays > 365) throw fail('报价、交期无效或方案数量已满');
   if (input.confirmed !== true) throw fail('请确认具备履约能力且此方案可被委托方选中');
-  d.bids.push({ id: randomUUID(), owner: actor.owner, tokenId: actor.tokenId || null, providerName: actor.agent ? actor.name : text(input.providerName, 80), proposal, priceCents, deliveryDays, createdAt: Date.now() });
+  d.bids.push({ id: randomUUID(), owner: actor.owner, tokenId: actor.tokenId || null, providerName: actor.agent ? actor.name : text(input.providerName, 80), contact, proposal, priceCents, deliveryDays, createdAt: Date.now() });
   d.revision++; return demandView(d, actor);
 }
 export function demandAction(s, actor, id, input) {
@@ -57,12 +58,13 @@ export function demandAction(s, actor, id, input) {
   if (d.deadline <= Date.now()) throw fail('需求已过期', 409);
   const b = d.bids.find(b => b.id === input.bidId);
   if (!b) throw fail('方案不存在', 404);
+  const buyerContact = input.contact === undefined || input.contact === '' ? '' : text(input.contact, 300);
   if (s.orders.length >= 10000 || s.orders.filter(o => o.buyer === actor.owner && !['completed','cancelled','rejected'].includes(o.status)).length >= 50) throw fail('请先处理已有订单');
   commitBudget(s, actor, b.priceCents);
   const at = Date.now();
   const o = { id: randomUUID(), revision: 1, buyer: d.owner, seller: b.owner, tokenId: d.tokenId, sellerTokenId: b.tokenId, requestedBy: d.requestedBy, demandId: d.id, serviceId: null,
     quote: { title: d.title, providerName: b.providerName, description: b.proposal, deliverables: d.acceptance, limits: '以接单方案及验收标准为准', deliveryDays: b.deliveryDays, priceCents: b.priceCents, unit: '任务', currency: 'CNY' },
-    buyerContact: '', sellerContact: '', quantity: 1, totalCents: b.priceCents, requirements: d.requirements, acceptance: d.acceptance, context: d.context, status: 'accepted', sharedAt: at,
+    buyerContact, sellerContact: b.contact || '', quantity: 1, totalCents: b.priceCents, requirements: d.requirements, acceptance: d.acceptance, context: d.context, status: 'accepted', sharedAt: at,
     delivery: null, deliveryVersion: 0, eventSynced: false, settlement: { method: 'external', buyerReportedPaid: false, sellerReportedReceived: false },
     history: [{ action: 'award', by: actor.agent ? 'agent' : 'buyer', at }], createdAt: at, updatedAt: at };
   s.orders.push(o); d.status = 'awarded'; d.orderId = o.id; d.revision++; return demandView(d, actor);
