@@ -847,6 +847,7 @@ const App: React.FC = () => {
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [isLoginAsAdmin, setIsLoginAsAdmin] = useState(false);
+  const [landingLogin, setLandingLogin] = useState(false);
   const [loginMethod, setLoginMethod] = useState<'wechat' | 'phone' | 'email'>('email'); // 登录方式
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [showMetaModal, setShowMetaModal] = useState(false);
@@ -2491,15 +2492,20 @@ ${plan.lead.duty}
   if (routeInfo.type === 'delegate' && routeInfo.nodeId) return <DelegationView nodeId={routeInfo.nodeId} taskTitle={routeInfo.taskTitle} />;
 
   /** 落地页是否展示仿真区块：管理员入口和验证码环节要专注，不塞东西 */
-  const showLandingSim = !isLoginAsAdmin && !isOtpSent;
+  const showLandingSim = !isLoginAsAdmin && !isOtpSent && !landingLogin;
 
   if (!user) return (
-    /*
-      首屏改版：把「可以动手的东西」放在要邮箱之前。
-      访客平均只停留 10 秒、91% 直接跳出——十秒读不完三条介绍，但够拖两下滑块。
-      仿真区块只在正常落地时出现；管理员入口和验证码环节要专注，不塞东西。
-    */
-    <div className="min-h-screen w-screen overflow-y-auto bg-slate-950 p-4 flex items-center justify-center">
+    <div className="h-[100dvh] w-full overflow-y-auto bg-slate-950 text-slate-200">
+      <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/95 backdrop-blur px-4 py-3">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+          <span className="font-semibold">HiExplore</span>
+          <div className="flex items-center gap-2">
+            <select aria-label="Language" className="bg-slate-800 text-slate-200 rounded-lg p-2 text-xs" value={language} onChange={e => setLanguage(e.target.value as 'zh-CN' | 'en')}><option value="zh-CN">简体中文</option><option value="en">English</option></select>
+            <button type="button" onClick={() => { setLandingLogin(true); setIsLoginAsAdmin(false); setLoginMethod('email'); document.getElementById('landing-content')?.scrollIntoView({ block: 'start' }); }} className="shrink-0 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-sm font-semibold text-white">{ui('登录 / 注册', 'Log in / Sign up')}</button>
+          </div>
+        </div>
+      </header>
+      <main id="landing-content" className="scroll-mt-20 flex justify-center p-4 sm:py-8">
       <div className={`w-full ${showLandingSim ? 'max-w-5xl lg:grid lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-6 lg:items-start' : 'max-w-md'}`}>
       {showLandingSim && (
         <SimPreview
@@ -2510,12 +2516,11 @@ ${plan.lead.duty}
           }}
         />
       )}
-      <div className="flex justify-end mb-2"><select aria-label="Language" className="bg-slate-800 text-slate-200 rounded-lg p-2 text-sm" value={language} onChange={e => setLanguage(e.target.value as 'zh-CN' | 'en')}><option value="zh-CN">简体中文</option><option value="en">English</option></select></div>
       <div id="landing-card" className="max-w-md w-full mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-emerald-600"></div>
         <div className="text-center mb-6">
           <div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">🧭</div>
-          <h2 className="text-xl sm:text-2xl font-bold">HiExplore</h2>
+          <h2 className="text-xl sm:text-2xl font-bold">{landingLogin ? ui('邮箱登录 / 注册', 'Email login / sign up') : 'HiExplore'}</h2>
           {isLoginAsAdmin ? (
             <p className="text-slate-500 text-xs sm:text-sm mt-2">{ui("管理员验证")}</p>
           ) : (
@@ -2529,7 +2534,7 @@ ${plan.lead.duty}
           )}
         </div>
 
-        {!isLoginAsAdmin && !isOtpSent && (
+        {!isLoginAsAdmin && !isOtpSent && !landingLogin && (
           <div className="mb-6 space-y-2 text-[12px] text-slate-400 leading-6">
             <div className="flex gap-2"><span className="text-blue-400">01</span><span>{ui("给问题打分：稀缺性、深度、可验证性等六个维度，先筛掉不值得研究的")}</span></div>
             <div className="flex gap-2"><span className="text-blue-400">02</span><span>{ui("值得的问题一键立项，AI 组一支分工的团队长期跑，你关掉也在继续")}</span></div>
@@ -2541,7 +2546,7 @@ ${plan.lead.duty}
           免注册体验提到主按钮位置。原来它排在邮箱表单和「管理员入口」之后、
           用的还是次级灰色样式——等于把转化率最高的入口藏在了最不显眼的地方。
         */}
-        {!isLoginAsAdmin && !isOtpSent && hasTrialBackend() && (
+        {!isLoginAsAdmin && !isOtpSent && !landingLogin && hasTrialBackend() && (
           <div className="mb-5">
             <button
               onClick={() => { trackEvent('trial_start'); setUser(auth.loginAsGuest()); }}
@@ -2551,7 +2556,7 @@ ${plan.lead.duty}
           </div>
         )}
 
-        {!isLoginAsAdmin && !isOtpSent && hasTrialBackend() && (
+        {!isLoginAsAdmin && !isOtpSent && !landingLogin && hasTrialBackend() && (
           <div className="flex items-center gap-3 mb-5">
             <div className="flex-1 h-px bg-slate-800" />
             <span className="text-[11px] text-slate-600">{ui("或登录以长期保存")}</span>
@@ -2623,7 +2628,7 @@ ${plan.lead.duty}
             {/* 邮箱验证码登录 */}
             {loginMethod === 'email' && !isOtpSent && (
               <>
-                <input type="email" placeholder={ui("电子邮箱")} value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
+                <input key={landingLogin ? "login" : "landing"} autoFocus={landingLogin} aria-label={ui("电子邮箱")} type="email" autoComplete="email" placeholder={ui("电子邮箱")} value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
                 <button onClick={async () => {
                   if (!loginEmail.includes('@')) { alert('请输入正确的邮箱'); return; }
                   if (hasAuthBackend()) {
@@ -2693,6 +2698,7 @@ ${plan.lead.duty}
         </div>
       </div>
       </div>
+      </main>
     </div>
   );
 

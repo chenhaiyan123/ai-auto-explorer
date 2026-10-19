@@ -21,7 +21,8 @@ const prepareMessages = messages => {
 function checkFunding(s, owner, body, messages) {
   const settings = s.models[body.modelId]; if (!settings?.enabled || !settings.apiKey) throw fail('共享模型尚未启用或已暂停');
   if (s.calls.length >= 10000) throw fail('用量记录已达首版上限，请由运维归档');
-  if (s.calls.some(c => c.owner === owner && c.modelId === body.modelId && c.status === 'uncertain')) throw fail('此模型有待核对用量，请联系管理员处理后继续', 409);
+  // Uncertain calls keep their reservation in held; only the remaining available balance can fund new work.
+  // Never retry the original request or freeze the entire account because a response was lost.
   const maxTokens = Math.min(int(body.maxTokens ?? 2048, 1, 16384, '请求输出上限'), settings.maxOutputTokens);
   const reserved = Buffer.byteLength(JSON.stringify(messages)) * 2 + 2048 + maxTokens;
   const available = wallet(s, owner, body.modelId)?.available || 0;
