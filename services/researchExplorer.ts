@@ -57,7 +57,7 @@ export async function exploreResearchNode(
   const prompt = `作为研究助手，深入研究以下问题：
 
 **研究主题**: ${node.title}
-
+${node.notes ? `\n**已有背景 / 用户要求**:\n${node.notes.slice(0, 400)}\n` : ''}
 **相关背景**:
 ${context || '无'}
 

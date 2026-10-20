@@ -30,7 +30,7 @@ export default function SharedModelsPanel({ onClose, embedded = false, personalO
     <div className={embedded ? 'space-y-5 text-slate-200' : 'w-full max-w-5xl max-h-[92vh] overflow-auto rounded-2xl bg-slate-900 border border-slate-700 p-4 sm:p-6 text-slate-200 space-y-5'}>
       <div className="flex justify-between items-center gap-3"><h2 className="text-xl font-semibold">{session?.isAdmin ? ui("模型管理与额度分配") : ui("模型与额度")}</h2>{!embedded && <button className={button} onClick={onClose}>{ui("关闭")}</button>}</div>
       <p className="text-sm text-slate-400">共享模型按供应商返回的输入、输出 Token 合计使用额度，各模型分别记账。自己的 API Key 由供应商直接计费。</p>
-      <p className="text-xs text-amber-200">当前支持管理员手动分配 Token，尚未开通在线充值或人民币余额。请求先预留额度、返回后结算；用量不明时保留预留额度，待管理员核对。</p>
+      <p className="text-xs text-amber-200">当前支持管理员手动分配 Token，尚未开通在线充值或人民币余额。请求先预留额度、返回后结算；用量不明时仅保留该笔预留额度，待管理员核对；剩余可用额度仍可使用，不影响其他账号。</p>
       {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}{message && <p role="status" className="text-sm text-emerald-300">{message}</p>}
       <button className={button} disabled={busy} onClick={() => act(async () => {})}>{ui("刷新额度与记录")}</button>
       <div className="grid sm:grid-cols-2 gap-3">{data?.models.map(m => <article key={m.id} className="rounded-xl border border-slate-700 p-3 space-y-2">

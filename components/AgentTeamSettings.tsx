@@ -58,12 +58,12 @@ function AgentCard({ role, profile, disabled, onSave, onGenerate, onApply, teams
   </article>;
 }
 
-export default function AgentTeamSettings({ workspace, projectId, teams, background, busy }: {
-  workspace: InquiryWorkspace; projectId: string; teams: Teams; background: string; busy: boolean;
+export default function AgentTeamSettings({ workspace, projectId, teams, background, busy, open }: {
+  workspace: InquiryWorkspace; projectId: string; teams: Teams; background: string; busy: boolean; open?: boolean;
 }) {
   const [error, setError] = useState('');
   const missing = AGENT_ROLES.some(r => !agentProfile(workspace, r).description.trim());
-  return <details className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3">
+  return <details open={open} className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3">
     <summary className="text-sm font-semibold cursor-pointer">{ui("团队配置 · 模型与角色描述")}{missing ? ui("（待起草）") : ''}</summary>
     <div className="mt-3 space-y-3">
       <p className="text-xs text-slate-400">{ui("每个问题独立配置。AI 先起草描述，你可以修改名称、职责和每个角色的模型。配置变更默认用于新轮次；如果要修复暂停或失败的任务，可显式应用到本轮未完成步骤。")}</p>

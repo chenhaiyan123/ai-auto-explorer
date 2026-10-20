@@ -16,11 +16,20 @@ export function buildModelRequest(s: LLMSettings, messages: { role: string; cont
     } };
   }
   if (s.apiKey && s.provider !== 'trial') headers.Authorization = `Bearer ${s.apiKey}`;
-  const body: Record<string, unknown> = { model: options.model || s.model, messages };
+  let model = options.model || s.model;
+  // 老配置里存的 deepseek-chat / deepseek-reasoner 已于 2026-07-24 停用，请求会直接报错：自动换成新 ID
+  const legacyDeepSeek = s.provider === 'openai-compatible' && new URL(base).hostname === 'api.deepseek.com' && /^deepseek-(chat|reasoner)$/.test(model);
+  const wantReasoning = legacyDeepSeek && model === 'deepseek-reasoner';
+  if (legacyDeepSeek) model = 'deepseek-flash';
+  const body: Record<string, unknown> = { model, messages };
   if (s.provider === 'openai') body.max_completion_tokens = options.maxTokens ?? 4096;
   else { body.max_tokens = options.maxTokens ?? 2048; body.temperature = options.temperature ?? 0.7; }
   // Bounded JSON tasks use the non-thinking DeepSeek mode to reserve tokens for the answer.
-  if (s.provider === 'openai-compatible' && new URL(base).hostname === 'api.deepseek.com' && (options.model || s.model).startsWith('deepseek-v4')) body.thinking = { type: 'disabled' };
+  // deepseek-chat / deepseek-reasoner 已于 2026-07-24 停用；新 ID 是 deepseek-flash / deepseek-v4-pro，默认会思考，这里关掉。
+  if (s.provider === 'openai-compatible' && new URL(base).hostname === 'api.deepseek.com' && /^deepseek-(v4|flash)/.test(model)) body.thinking = { type: wantReasoning ? 'enabled' : 'disabled' };
+  // 通义千问 qwen3.5 及以后的混合模型默认开思考：非流式调用要么报错、要么把输出额度花在隐藏思考上。
+  // enable_thinking 对不支持思考的老模型无副作用。
+  if (s.provider === 'openai-compatible' && /(^|\.)dashscope(-intl)?\.aliyuncs\.com$/.test(new URL(base).hostname)) body.enable_thinking = false;
   // K2.6 rejects the generic 0.7 temperature. Bounded research/JSON calls use
   // instant mode so the output budget is available for the actual answer.
   // https://platform.kimi.com/docs/guide/kimi-k2-6-quickstart

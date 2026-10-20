@@ -1,0 +1,14 @@
+import { matchServices, demandDraftFromSeek, needsOutsideHelp, aiCouldNotVerify, seekFromFact } from '../services/factHelp';
+let pass = 0, fail = 0; const ok = (c: unknown, m: string) => { if (c) pass++; else { fail++; console.error('✗', m); } };
+const svc = (id: string, title: string, description: string, extra: any = {}) => ({ id, revision: 1, title, providerName: 'P' + id, category: 'lab', description, inputs: '', deliverables: '', limits: '', location: '', unit: '次', priceCents: 0, currency: 'CNY', deliveryDays: 3, published: true, mine: false, execution: 'provider_confirmed' as const, createdAt: 0, updatedAt: 0, ...extra });
+const fact: any = { id: 'f1', claim: '雷帕霉素能延缓人成纤维细胞的端粒缩短', scope: '体外细胞实验', source: '', excerpt: '', status: 'pending', origin: 'ai', reviews: [{ actor: 'verifier', decision: 'uncertain', at: 1 }], updatedAt: 1 };
+const seek = seekFromFact(fact, '研究怎么延缓细胞衰老', 'p1');
+const services = [svc('a', '细胞实验代做', '提供成纤维细胞培养、端粒长度检测'), svc('b', '3D 打印', '光固化打印外壳'), svc('c', '端粒检测', 'qPCR 端粒长度测定', { mine: true }), svc('d', '下架的细胞服务', '端粒', { published: false })];
+const m = matchServices(services as any, seek);
+ok(m.length === 1 && m[0].id === 'a', 'matches relevant, skips unrelated/mine/unpublished');
+ok(matchServices([svc('b', '3D 打印', '光固化打印外壳')] as any, seek).length === 0, 'no match → empty');
+const d = demandDraftFromSeek(seek);
+ok(d.title.startsWith('验证：') && d.title.length <= 101 && d.requirements.includes('体外细胞实验') && d.acceptance.length > 10, 'draft filled');
+ok(needsOutsideHelp(fact) && !needsOutsideHelp({ ...fact, status: 'confirmed' }), 'needs help only when unresolved');
+ok(aiCouldNotVerify(fact) && !aiCouldNotVerify({ ...fact, reviews: [] }), 'ai uncertain');
+console.log(`fact-help: ${pass} passed, ${fail} failed`); if (fail) process.exit(1);

@@ -169,15 +169,18 @@ test('模型每日上限和并发预留阻止超额请求', async t => {
   const second = await f.req('/shared/chat', 'POST', chat()); release(); assert.equal(second.status, 429); assert.equal((await pending).status, 200);
   assert.equal(f.requests.length, 1);
 });
-test('缺少用量保留预留额度，管理员核对后恢复，不自动重试', async t => {
+test('缺少用量保留该笔预留，剩余额度可继续使用，核对幂等且重启不丢账', async t => {
   const f = await fixture(t); await fund(f); f.setResponse({ choices: [{ message: { content: 'OK' } }] });
   assert.equal((await f.req('/shared/chat', 'POST', chat())).status, 502);
   let view = (await f.req('/shared/catalog')).body; assert.equal(view.calls[0].status, 'uncertain'); assert.ok(view.balances.economy.held > 0);
-  assert.equal((await f.req('/shared/chat', 'POST', chat())).status, 409);
+  const held = view.balances.economy.held;
+  f.setResponse({ choices: [{ message: { content: 'OK' } }], usage: { prompt_tokens: 60, completion_tokens: 40 } });
+  assert.equal((await f.req('/shared/chat', 'POST', chat())).status, 200);
+  assert.equal((await f.req('/shared/catalog')).body.balances.economy.held, held);
   const callId = view.calls[0].id; assert.equal((await f.req('/admin/shared/reconcile', 'POST', { callId, tokens: 250, note: '已核对模拟账单' })).status, 403);
   await f.restart();
   assert.equal((await f.req('/admin/shared/reconcile', 'POST', { callId, tokens: 250, note: '已核对模拟账单' }, 'admin')).status, 200);
-  view = (await f.req('/shared/catalog')).body; assert.equal(view.balances.economy.available, 99750); assert.equal(view.balances.economy.held, 0);
+  view = (await f.req('/shared/catalog')).body; assert.equal(view.balances.economy.available, 99650); assert.equal(view.balances.economy.held, 0);
   assert.equal((await f.req('/admin/shared/reconcile', 'POST', { callId, tokens: 0, note: '重复操作' }, 'admin')).status, 409);
 });
 test('Claude 用量包含缓存读写 Token，达到输出限制仍结算已消耗用量', async t => {
@@ -223,4 +226,38 @@ test('长期关注体验额度按账号仅一次，跨模型和并发也不突�
   const restarted = new SharedModels(storage, new Set(['api.deepseek.com']), fetch, async () => {});
   await restarted.starter('a@example.test', 'other', 30000, 30000);
   assert.equal(Object.values((await restarted.view('a@example.test')).balances).reduce((s, b) => s + b.granted, 0), 30000);
+});
+
+
+test('超时及个人余额不足隔离：另一账号正常调用，原请求不可重发，预留不能重复花费', async t => {
+  const f = await fixture(t); await fund(f, 5000);
+  await f.req('/admin/shared/grants', 'POST', grant('other@example.test', 10000), 'admin');
+  const original = chat();
+  f.setHook(async () => { throw new DOMException('simulated timeout', 'TimeoutError'); });
+  assert.equal((await f.req('/shared/chat', 'POST', original)).status, 502);
+  const before = (await f.req('/shared/catalog')).body;
+  const held = before.balances.economy.held;
+  assert.ok(held > 0); assert.equal(before.balances.economy.available, 5000 - held);
+  f.setHook(undefined);
+  await f.restart();
+  assert.equal((await f.req('/shared/chat', 'POST', original)).status, 409);
+  assert.equal((await f.req('/shared/chat', 'POST', { ...chat(), maxTokens: 4096 })).status, 402);
+  assert.equal((await f.req('/shared/chat', 'POST', chat(), 'other')).status, 200);
+  const other = (await f.req('/shared/catalog', 'GET', undefined, 'other')).body;
+  assert.equal(other.balances.economy.available, 9900); assert.equal(other.calls.length, 1);
+  const after = (await f.req('/shared/catalog')).body;
+  assert.deepEqual(after.balances, before.balances); assert.deepEqual(after.calls, before.calls);
+  // A failed account's request must not change another account's balance or expose its records.
+  assert.equal(other.calls[0].owner, 'other@example.test');
+  assert.equal(f.requests.length, 2);
+});
+
+test('待核对预留仍计入模型当日总上限，不能通过新请求绕过成本控制', async t => {
+  const f = await fixture(t); await fund(f);
+  f.setResponse({ choices: [{ message: { content: 'no usage' } }] });
+  await f.req('/shared/chat', 'POST', chat());
+  const held = (await f.req('/shared/catalog')).body.balances.economy.held;
+  await f.req('/admin/shared/models', 'PUT', { ...model, dailyTokens: held }, 'admin');
+  assert.equal((await f.req('/shared/chat', 'POST', chat())).status, 429);
+  assert.equal(f.requests.length, 1);
 });

@@ -57,14 +57,15 @@ export const PRESET_PROVIDERS: { label: string; baseUrl: string; model: string; 
   { label: 'LM Studio（本地）', baseUrl: 'http://localhost:1234/v1', model: 'local-model', hint: '在 LM Studio 中启动本地服务器' },
   { label: 'vLLM（本地/私有）', baseUrl: 'http://localhost:8000/v1', model: '', hint: '填写启动 vLLM 时指定的模型名' },
   { label: '通义千问（云端）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', hint: '需要 DashScope API Key' },
-  { label: 'DeepSeek（云端）', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', hint: '需要 DeepSeek API Key' },
+  { label: 'DeepSeek（云端）', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-flash', hint: '需要 DeepSeek API Key（deepseek-chat 已于 2026-07 停用）' },
+  { label: 'Kimi（月之暗面）', baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-k2.6', hint: '需要 Moonshot API Key' },
   { label: 'Claude（Anthropic 云端）', baseUrl: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-6', hint: '需要 Claude API Key；更深更完整。浏览器直连可能受 CORS 限制，必要时走云代理' },
 ];
 
 export function getDefaultSettings(): LLMSettings {
   // 托管版：新用户默认走「免配置体验」（DeepSeek，有额度），一进来就能用
   if (ENV_TRIAL_API) {
-    return { provider: 'trial', baseUrl: ENV_TRIAL_API, apiKey: '', model: 'deepseek-chat' };
+    return { provider: 'trial', baseUrl: ENV_TRIAL_API, apiKey: '', model: 'deepseek-flash' };
   }
   if (ENV_PROXY_URL) {
     return { provider: 'cloud-proxy', baseUrl: ENV_PROXY_URL, apiKey: '', model: 'qwen-turbo' };
@@ -199,20 +200,18 @@ export async function getTrialQuota(): Promise<{ enabled: boolean; scope: 'anon'
  * 测试当前（或给定）配置是否可用
  */
 export async function testLLMConnection(settings?: LLMSettings): Promise<{ ok: boolean; message: string; latencyMs?: number }> {
-  const prev = settings ? loadLLMSettings() : null;
-  if (settings) saveLLMSettings(settings);
   const start = Date.now();
   try {
     const r = await callLLM(
       [{ role: 'user', content: '请只回复：OK' }],
-      { maxTokens: 64, timeoutMs: 25000 }
+      { maxTokens: 64, timeoutMs: 25000 },
+      settings
     );
     const latencyMs = Date.now() - start;
     if (r.content && r.content.trim()) return { ok: true, message: `连接成功（${latencyMs}ms）`, latencyMs };
-    // 200 但 content 为空：连接其实通了，常见于推理模型（deepseek-reasoner 等）把额度用在隐藏思考上
-    return { ok: true, message: `连接已通，但模型未返回正文。若用的是 deepseek-reasoner 这类推理模型，建议模型名改成 deepseek-chat（更快、支持本应用所需的 JSON 模式）。`, latencyMs };
+    // 200 但 content 为空：连接其实通了，常见于推理/思考模型把额度用在隐藏思考上
+    return { ok: true, message: `连接已通，但模型未返回正文。若用的是会思考的模型（如开启思考的 deepseek-flash、qwen3.x），建议关闭思考或换非思考模型（更快、支持本应用所需的 JSON 模式）。`, latencyMs };
   } catch (e: any) {
-    if (prev) saveLLMSettings(prev);
     const msg = e.name === 'AbortError' ? '连接超时' : (e.message || '未知错误');
     return { ok: false, message: `连接失败：${msg}` };
   }

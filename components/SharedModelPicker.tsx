@@ -17,9 +17,7 @@ export default function SharedModelPicker({ value, onChange }: { value: string; 
     window.addEventListener('focus', refresh);
     return () => { active = false; window.removeEventListener(SHARED_MODELS_CHANGED, refresh); window.removeEventListener('focus', refresh); };
   }, [revision]);
-  const status = (m: SharedCatalog['models'][number]) => catalog?.calls.some(c => c.modelId === m.id && c.status === 'uncertain')
-    ? { available: false, label: ui('用量待核对', 'Usage reconciliation needed') }
-    : error
+  const status = (m: SharedCatalog['models'][number]) => error
     ? { available: false, label: ui('状态待确认，请刷新', 'Refresh to verify availability') }
     : sharedModelStatus(m, catalog?.balances[m.id] || { available: 0, granted: 0, spent: 0, held: 0 });
   return <div className="space-y-2 text-xs">
@@ -27,7 +25,7 @@ export default function SharedModelPicker({ value, onChange }: { value: string; 
     <div role="group" aria-label={ui('平台共享模型', 'Platform models')} className="max-h-72 overflow-y-auto space-y-2 pr-1">
       {catalog?.models.map(m => { const s = status(m); return <button type="button" key={m.id} disabled={!s.available} aria-pressed={value === m.id} onClick={() => onChange(m.id)} className={`w-full flex items-start gap-3 rounded-lg border p-3 text-left disabled:cursor-not-allowed ${value === m.id ? 'border-blue-500 bg-blue-500/10' : 'border-slate-700 bg-slate-800/40'} ${s.available ? 'text-slate-100 hover:bg-slate-800' : 'text-slate-500'}`}>
         <span aria-hidden="true" className={`mt-1 h-2 w-2 shrink-0 rounded-full ${s.available ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-        <span className="min-w-0 flex-1"><span className="block font-medium">{m.label}</span><span className="mt-1 block break-all text-[11px]">{m.model} · {ui(s.label)}</span><span className="mt-1 block text-[11px]">{ui('剩余额度', 'Available credits')} {(catalog?.balances[m.id]?.available || 0).toLocaleString()} Token</span></span>
+        <span className="min-w-0 flex-1"><span className="block font-medium">{m.label}</span><span className="mt-1 block break-all text-[11px]">{m.model} · {ui(s.label)}</span><span className="mt-1 block text-[11px]">{ui('剩余额度', 'Available credits')} {(catalog?.balances[m.id]?.available || 0).toLocaleString()} Token</span>{!!catalog?.balances[m.id]?.held && <span className="mt-1 block text-[11px] text-amber-300">{ui('预留待结算', 'Reserved pending settlement')} {catalog.balances[m.id].held.toLocaleString()} Token · {ui('不占用上述可用余额', 'Separate from available credits')}</span>}</span>
         {value === m.id && <span className="text-blue-300">✓ {ui('已选', 'Selected')}</span>}
       </button>; })}
       {value && !catalog?.models.some(m => m.id === value) && <p className="p-2 text-slate-400">{value} · {ui('当前选择尚未确认可用', 'Current selection is not verified')}</p>}

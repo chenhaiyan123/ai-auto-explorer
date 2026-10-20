@@ -52,6 +52,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, theme, onThemeCh
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savedLLM, setSavedLLM] = useState<LLMSettings>(() => loadLLMSettings());
+  const llmDirty = JSON.stringify(llm) !== JSON.stringify(savedLLM);
 
   // ── IoT 状态 ──
   const [devices, setDevices] = useState<IoTDevice[]>([]);
@@ -64,6 +66,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, theme, onThemeCh
 
   const handleSaveLLM = () => {
     saveLLMSettings(llm);
+    setSavedLLM({ ...llm });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -127,6 +130,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, theme, onThemeCh
           {tab === 'llm' && (
             <div className="space-y-4">
               <p className="text-xs text-slate-400 leading-relaxed">{ui('配置个人默认模型。项目中已单独配置的 AI 团队保持各自的模型设置；自有 API Key 仅保存在当前浏览器。', 'Set your personal default model. Agents with their own model assignments keep them. Your own API key is stored in this browser.')}</p>
+              <p role="status" className={`text-xs ${llmDirty ? 'text-amber-300' : 'text-slate-400'}`}>{llmDirty ? ui('未保存：当前对话仍使用已保存的模型。请点击“保存设置”使选择生效。', 'Unsaved: chats still use the saved model. Save settings to apply this selection.') : ui('当前选择已保存。测试连接只做测试，不切换聊天模型。', 'This selection is saved. Testing does not switch the chat model.')}</p>
               <label className={labelCls}>{ui('接入方式', 'Model source')}<select value={llm.provider} onChange={e => { setLlm({ provider: e.target.value as LLMSettings['provider'], baseUrl: '', apiKey: '', model: '' }); setTestResult(null); }} className={inputCls}>
                 <option value="platform">{ui('平台共享模型（无需填写 Key）', 'Platform models (no API key needed)')}</option>
                 <option value="openai-compatible">{ui('自己的 API / 本地模型', 'Your API / local models')}</option>

@@ -17,10 +17,10 @@ export interface WakePolicy {
   enabled: boolean; checkEveryHours: number; reviewEveryDays: number;
   maxCallsPerDay: number; maxCallsPerWake: number; maxOutputTokens: number; paperQuery: string;
 }
-export interface WakeStep { role: InquiryRole; purpose: string; result?: string; startedAt: number; completedAt?: number }
+export interface WakeStep { requestHash?: string; attemptId?: string; notSent?: boolean; role: InquiryRole; purpose: string; result?: string; startedAt: number; completedAt?: number }
 export interface WakeRun {
   id: string; eventIds: string[]; startedAt: number; completedAt?: number;
-  contextSnapshot?: WakeContext;
+  contextVersion?: number; contextSnapshot?: WakeContext; promptContext?: string; mandateTermsRevision?: number;
   memoryChanges?: { added: string[]; withdrawn: string[]; updated: string[] };
   outcome: 'running' | 'progress' | 'waiting' | 'failed' | 'interrupted';
   plan?: { decision: string; reason: string; task: string; stopCondition: string; hypothesis: string; missingEvidence: string };
@@ -29,6 +29,9 @@ export interface WakeRun {
   findings?: { claim: string; evidenceIds: string[]; kind: 'hypothesis' | 'limitation' | 'plan' | 'observation' }[];
 }
 export interface Awakening {
+  checkpoint?: { runId: string; contextVersion: number; termsRevision?: number };
+  mandate?: { revision: number; termsRevision: number; goal: string; acceptance: string; stopCondition: string; deadline: number };
+  stopCode?: string;
   version: 1; problemHeartbeat?: ProblemHeartbeat; context: WakeContext; policy: WakePolicy; status: WakeStatus; reason: string;
   events: WakeEvent[]; runs: WakeRun[]; checks: number; quietChecks: number;
   lastCheckedAt?: number; nextCheckAt: number; nextReviewAt: number; updatedAt: number; heartbeatAt?: number;
@@ -50,7 +53,7 @@ export function wakePolicy(input: Partial<WakePolicy>, old = WAKE_DEFAULTS): Wak
 export function configureAwakening(state: Awakening, input: Partial<WakePolicy>, now: number): Awakening {
   const policy = wakePolicy(input, state.policy);
   return { ...state, policy, status: policy.enabled ? (state.activeRunId ? 'researching' : 'sleeping') : 'paused',
-    reason: policy.enabled ? '等待线索或下一次检查' : '用户主动暂停，当前请求返回后停止', updatedAt: now,
+    stopCode: policy.enabled ? undefined : state.stopCode, reason: policy.enabled ? '等待线索或下一次检查' : '用户主动暂停，当前请求返回后停止', updatedAt: now,
     nextCheckAt: policy.paperQuery !== state.policy.paperQuery ? now : policy.checkEveryHours !== state.policy.checkEveryHours ? now + policy.checkEveryHours * 3600000 : state.nextCheckAt,
     nextReviewAt: policy.reviewEveryDays !== state.policy.reviewEveryDays ? now + policy.reviewEveryDays * 86400000 : state.nextReviewAt };
 }

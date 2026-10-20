@@ -171,6 +171,16 @@ const firstKeptId = (o: Outline): string | undefined => keptItems(o)[0]?.id;
 export const stubNote = (i: OutlineItem): string =>
   `# ${i.title}\n\n> 这一篇要回答：${i.question}\n\n_还没开始写。点上面的「▶ 写这一篇」让 AI 填充，或者直接自己写。_\n`;
 
+const STUB_MARK = '_还没开始写。';
+/** 正文还是框架占位（没被用户改过） */
+export const isStubNote = (text?: string): boolean => !!text && text.includes(STUB_MARK);
+/**
+ * 一篇写完：把占位那一行换成写出来的内容，保留标题和「这一篇要回答」。
+ * 之前的 bug：探索结果只写进 notes，笔记页优先显示 fullNote，于是写完了还显示「还没开始写」。
+ */
+export const fillStubNote = (fullNote: string, written: string): string =>
+  fullNote.split('\n').filter(l => !l.includes(STUB_MARK)).join('\n').trimEnd() + '\n\n' + (written || '').trim() + '\n';
+
 /**
  * 确认框架 → 生成待写的节点（只有标题和问题，没有正文）。
  *

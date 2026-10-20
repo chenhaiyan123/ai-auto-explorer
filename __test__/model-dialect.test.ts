@@ -1,0 +1,15 @@
+import { buildModelRequest } from '../services/modelRequest';
+let pass = 0, fail = 0; const ok = (c: unknown, m: string) => { if (c) pass++; else { fail++; console.error('✗', m); } };
+const msgs = [{ role: 'user', content: '返回 JSON' }];
+const ds = (model: string) => buildModelRequest({ provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', model, apiKey: 'k' } as any, msgs, { jsonMode: true }).body as any;
+ok(ds('deepseek-chat').model === 'deepseek-flash' && ds('deepseek-chat').thinking.type === 'disabled', 'legacy chat → flash, no thinking');
+ok(ds('deepseek-reasoner').model === 'deepseek-flash' && ds('deepseek-reasoner').thinking.type === 'enabled', 'legacy reasoner → flash + thinking');
+ok(ds('deepseek-flash').thinking.type === 'disabled' && ds('deepseek-v4-pro').thinking.type === 'disabled', 'new ids no thinking');
+ok(ds('deepseek-flash').response_format.type === 'json_object', 'json mode');
+const qw = buildModelRequest({ provider: 'openai-compatible', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen3.6-plus', apiKey: 'k' } as any, msgs).body as any;
+ok(qw.enable_thinking === false, 'qwen thinking off');
+const other = buildModelRequest({ provider: 'openai-compatible', baseUrl: 'https://api.example.com/v1', model: 'deepseek-chat', apiKey: 'k' } as any, msgs).body as any;
+ok(other.model === 'deepseek-chat' && !('thinking' in other) && !('enable_thinking' in other), 'other hosts untouched');
+const km = buildModelRequest({ provider: 'openai-compatible', baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-k2.6', apiKey: 'k' } as any, msgs).body as any;
+ok(km.thinking.type === 'disabled' && km.temperature === 0.6, 'kimi k2.6');
+console.log(`model-dialect: ${pass} passed, ${fail} failed`); if (fail) process.exit(1);

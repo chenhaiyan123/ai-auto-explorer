@@ -25,7 +25,7 @@
  *   PORT                  监听端口(FC Web 函数默认 9000；本地测试可设 8787)
  *   ── 体验代理(可选) ──
  *   DEEPSEEK_API_KEY      你的 DeepSeek Key(不填则体验代理关闭)
- *   DEEPSEEK_MODEL        默认 deepseek-chat
+ *   DEEPSEEK_MODEL        默认 deepseek-flash（deepseek-chat 已于 2026-07-24 停用）
  *   TRIAL_ANON_QUOTA      匿名每天次数(默认 5)
  *   TRIAL_USER_QUOTA      登录用户每天次数(默认 30)
  *   TRIAL_GLOBAL_DAILY_CAP 全站每天总次数上限(默认 2000，护钱包)
@@ -48,7 +48,7 @@ const RESEND_COOLDOWN = 60 * 1000;   // 同邮箱 60 秒内只能发一次
 // ---- 体验代理(免/匿名额度) 配置 ----
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE = (process.env.DEEPSEEK_BASE || 'https://api.deepseek.com/v1').replace(/\/+$/, '');
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
 const TRIAL_ANON_QUOTA = Number(process.env.TRIAL_ANON_QUOTA || 5);          // 匿名每天次数
 const TRIAL_USER_QUOTA = Number(process.env.TRIAL_USER_QUOTA || 30);         // 登录用户每天次数
 const TRIAL_GLOBAL_CAP = Number(process.env.TRIAL_GLOBAL_DAILY_CAP || 2000); // 全站每天总次数上限
@@ -405,6 +405,8 @@ const server = http.createServer(async (req, res) => {
           max_tokens: Math.min(Number(bodyIn.max_tokens) || TRIAL_MAX_TOKENS, TRIAL_MAX_TOKENS),
           temperature: typeof bodyIn.temperature === 'number' ? bodyIn.temperature : 0.7,
         };
+        // 新模型默认会思考：体验额度很小，关掉思考，把输出 token 留给正文
+        if (/^deepseek-(v4|flash)/.test(DEEPSEEK_MODEL)) dsBody.thinking = { type: 'disabled' };
         if (bodyIn.jsonMode || bodyIn.response_format) dsBody.response_format = { type: 'json_object' };
         // 超时必须显式设置：FC 计费到「等待结束」为止，没有超时就等于把
         // 单次最坏成本交给上游决定（最长到函数执行超时 60 秒）

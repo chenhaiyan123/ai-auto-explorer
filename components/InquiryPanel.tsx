@@ -7,6 +7,7 @@ import { INQUIRY_ROLES, InquiryFact, InquiryWorkspace, InquiryRole, FactStatus, 
 import type { useInquiryTeams } from '../services/useInquiryTeams';
 import AgentTeamSettings, { AgentMemoryPanel } from './AgentTeamSettings';
 import { AGENT_ROLES, agentProfile } from '../services/agentProfiles';
+import { needsOutsideHelp, aiCouldNotVerify } from '../services/factHelp';
 
 const STATUS: Record<FactStatus, string> = { confirmed: '已确认', pending: '待验证', disputed: '有争议', rejected: '已驳回' };
 const COLOR: Record<FactStatus, string> = { confirmed: 'text-emerald-400 border-emerald-700/50', pending: 'text-amber-300 border-amber-700/50', disputed: 'text-rose-300 border-rose-700/50', rejected: 'text-slate-400 border-slate-600' };
@@ -16,7 +17,7 @@ const buttonClass = 'rounded-lg border border-slate-700 px-3 py-1.5 text-xs hove
 const date = (at: number) => new Date(at).toLocaleString('zh-CN');
 const blank = { claim: '', source: '', excerpt: '', scope: '' };
 
-function FactCard({ fact, onReview }: { fact: InquiryFact; onReview: (status: FactStatus, reason: string, evidence: { source: string; excerpt: string; scope: string }) => void }) {
+function FactCard({ fact, onReview, onSeekHelp }: { fact: InquiryFact; onReview: (status: FactStatus, reason: string, evidence: { source: string; excerpt: string; scope: string }) => void; onSeekHelp?: (fact: InquiryFact) => void }) {
   const [editing, setEditing] = useState(false);
   const [reason, setReason] = useState('');
   const [evidence, setEvidence] = useState({ source: fact.source, excerpt: fact.excerpt, scope: fact.scope });
@@ -35,7 +36,11 @@ function FactCard({ fact, onReview }: { fact: InquiryFact; onReview: (status: Fa
     <details className="text-[11px] text-slate-400"><summary className="cursor-pointer">{ui("审核历史（")}{fact.reviews.length}）</summary>
       <div className="mt-2 space-y-2">{fact.reviews.length === 0 && <p>{ui("尚未审核。AI 候选需核验来源后才能确认。")}</p>}{fact.reviews.map((r, i) => <div key={i} className="border-l border-slate-600 pl-2"><div>{r.actor === 'human' ? ui("人工核验") : INQUIRY_ROLES[r.actor].name} · {STATUS[r.decision as FactStatus] || VERDICT[r.decision] || r.decision} · {date(r.at)}</div><p className="whitespace-pre-wrap">{r.reason}</p>{r.evidence && <details className="mt-1 text-slate-500"><summary className="cursor-pointer">{ui("当时的证据")}</summary><p className="break-words whitespace-pre-wrap">{ui("来源：")}{r.evidence.source || ui("未填写")}<br />{ui("证据：")}{r.evidence.excerpt || ui("未填写")}<br />{ui("范围：")}{r.evidence.scope || ui("未填写")}</p></details>}</div>)}</div>
     </details>
-    <button className={buttonClass} onClick={() => { setEditing(!editing); setEvidence({ source: fact.source, excerpt: fact.excerpt, scope: fact.scope }); }}> {editing ? ui("收起审核") : ui("核验 / 更新状态")}</button>
+    {onSeekHelp && needsOutsideHelp(fact) && aiCouldNotVerify(fact) && <p className="text-[11px] text-amber-300">{ui("AI 团队判断「证据不足」——这条需要现实里的数据或实验，靠推理验证不了。")}</p>}
+    <div className="flex flex-wrap gap-2">
+      <button className={buttonClass} onClick={() => { setEditing(!editing); setEvidence({ source: fact.source, excerpt: fact.excerpt, scope: fact.scope }); }}> {editing ? ui("收起审核") : ui("核验 / 更新状态")}</button>
+      {onSeekHelp && needsOutsideHelp(fact) && <button className={`${buttonClass} text-blue-300 border-blue-500/40`} onClick={() => onSeekHelp(fact)} title={ui("去服务广场找能做这件事的人或 Agent；没有的话可以直接发布需求")}>{ui("🤝 找合作 Agent 验证")}</button>}
+    </div>
     {editing && <div className="space-y-2 pt-2">
       {fact.status !== 'confirmed' && <>
         <input aria-label={ui("核验来源")} className={inputClass} value={evidence.source} maxLength={1200} placeholder={ui("来源 URL、文件名与页码、实验记录编号")} onChange={e => setEvidence({ ...evidence, source: e.target.value })} />
@@ -54,7 +59,7 @@ function FactCard({ fact, onReview }: { fact: InquiryFact; onReview: (status: Fa
   </article>;
 }
 
-function FactBoard({ workspace, change }: { workspace: InquiryWorkspace; change: (fn: (w: InquiryWorkspace) => InquiryWorkspace) => void }) {
+function FactBoard({ workspace, change, onSeekHelp }: { workspace: InquiryWorkspace; change: (fn: (w: InquiryWorkspace) => InquiryWorkspace) => void; onSeekHelp?: (fact: InquiryFact) => void }) {
   const [filter, setFilter] = useState<FactStatus | 'all'>('all');
   const [search, setSearch] = useState('');
   const [adding, setAdding] = useState(false);
@@ -79,11 +84,14 @@ function FactBoard({ workspace, change }: { workspace: InquiryWorkspace; change:
     <div className="flex flex-wrap gap-1">{(['all', 'confirmed', 'pending', 'disputed', 'rejected'] as const).map(s => <button key={s} onClick={() => setFilter(s)} aria-pressed={filter === s} className={`rounded-md px-2 py-1 text-[11px] ${filter === s ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-400'}`}>{s === 'all' ? ui("全部") : STATUS[s]} {s === 'all' ? workspace.facts.length : workspace.facts.filter(f => f.status === s).length}</button>)}</div>
     <input aria-label={ui("搜索事实")} className={inputClass} placeholder={ui("搜索陈述、来源、适用范围")} value={search} onChange={e => setSearch(e.target.value)} />
     {facts.length === 0 && <div className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-xs text-slate-500">{workspace.facts.length ? ui("没有符合条件的记录") : ui("还没有事实。录入一条证据，或启动团队探究收集候选发现。")}</div>}
-    {facts.slice().reverse().map(f => <FactCard key={f.id} fact={f} onReview={(status, reason, evidence) => change(w => reviewFact(w, f.id, status, reason, evidence))} />)}
+    {onSeekHelp && workspace.facts.some(needsOutsideHelp) && <p className="text-[11px] text-slate-500">{ui("自己的 AI 验证不了的，可以点「🤝 找合作 Agent 验证」去服务广场找人；没有合适的服务，就直接发布需求。")}</p>}
+    {facts.slice().reverse().map(f => <FactCard key={f.id} fact={f} onSeekHelp={onSeekHelp} onReview={(status, reason, evidence) => change(w => reviewFact(w, f.id, status, reason, evidence))} />)}
   </div>;
 }
 
-export default function InquiryPanel({ project, nodes, mode, teams, onOpenFacts, scopeId }: {
+export default function InquiryPanel({ project, nodes, mode, teams, onOpenFacts, scopeId, onSeekHelp }: {
+  /** 事实看板里「找合作 Agent 验证」 */
+  onSeekHelp?: (fact: InquiryFact, question: string) => void;
   project: Project | null;
   nodes: ProblemNode[];
   mode: 'team' | 'facts';
@@ -119,9 +127,10 @@ export default function InquiryPanel({ project, nodes, mode, teams, onOpenFacts,
       <p className="text-[10px] text-slate-500">{ui("团队历史和事实按问题分别保存，切换文章可查看各自的探究。")}</p>
     </div>}
     <div className="flex-1 overflow-y-auto p-3 space-y-4" key={effectiveId}>
-      {mode === 'facts' ? <FactBoard workspace={workspace} change={change} /> : <>
-        {effectiveId === 'root' && <ProjectManagerPanel project={project} teams={teams} />}
-        <AgentTeamSettings workspace={workspace} projectId={project.id} teams={teams} background={background} busy={running || !!teams.isManaging?.(project.id)} />
+      {mode === 'facts' ? <FactBoard workspace={workspace} change={change} onSeekHelp={onSeekHelp ? f => onSeekHelp(f, question) : undefined} /> : <>
+        {/* 团队设置放最上面、默认展开；和项目经理单聊收起来——日常沟通已经在中间的对话里了 */}
+        <AgentTeamSettings open workspace={workspace} projectId={project.id} teams={teams} background={background} busy={running || !!teams.isManaging?.(project.id)} />
+        {effectiveId === 'root' && <details className="rounded-xl border border-slate-700 p-3"><summary className="text-sm font-semibold cursor-pointer">{ui("单独和 AI 项目经理沟通")}</summary><div className="mt-3"><ProjectManagerPanel project={project} teams={teams} /></div></details>}
         <AgentMemoryPanel workspace={workspace} onOpenFacts={onOpenFacts} />
         <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-3">
           <h3 className="font-semibold text-sm">{ui("围绕这个问题，持续迭代认知")}</h3>

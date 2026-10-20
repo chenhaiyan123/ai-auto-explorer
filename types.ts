@@ -321,6 +321,37 @@ export type ExplorationPace = 'step' | 'auto';
 export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
+  /** 发送时间：用来和对话流（FeedItem）按时间排在一起；老记录没有这个字段 */
+  ts?: number;
+}
+
+// ========== 对话流（Agent Feed）==========
+// 像 Codex 一样：AI 在干什么、需要人拍板的地方，都以一行字 / 一张问题卡出现在右侧聊天记录里。
+export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline';
+export interface FeedOption { id: string; label: string; primary?: boolean }
+export interface FeedItem {
+  id: string;
+  ts: number;
+  kind: 'status' | 'ask';
+  /** 一行字 */
+  text: string;
+  /** 点开才看的补充说明 */
+  detail?: string;
+  /** 精简列表（框架草稿用） */
+  list?: { title: string; sub?: string }[];
+  tone?: 'info' | 'good' | 'warn';
+  nodeId?: string;
+  /** 额外引用（路标 id / 框架 id 等） */
+  ref?: string;
+  /** 同 key 的未答条目会被新条目替换（「正在写」→「写完了」只占一行） */
+  key?: string;
+  ask?: {
+    type: FeedAskType;
+    options: FeedOption[];
+    /** 可选的一行输入：提交时等于选了 optionId，并把文字带上 */
+    input?: { placeholder: string; optionId: string };
+    answer?: { label: string; at: number; auto?: boolean };
+  };
 }
 
 export interface AgentResult {
@@ -390,6 +421,8 @@ export interface ProblemNode {
   /** 该节点是从某条决策记录 fork（复刻）出来的 */
   forkOfDecisionId?: string;
   pendingDecision?: DecisionPoint;
+  /** 用户在对话流里补的一句要求，下一次写这篇时带进提示词，写完即清空 */
+  userAsk?: string;
   x?: number;
   y?: number;
 }
@@ -506,6 +539,8 @@ export interface IntentAnalysis {
 export interface Project {
   /** 用户维护的项目目标与范围，AI 摘要不得覆盖。 */
   overviewBrief?: string;
+  /** User-owned acceptance criteria, never inferred from AI completion. */
+  overviewSuccessCriteria?: string;
   overviewMigration?: { version: 1; at: number; originals: ProblemNode[] };
   id: string;
   name: string;
@@ -532,6 +567,45 @@ export interface Project {
   outline?: Outline;
   /** 生成节奏：step=写完一篇就停（默认），auto=一路写到底 */
   pace?: ExplorationPace;
+  /** 对话流：进度行 + 问题卡，随项目持久化 */
+  feed?: FeedItem[];
+  /** 项目的「活着」状态：长期关注、低频醒来看一眼（见 services/projectPulse.ts） */
+  life?: ProjectLife;
+}
+
+// ========== 项目活着（长期关注）==========
+// 项目默认都是活着的：不是一直在生成，而是像人一样长期挂在心上，隔一段时间醒来看一眼有没有新线索。
+export type PulseKind = 'inspiration' | 'clue' | 'evidence' | 'question';
+export interface PulseNote {
+  id: string;
+  at: number;
+  kind: PulseKind;
+  title: string;
+  detail: string;
+  /** 关联的笔记标题（如果有） */
+  relatedTitle?: string;
+  /** 值得打扰用户（只有这种才会在对话流里出一行） */
+  notable?: boolean;
+  /** 用户已转成事实候选 / 已忽略 */
+  handled?: 'fact' | 'dismissed';
+}
+export interface ProjectLife {
+  /** watching = 活着、会按节奏醒来；paused = 用户叫停了 */
+  state: 'watching' | 'paused';
+  /** 用户选的基础节奏（小时） */
+  cadenceHours: number;
+  /** 实际下一次醒来（会因为「最近没新东西」或「用户很久没来看」而拉长） */
+  nextWakeAt: number;
+  lastWakeAt?: number;
+  /** 连续几次醒来都没发现值得记的东西 */
+  quietStreak: number;
+  /** 用户最近一次打开这个项目 */
+  lastViewedAt?: number;
+  /** 最近一次醒来的一句话（给状态行用） */
+  lastSummary?: string;
+  /** 最近一次在对话流里打扰用户的时间（每个项目一天最多一次） */
+  lastNotifiedAt?: number;
+  journal: PulseNote[];
 }
 
 // ========== Artifact 类型 ==========

@@ -13,11 +13,11 @@ export function migrateProjectOverview(project: Project): Project {
 }
 
 export function projectOverviewContext(project: Project): string {
-  return [overviewBrief(project), ...project.nodes.filter(n => n.noteType === 'overview').map(n => n.fullNote || n.notes || '')].filter(Boolean).join('\n\n');
+  return [project.overviewSuccessCriteria ? `完成标准：${project.overviewSuccessCriteria}` : '', overviewBrief(project), ...project.nodes.filter(n => n.noteType === 'overview').map(n => n.fullNote || n.notes || '')].filter(Boolean).join('\n\n');
 }
 
 /** Include the user-owned brief in existing Markdown export paths without altering stored notes. */
 export function overviewExportNodes(project: Project): ProblemNode[] {
-  const brief = overviewBrief(project);
+  const brief = [overviewBrief(project), project.overviewSuccessCriteria ? `## 完成标准\n\n${project.overviewSuccessCriteria}` : ''].filter(Boolean).join('\n\n');
   return project.nodes.map(n => n.noteType === 'overview' && brief.trim() ? { ...n, fullNote: `# ${project.name} · 项目总览\n\n## 目标与范围\n\n${brief}\n\n## 研究摘要\n\n${n.fullNote || n.notes || ''}` } : n);
 }

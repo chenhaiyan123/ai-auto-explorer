@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Project } from '../types';
 import type { Awakening } from '../services/awakening';
 import { explorationLoop, type LoopStatus } from '../services/explorationLoop';
@@ -14,11 +14,14 @@ const link = 'text-xs text-blue-300 hover:underline rounded focus-visible:outlin
 const paragraph = 'text-sm leading-relaxed text-slate-200 break-words line-clamp-3';
 
 /** Compact projection of existing evidence and tasks; never generates a new summary. */
-export default function ProjectBrief({ project, scopeId, state, connected, runningScopes = [], onFacts, onReview, onSettings, onTeam }: {
+export default function ProjectBrief({ project, scopeId, state, connected, runningScopes = [], onFacts, onReview, onSettings, onTeam, onSaveSuccess }: {
   project: Project; scopeId: string; state?: Awakening; connected: boolean; runningScopes?: string[];
+  onSaveSuccess?: (text: string) => void;
   onFacts: () => void; onReview: () => void; onSettings: () => void; onTeam: () => void;
 }) {
   const { t } = useLanguage();
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [criteria, setCriteria] = useState('');
   const loop = explorationLoop(project, scopeId, state, connected, runningScopes);
   const cloud = loop.state;
   const h = cloud?.problemHeartbeat;
@@ -44,7 +47,12 @@ export default function ProjectBrief({ project, scopeId, state, connected, runni
   return <div className="space-y-4" aria-label={t('项目简报', 'Project brief')}>
     <header className="space-y-2">
       <div className="flex flex-wrap items-center gap-2 text-xs"><span aria-hidden className={`h-2 w-2 rounded-full ${loop.status === 'active' ? 'bg-emerald-400' : ['needs_user', 'blocked', 'unknown'].includes(loop.status) ? 'bg-amber-400' : 'bg-slate-500'}`} /><span>{t(...statuses[loop.status])}</span>{loop.run?.completedAt && <span className="text-slate-500">· {t('最近记录', 'Last record')} {displayDate(loop.run.completedAt)}</span>}</div>
+      <p className="text-xs text-slate-400">{t('目标 · 最终要解决什么', 'Goal · what needs to be solved')}</p>
       <h2 className="text-lg sm:text-xl font-semibold leading-relaxed break-words">{loop.details.question}</h2>
+      {scopeId === 'root' && <div className="rounded-lg border border-slate-800 p-3 space-y-2" aria-label={t('完成标准', 'Success criteria')}>
+        <div className="flex justify-between gap-3"><span className="text-xs text-slate-400">{t('什么叫解决了', 'What counts as solved')}</span>{onSaveSuccess && <button className={link} onClick={() => { setCriteria(project.overviewSuccessCriteria || ''); setEditingGoal(!editingGoal); }}>{editingGoal ? t('取消', 'Cancel') : t('编辑标准', 'Edit criteria')}</button>}</div>
+        {editingGoal ? <form onSubmit={e => { e.preventDefault(); onSaveSuccess?.(criteria.trim()); setEditingGoal(false); }} className="space-y-2"><textarea aria-label={t('完成标准', 'Success criteria')} maxLength={2000} value={criteria} onChange={e => setCriteria(e.target.value)} placeholder={t('例如：同等条件下连续三次复测达标，并保留原始数据。', 'For example: meet the target in three comparable trials and retain raw data.')} className="w-full min-h-20 bg-slate-950 border border-slate-600 rounded p-2 text-sm" /><button className={link} type="submit">{t('保存标准', 'Save criteria')}</button></form> : <p className="text-sm leading-relaxed break-words whitespace-pre-wrap line-clamp-3">{project.overviewSuccessCriteria || t('尚未明确。完成任务或交付报告，不代表问题已经解决。', 'Not defined. Finishing a task or delivering a report does not mean the problem is solved.')}</p>}
+      </div>}
       <button className={link} onClick={onReview}>{t('重要更新', 'Meaningful updates')} · {unread.length ? t(`${unread.length} 条未读`, `${unread.length} unread`) : t('暂无未读提醒', 'No unread updates')}</button>
     </header>
     <section className="rounded-xl bg-slate-950/60 border border-slate-700 p-4 space-y-2" aria-label={t('最新判断', 'Current understanding')}>

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { scopeKey } from './wake-storage.mjs';
+import { projectKey, mandateView, saveMandate, checkMandate, mandateError } from './project-mandates.mjs';
 import { buildModelRequest, parseModelResponse } from './.wake-build/runner.mjs';
 
 const STORE = createHash('sha256').update('hiexplore-shared-models-v1').digest('hex');
@@ -21,7 +23,8 @@ const prepareMessages = messages => {
 function checkFunding(s, owner, body, messages) {
   const settings = s.models[body.modelId]; if (!settings?.enabled || !settings.apiKey) throw fail('共享模型尚未启用或已暂停');
   if (s.calls.length >= 10000) throw fail('用量记录已达首版上限，请由运维归档');
-  if (s.calls.some(c => c.owner === owner && c.modelId === body.modelId && c.status === 'uncertain')) throw fail('此模型有待核对用量，请联系管理员处理后继续', 409);
+  // Uncertain calls keep their reservation in held; only the remaining available balance can fund new work.
+  // Never retry the original request or freeze the entire account because a response was lost.
   const maxTokens = Math.min(int(body.maxTokens ?? 2048, 1, 16384, '请求输出上限'), settings.maxOutputTokens);
   const reserved = Buffer.byteLength(JSON.stringify(messages)) * 2 + 2048 + maxTokens;
   const available = wallet(s, owner, body.modelId)?.available || 0;
@@ -51,6 +54,37 @@ export class SharedModels {
     await this.transaction(s => {
       for (const c of s.calls) if (c.status === 'reserved') { c.status = 'uncertain'; c.error = '后台重启，等待管理员核对供应商用量'; }
     });
+  }
+  async project(owner, projectId) {
+    return this.transaction(s => mandateView(s, s.projects?.[projectKey(owner, projectId)]));
+  }
+  async projectForScope(key, context) {
+    return this.transaction(s => {
+      const m = Object.values(s.projects || {}).find(m => m.projectId === context.projectId && scopeKey(m.owner, context.projectId, context.branchId, context.scopeId) === key);
+      return mandateView(s, m);
+    });
+  }
+  async saveProject(owner, projectId, body) {
+    return this.transaction(s => saveMandate(s, owner, projectId, body));
+  }
+  async projectAction(owner, projectId, body) {
+    return this.transaction(s => {
+      const m = s.projects?.[projectKey(owner, projectId)];
+      if (!m || m.revision !== body.expectedRevision) throw mandateError('项目约定已变化，请刷新');
+      if (!['resume', 'pause', 'stop', 'complete'].includes(body.action)) throw mandateError('项目操作无效');
+      if (['completed', 'stopped'].includes(m.status)) throw mandateError('已结束的阶段需要确认新约定');
+      if (body.action === 'complete' && (typeof body.note !== 'string' || !body.note.trim() || body.note.length > 2500)) throw mandateError('请记录验收依据，AI 不能自行宣布完成');
+      if (body.action === 'resume') {
+        checkMandate({ ...s, projects: { ...s.projects, [projectKey(owner, projectId)]: { ...m, status: 'active' } } }, owner, projectId);
+      }
+      if (m.history.length >= 300) throw mandateError('操作记录达到首版上限，请归档');
+      m.status = { resume: 'active', pause: 'paused', stop: 'stopped', complete: 'completed' }[body.action];
+      m.history.push({ action: body.action, revision: m.revision, at: Date.now(), actor: owner, ...(body.action === 'complete' ? { note: body.note.trim() } : {}) });
+      return mandateView(s, m);
+    });
+  }
+  async guardProject(owner, projectId, options) {
+    return this.transaction(s => { checkMandate(s, owner, projectId, options); });
   }
   async view(owner, admin = false) {
     return this.transaction(s => ({
@@ -130,11 +164,12 @@ export class SharedModels {
     if (typeof body.note !== 'string' || !body.note.trim() || body.note.length > 500) throw fail('请填写核对供应商用量的依据');
     return this.settle(body.callId, body.tokens, 'reconciled', body.note.trim(), admin);
   }
-  async preflight(owner, body) {
+  async preflight(owner, body, scope = {}) {
     if (!idOK(body.modelId)) throw fail('模型标识无效');
     const messages = prepareMessages(body.messages);
     return this.transaction(s => {
       const { reserved } = checkFunding(s, owner, body, messages);
+      if (scope.projectId) checkMandate(s, owner, scope.projectId, { modelId: body.modelId, reserved, revision: scope.mandateRevision });
       return { requiredTokens: reserved, availableTokens: wallet(s, owner, body.modelId).available };
     });
   }
@@ -146,17 +181,20 @@ export class SharedModels {
     const reservation = await this.transaction(s => {
       if (s.calls.some(c => c.id === id)) throw fail('此请求已受理，不会重复调用或扣款；请查看使用记录', 409);
       const { settings, maxTokens, reserved } = checkFunding(s, owner, body, messages);
+      const mandate = scope.projectId ? checkMandate(s, owner, scope.projectId, { modelId: body.modelId, reserved, revision: scope.mandateRevision }) : null;
       const balance = wallet(s, owner, body.modelId);
       balance.available -= reserved; balance.held += reserved;
       s.calls.push({ id, requestId: body.requestId, owner, modelId: body.modelId, model: settings.model, provider: settings.provider,
-        reserved, status: 'reserved', day: day(), at: Date.now(), scope });
+        reserved, status: 'reserved', day: day(), at: Date.now(), scope, ...(mandate ? { projectBudget: { revision: mandate.revision } } : {}) });
       this.active.add(id); return { settings: { ...settings }, maxTokens };
-    });
+    }).catch(e => { throw Object.assign(e, { notSent: true }); });
     let dispatched = false;
     try {
       const request = buildModelRequest(reservation.settings, messages, { maxTokens: reservation.maxTokens, jsonMode: body.jsonMode === true });
       delete request.headers['anthropic-dangerous-direct-browser-access'];
-      await this.beforeSend(); dispatched = true;
+      await this.beforeSend();
+      if (scope.projectId) await this.guardProject(owner, scope.projectId, { revision: scope.mandateRevision });
+      dispatched = true;
       const response = await this.fetcher(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body), signal: AbortSignal.timeout(60000), redirect: 'error' });
       if (!response.ok) throw fail(`模型供应商返回 HTTP ${response.status}；用量待核对`, 502);
       const raw = await response.text(); if (raw.length > 1_000_000) throw fail('模型响应过大，用量待核对', 502);
@@ -172,7 +210,7 @@ export class SharedModels {
         if (dispatched) { call.status = 'uncertain'; call.error = '请求已发送，用量尚未确认；保留预留额度，不自动重试'; }
         else { const balance = wallet(s, owner, body.modelId); balance.held -= call.reserved; balance.available += call.reserved; Object.assign(call, { status: 'cancelled', charged: 0, completedAt: Date.now() }); }
       });
-      throw fail(e.status ? e.message : '共享模型请求失败，用量状态见使用记录；不会自动重试', e.status || 502);
+      throw Object.assign(fail(e.status ? e.message : '共享模型请求失败，用量状态见使用记录；不会自动重试', e.status || 502), { code: e.code, notSent: !dispatched });
     } finally { this.active.delete(id); }
   }
 }

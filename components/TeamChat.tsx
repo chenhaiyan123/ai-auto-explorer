@@ -1,10 +1,11 @@
 import { t as ui } from '../services/language';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Project, ProblemNode, ChatMessage, NodeStatus } from '../types';
+import { Project, ProblemNode, ChatMessage, NodeStatus, FeedItem } from '../types';
 import { callGemini, factMessages } from '../services/geminiService';
 import { INQUIRY_ROLES, questionFactContext } from '../services/inquiry';
 import { resolveNodeByTitle } from '../services/noteLinks';
 import MarkdownView from './MarkdownView';
+import FeedCard from './FeedCard';
 
 /**
  * 团队群聊：右侧面板。
@@ -13,12 +14,12 @@ import MarkdownView from './MarkdownView';
  * - 一键补充到笔记：任何一条 AI 发言都能追加进某篇笔记。
  */
 
-interface ChatMsg { role: 'user' | 'model'; text: string; agent?: string }
+interface ChatMsg { role: 'user' | 'model'; text: string; agent?: string; ts?: number }
 
-const serialize = (m: ChatMsg): ChatMessage => ({ role: m.role, text: m.role === 'model' && m.agent ? `【${m.agent}】${m.text}` : m.text } as ChatMessage);
+const serialize = (m: ChatMsg): ChatMessage => ({ role: m.role, text: m.role === 'model' && m.agent ? `【${m.agent}】${m.text}` : m.text, ...(m.ts ? { ts: m.ts } : {}) } as ChatMessage);
 const parse = (cm: ChatMessage): ChatMsg => {
-  if (cm.role === 'model') { const mt = cm.text.match(/^【(.+?)】([\s\S]*)$/); if (mt) return { role: 'model', agent: mt[1], text: mt[2] }; }
-  return { role: cm.role as 'user' | 'model', text: cm.text };
+  if (cm.role === 'model') { const mt = cm.text.match(/^【(.+?)】([\s\S]*)$/); if (mt) return { role: 'model', agent: mt[1], text: mt[2], ts: cm.ts }; }
+  return { role: cm.role as 'user' | 'model', text: cm.text, ts: cm.ts };
 };
 
 const avatarFor = (name: string) => {
@@ -46,7 +47,11 @@ const TeamChat: React.FC<{
   onUpdateChatHistory?: (messages: ChatMessage[]) => void;
   /** 外部（如项目仪表盘点 Agent）往输入框里塞一段文字；nonce 变化即触发一次 */
   prefill?: { text: string; nonce: number } | null;
-}> = ({ project, nodes, selectedNode, onAppendToNote, onOpenNode, chatHistory, onUpdateChatHistory, prefill }) => {
+  /** 对话流：AI 的进度行 + 需要你拍板的问题卡，和聊天按时间排在一起 */
+  feed?: FeedItem[];
+  onAnswerFeed?: (item: FeedItem, optionId: string, text?: string) => void;
+  feedBusy?: boolean;
+}> = ({ project, nodes, selectedNode, onAppendToNote, onOpenNode, chatHistory, onUpdateChatHistory, prefill, feed, onAnswerFeed, feedBusy }) => {
   const [msgs, setMsgs] = useState<ChatMsg[]>(() => (chatHistory || []).map(parse));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -64,7 +69,14 @@ const TeamChat: React.FC<{
   }, [nodes, lead, project?.inquiries, selectedNode?.id]);
 
   const mountedRef = useRef(false);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, busy]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, busy, feed?.length, feed?.[feed.length - 1]?.id]);
+
+  // 聊天消息和对话流按时间合成一条时间线。老消息没有时间戳，排在最前面（sort 是稳定的，原顺序不变）。
+  const timeline = useMemo(() => {
+    const rows: Array<{ ts: number; msg?: number; item?: FeedItem }> = msgs.map((m, i) => ({ ts: m.ts || 0, msg: i }));
+    (feed || []).forEach(item => rows.push({ ts: item.ts, item }));
+    return rows.sort((a, b) => a.ts - b.ts);
+  }, [msgs, feed]);
   // 外部塞入的 @成员：追加到输入框末尾（不覆盖用户已输入的内容）
   useEffect(() => {
     if (!prefill?.text) return;
@@ -109,7 +121,7 @@ const TeamChat: React.FC<{
     const text = input.trim();
     if (!text || busy) return;
     setInput('');
-    const userMsg: ChatMsg = { role: 'user', text };
+    const userMsg: ChatMsg = { role: 'user', text, ts: Date.now() };
     const base = [...msgs, userMsg];
     setMsgs(base);
     setBusy(true);
@@ -118,9 +130,9 @@ const TeamChat: React.FC<{
       const mentioned = members.find(m => text.includes('@' + m));
       const responder = mentioned || lead;
       const reply = await speak(responder, text, base);
-      setMsgs(prev => [...prev, { role: 'model', agent: responder, text: reply }]);
+      setMsgs(prev => [...prev, { role: 'model', agent: responder, text: reply, ts: Date.now() }]);
     } catch (e: any) {
-      setMsgs(prev => [...prev, { role: 'model', agent: lead, text: '（出错了：' + (e?.message || e) + '）请检查右上角模型设置。' }]);
+      setMsgs(prev => [...prev, { role: 'model', agent: lead, text: '（出错了：' + (e?.message || e) + '）请检查右上角模型设置。', ts: Date.now() }]);
     } finally { setBusy(false); }
   };
 
@@ -128,19 +140,19 @@ const TeamChat: React.FC<{
   const teamDiscuss = async () => {
     if (busy) return;
     const topic = selectedNode ? `围绕「${selectedNode.title}」这个方向` : `围绕项目「${project?.name || ''}」`;
-    const userMsg: ChatMsg = { role: 'user', text: `🗣️ 让团队讨论：${topic}，各位说说你负责部分的看法与下一步。` };
+    const userMsg: ChatMsg = { role: 'user', text: `🗣️ 让团队讨论：${topic}，各位说说你负责部分的看法与下一步。`, ts: Date.now() };
     let cur = [...msgs, userMsg];
     setMsgs(cur);
     setBusy(true);
     try {
       for (const m of members.slice(0, 4)) {
         const reply = await speak(m, `请就${topic}，给出你（${m}）负责部分的看法、关键风险与下一步建议。`, cur);
-        const newMsg: ChatMsg = { role: 'model', agent: m, text: reply };
+        const newMsg: ChatMsg = { role: 'model', agent: m, text: reply, ts: Date.now() };
         cur = [...cur, newMsg];
         setMsgs(cur);
       }
     } catch (e: any) {
-      setMsgs(prev => [...prev, { role: 'model', agent: lead, text: '（讨论中断：' + (e?.message || e) + '）' }]);
+      setMsgs(prev => [...prev, { role: 'model', agent: lead, text: '（讨论中断：' + (e?.message || e) + '）', ts: Date.now() }]);
     } finally { setBusy(false); }
   };
 
@@ -161,63 +173,75 @@ const TeamChat: React.FC<{
     <div className="h-full flex flex-col relative">
       {/* 成员条 */}
       <div className="px-3 py-2 border-b border-slate-800 flex items-center gap-1.5 overflow-x-auto scroll-hide">
-        <span className="text-[9px] text-slate-500 flex-shrink-0">{ui("团队")}</span>
+        <span className="text-[11px] text-slate-500 flex-shrink-0">{ui("团队")}</span>
         {members.map(m => (
-          <button key={m} onClick={() => insertMention(m)} title={`@${m}`} className="flex-shrink-0 flex items-center gap-1 text-[9px] bg-slate-800 hover:bg-blue-600 hover:text-white border border-slate-700 rounded-full px-2 py-0.5 transition-colors">
-            <span>{avatarFor(m)}</span><span className="truncate max-w-[64px]">{m}</span>
+          <button key={m} onClick={() => insertMention(m)} title={`@${m}`} className="flex-shrink-0 flex items-center gap-1 text-[11px] bg-slate-800 hover:bg-blue-600 hover:text-white border border-slate-700 rounded-full px-2 py-0.5 transition-colors">
+            <span>{avatarFor(m)}</span><span className="truncate max-w-[96px]">{m}</span>
           </button>
         ))}
       </div>
 
       {/* 消息 */}
-      <div className="flex-1 overflow-y-auto scroll-hide p-3 space-y-3">
-        {msgs.length === 0 && (
-          <div className="text-[11px] text-slate-500 leading-relaxed bg-slate-800/50 border border-slate-700 rounded-lg p-3">
-            这是项目的<b className="text-slate-300">{ui("团队群聊")}</b>。点上方成员可 @ ta 单独发言；用 <span className="text-purple-400">[[笔记名]]</span> 引用笔记（或下方「@笔记」按钮）；任何回复都能「➕ 补充到笔记」。先点「🗣️ 让团队讨论」试试。
+      <div className="flex-1 overflow-y-auto scroll-hide">
+      <div className="max-w-3xl mx-auto w-full p-3 md:px-6 md:py-5 space-y-3">
+        {timeline.length === 0 && (
+          <div className="text-[13px] text-slate-500 leading-relaxed">
+            {ui("AI 的进度和需要你拍板的问题都会出现在这里。也可以直接对团队说话。")}
           </div>
         )}
-        {msgs.map((m, i) => (
-          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+        {timeline.map(row => {
+          if (row.item) return (
+            <FeedCard key={row.item.id} item={row.item} busy={feedBusy} onOpenNode={onOpenNode}
+              onAnswer={(it, opt, txt) => onAnswerFeed?.(it, opt, txt)} />
+          );
+          const i = row.msg!;
+          const m = msgs[i];
+          return (
+          <div key={`m${i}`} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[88%] ${m.role === 'user' ? '' : 'w-full'}`}>
               {m.role === 'model' && m.agent && (
-                <div className="flex items-center gap-1 mb-1 text-[10px] text-blue-300 font-bold"><span>{avatarFor(m.agent)}</span> {m.agent}</div>
+                <div className="flex items-center gap-1 mb-1 text-[12px] text-blue-300 font-bold"><span>{avatarFor(m.agent)}</span> {m.agent}</div>
               )}
-              <div className={`px-3 py-2 rounded-2xl text-[12px] shadow-sm ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none whitespace-pre-wrap' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-none'}`}>
-                {m.role === 'user' ? m.text : <MarkdownView source={m.text} onWikiLink={(t) => { const n = resolveNodeByTitle(nodes, t); if (n) onOpenNode(n.id); }} linkResolver={(t) => !!resolveNodeByTitle(nodes, t)} />}
+              <div className={`px-3 py-2 rounded-2xl text-[14px] shadow-sm ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none whitespace-pre-wrap' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-none'}`}>
+                {m.role === 'user' ? m.text : <MarkdownView className="chat-md !text-[14px] leading-7" source={m.text} onWikiLink={(t) => { const n = resolveNodeByTitle(nodes, t); if (n) onOpenNode(n.id); }} linkResolver={(t) => !!resolveNodeByTitle(nodes, t)} />}
               </div>
               {m.role === 'model' && (
-                <button onClick={() => setPicker({ mode: 'append', forMsg: i })} className="mt-1 text-[9px] text-slate-500 hover:text-emerald-400 transition-colors">➕ 补充到笔记</button>
+                <button onClick={() => setPicker({ mode: 'append', forMsg: i })} className="mt-1 text-[11px] text-slate-500 hover:text-emerald-400 transition-colors">➕ 补充到笔记</button>
               )}
             </div>
           </div>
-        ))}
-        {busy && <div className="text-[10px] text-blue-400 animate-pulse">团队成员正在思考…</div>}
+          );
+        })}
+        {busy && <div className="text-[12px] text-blue-400 animate-pulse">团队成员正在思考…</div>}
         <div ref={endRef} />
+      </div>
       </div>
 
       {/* 输入 */}
-      <div className="border-t border-slate-800 p-2.5 space-y-2">
+      <div className="border-t border-slate-800 p-2.5">
+      <div className="max-w-3xl mx-auto w-full space-y-2">
         <div className="flex gap-1.5">
-          <button onClick={() => setPicker({ mode: 'mention' })} className="text-[10px] px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md transition-colors" title="引用一篇笔记 [[..]]">@笔记</button>
-          <button onClick={teamDiscuss} disabled={busy} className="text-[10px] px-2 py-1 bg-violet-600/80 hover:bg-violet-500 text-white rounded-md transition-colors disabled:opacity-50">🗣️ 让团队讨论</button>
+          <button onClick={() => setPicker({ mode: 'mention' })} className="text-[12px] px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md transition-colors" title="引用一篇笔记 [[..]]">@笔记</button>
+          <button onClick={teamDiscuss} disabled={busy} className="text-[12px] px-2 py-1 bg-violet-600/80 hover:bg-violet-500 text-white rounded-md transition-colors disabled:opacity-50">🗣️ 让团队讨论</button>
         </div>
         <form onSubmit={e => { e.preventDefault(); send(); }} className="flex gap-2">
-          <input value={input} onChange={e => setInput(e.target.value)} placeholder="对团队说… @成员 / [[笔记]]" className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-3 py-2.5 text-xs text-white outline-none focus:ring-1 focus:ring-blue-500" />
-          <button type="submit" disabled={busy} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-md text-xs font-bold transition-colors disabled:opacity-50">{ui("发送")}</button>
+          <input value={input} onChange={e => setInput(e.target.value)} placeholder="对团队说… @成员 / [[笔记]]" className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-3 py-2.5 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" />
+          <button type="submit" disabled={busy} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-md text-sm font-bold transition-colors disabled:opacity-50">{ui("发送")}</button>
         </form>
+      </div>
       </div>
 
       {/* 笔记选择器 */}
       {picker && (
         <div className="absolute inset-0 z-40 bg-slate-950/80 backdrop-blur-sm flex flex-col">
           <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800">
-            <span className="text-[11px] font-bold text-slate-200">{picker.mode === 'mention' ? '引用一篇笔记' : '把这条补充到哪篇笔记？'}</span>
+            <span className="text-[13px] font-bold text-slate-200">{picker.mode === 'mention' ? '引用一篇笔记' : '把这条补充到哪篇笔记？'}</span>
             <button onClick={() => setPicker(null)} className="text-slate-500 hover:text-white text-sm">✕</button>
           </div>
           <div className="flex-1 overflow-y-auto scroll-hide p-2 space-y-1">
-            {noteList.length === 0 ? <div className="text-[11px] text-slate-600 text-center py-8">这个项目还没有笔记</div> :
+            {noteList.length === 0 ? <div className="text-[13px] text-slate-600 text-center py-8">这个项目还没有笔记</div> :
               noteList.map(n => (
-                <button key={n.id} onClick={() => onPick(n)} className="w-full text-left px-3 py-2 bg-slate-800/60 hover:bg-slate-700 border border-slate-700/60 rounded-lg text-[11px] text-slate-200 transition-colors truncate">
+                <button key={n.id} onClick={() => onPick(n)} className="w-full text-left px-3 py-2 bg-slate-800/60 hover:bg-slate-700 border border-slate-700/60 rounded-lg text-[13px] text-slate-200 transition-colors truncate">
                   {n.noteType === 'readme' ? '📘' : n.noteType === 'overview' ? '🏠' : '📄'} {n.title}
                 </button>
               ))}

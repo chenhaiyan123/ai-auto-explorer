@@ -1,3 +1,4 @@
+import ServiceMarket from './components/ServiceMarket';
 import { platform } from './services/native';
 import { useLanguage, t as ui } from './services/language';
 import PersonalCenter from './components/PersonalCenter';
@@ -13,7 +14,9 @@ import { UserStats, KnowledgeCard, ResearchFinding } from './types';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import MessageBoard from './components/MessageBoard';
 import { v4 as uuidv4 } from 'uuid';
-import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage, DecisionOption, DecisionTrigger, Probe } from './types';
+import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage, DecisionOption, DecisionTrigger, Probe, FeedItem } from './types';
+import { type HelpSeek, seekFromFact } from './services/factHelp';
+import { pushFeed, answerFeed, closeAsks, openAsks, status as feedStatus, stepAsk, branchAsk, contradictedAsk, realityAsk, anchorAsk, unattendedAsk, haltedAsk, outlineAsk } from './services/agentFeed';
 import { DecisionRecordModal, DecisionTimelineModal, DecisionDraft } from './components/DecisionCenter';
 import { captureSubtree, createDecision, forkFromDecision } from './services/decisionService';
 import { trackEvent, identifyChatUser } from './services/analytics';
@@ -33,7 +36,10 @@ import ProjectWorkspace from './components/ProjectWorkspace';
 import NotesPanel from './components/ProjectNotesTree';
 import { ensureWorktree, saveStage, branchFromStage, switchExplorationBranch, PROJECT_PAGES, ProjectPage } from './services/projectWorktree';
 import { useInquiryTeams } from './services/useInquiryTeams';
-import { recoverInquiry, questionFactContext } from './services/inquiry';
+import { recoverInquiry, questionFactContext, addFact } from './services/inquiry';
+import { lifeOf, defaultLife, pickDue, budgetAllows, spendBudget, buildPulseMessages, parsePulse, applyPulse, failPulse, notableToShow, touchViewed, setCadence, setWatching, type PulseBudget } from './services/projectPulse';
+import ProjectPulse from './components/ProjectPulse';
+import { callLLM } from './services/llmProvider';
 import QuestionEvaluator from './components/QuestionEvaluator';
 import QuestionBoard from './components/QuestionBoard';
 import TeamChat from './components/TeamChat';
@@ -52,9 +58,8 @@ import ChatLauncher from './components/ChatLauncher';
 import SimPreview from './components/SimPreview';
 import { designSimulation } from './services/simService';
 import OutlinePlanner from './components/OutlinePlanner';
-import StepBar from './components/StepBar';
 import { proposeOutline } from './services/outlineService';
-import { confirmOutline, outlineProgress, outlineToMarkdown, keptItems, plainProgress } from './services/outline';
+import { confirmOutline, outlineProgress, outlineToMarkdown, keptItems, plainProgress, setUserNote, isStubNote, fillStubNote, stubNote } from './services/outline';
 import { buildInbox, parseItemId, InboxReply } from './services/inbox';
 import { pushInbox, pullReplies, ackReplies, nextPollDelay, hasSyncBackend } from './services/inboxSync';
 import { loadPending, approvePending, dropPending } from './services/iotService';
@@ -846,6 +851,7 @@ const App: React.FC = () => {
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [isLoginAsAdmin, setIsLoginAsAdmin] = useState(false);
+  const [landingLogin, setLandingLogin] = useState(false);
   const [loginMethod, setLoginMethod] = useState<'wechat' | 'phone' | 'email'>('email'); // 登录方式
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [showMetaModal, setShowMetaModal] = useState(false);
@@ -905,6 +911,7 @@ const App: React.FC = () => {
   const [notesSearch, setNotesSearch] = useState('');
   const [showGraphModal, setShowGraphModal] = useState(false); // 图谱弹出层
   const [showFeedback, setShowFeedback] = useState(false); // 反馈弹窗
+  const [showServiceMarket, setShowServiceMarket] = useState(false);
   const [showQuestionBoard, setShowQuestionBoard] = useState(false); // 问题广场
   const [showDownloadModal, setShowDownloadModal] = useState(false); // 下载客户端
   const [teamBusy, setTeamBusy] = useState(false); // AI 组队进行中
@@ -923,6 +930,17 @@ const App: React.FC = () => {
   }, [activeModel]);
   const [rightChatOpen, setRightChatOpen] = useState(false);     // 右侧 AI 对话栏
   const [rightChatWidth, setRightChatWidth] = useState(360);
+  // 布局：中间是对话（交互和决策都在这），右侧是笔记 / 项目总览，只用来看内容
+  const [noteOpen, setNoteOpen] = useState(() => { try { return window.innerWidth >= 768; } catch { return true; } });
+  const [noteWidth, setNoteWidth] = useState(560);
+  /** 事实看板里「找合作 Agent 验证」带过来的那条事实 */
+  const [marketSeek, setMarketSeek] = useState<HelpSeek | null>(null);
+  const [isMobileWidth, setIsMobileWidth] = useState(() => { try { return window.innerWidth < 768; } catch { return false; } });
+  useEffect(() => {
+    const onResize = () => setIsMobileWidth(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   // 仪表盘点 Agent → 打开群聊并把 @某某 塞进输入框（nonce 保证同一个 Agent 连点两次也生效）
   const [chatPrefill, setChatPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const mentionAgentInChat = useCallback((agent: string) => {
@@ -948,12 +966,9 @@ const App: React.FC = () => {
   const [decisionDraft, setDecisionDraft] = useState<(DecisionDraft & { projectId: string; pendingAction?: 'delete' | 'invalidate' }) | null>(null);
   const [showDecisionTimeline, setShowDecisionTimeline] = useState(false);
   
-  // 通知系统
-  const [notifications, setNotifications] = useState<Array<{id: string, type: 'discovery' | 'warning' | 'info', title: string, message: string, time: number}>>([]);
-  const [showNotificationPanel, setShowNotificationPanel] = useState(false);
+  // 通知已并入右侧对话流（project.feed），这里只保留「只看重要」这个偏好
   const [notificationMode, setNotificationMode] = useState<'all' | 'important'>(() => { try { return localStorage.getItem('aae-notification-mode') === 'important' ? 'important' : 'all'; } catch { return 'all'; } });
   useEffect(() => { try { localStorage.setItem('aae-notification-mode', notificationMode); } catch {} }, [notificationMode]);
-  const visibleNotifications = notificationMode === 'important' ? notifications.filter(n => n.type !== 'info') : notifications;
   
   // 服务端核验的会员状态与收费入口
   const [isPremiumUser, setIsPremiumUser] = useState(false);
@@ -974,6 +989,8 @@ const App: React.FC = () => {
   const MAX_AUTO_NODES = 50;
   // 「总览优先」：探索一开始先写总览，之后每解决若干节点自动刷新一次
   const overviewRefreshingRef = useRef(false);
+  /** 每个项目上一次「开跑时写总览」的时间（避免一篇一停时每篇都多调一次模型） */
+  const overviewStartAtRef = useRef<Record<string, number>>({});
   const solvedSinceOverviewRef = useRef(0);
   const OVERVIEW_REFRESH_EVERY = 3; // 每解决 3 个节点刷新一次总览
 
@@ -1017,16 +1034,28 @@ const App: React.FC = () => {
     return () => { active = false; clearInterval(timer); window.removeEventListener(BILLING_CHANGED, refresh); window.removeEventListener('focus', refresh); };
   }, [user]);
 
-  // 添加通知的函数
-  const addNotification = useCallback((type: 'discovery' | 'warning' | 'info', title: string, message: string) => {
-    const notification = { id: uuidv4(), type, title, message, time: Date.now() };
-    setNotifications(prev => [notification, ...prev].slice(0, 20));
+  // ===== 对话流（像 Codex 一样）=====
+  // 进度和需要人拍板的地方，都以一行字 / 一张问题卡进右侧聊天记录，不再走铃铛和弹窗。
+  const feedProjectRef = useRef<string | null>(null);
+  useEffect(() => { feedProjectRef.current = currentProjectId; }, [currentProjectId]);
+  const patchFeed = useCallback((fn: (feed: FeedItem[] | undefined) => FeedItem[], projectId?: string) => {
+    const pid = projectId || feedProjectRef.current;
+    if (!pid) return;
+    setProjects(prev => prev.map(p => (p.id === pid ? { ...p, feed: fn(p.feed) } : p)));
   }, []);
+  const pushFeedItem = useCallback((item: FeedItem, projectId?: string) => {
+    patchFeed(f => pushFeed(f, item), projectId);
+    // 有问题要问你，就把对话栏打开——不然问题卡挂在收起的栏里等于没问
+    if (item.kind === 'ask') setRightChatOpen(true);
+  }, [patchFeed]);
+  const closeFeedAsks = useCallback((type: Parameters<typeof closeAsks>[1], label?: string, nodeId?: string) => {
+    patchFeed(f => closeAsks(f, type, label, nodeId));
+  }, [patchFeed]);
 
-  // 清除单个通知
-  const clearNotification = useCallback((id: string) => {
-    setNotifications(prev => prev.filter(n => n.id !== id));
-  }, []);
+  // 老的通知入口：原样保留签名，现在落成对话流里的一行字
+  const addNotification = useCallback((type: 'discovery' | 'warning' | 'info', title: string, message: string) => {
+    pushFeedItem(feedStatus(title, { detail: message || undefined, tone: type === 'warning' ? 'warn' : type === 'discovery' ? 'good' : 'info' }));
+  }, [pushFeedItem]);
 
   // 更新AI管家聊天记录到项目
   const handleUpdateButlerChat = useCallback((messages: ChatMessage[]) => {
@@ -1171,7 +1200,6 @@ const App: React.FC = () => {
    */
   const unattendedRef = useRef(0);
   const UNATTENDED_BUDGET = 30;
-  const [unattendedPrompt, setUnattendedPrompt] = useState(false);
 
   /** 判断错误是否属于「重试也没用」的链路级故障 */
   const isInfraFailure = (e: any): boolean => {
@@ -1232,7 +1260,7 @@ const App: React.FC = () => {
         if (overviewEpoch !== workspaceEpochRef.current) return;
         setNodes(prev => prev.map(n => n.id === overview.id && n.autoNote !== false ? { ...n, fullNote: md.trim(), autoNote: true, noteUpdatedAt: Date.now() } : n));
         solvedSinceOverviewRef.current = 0;
-        if (reason === 'start') addNotification('info', '🏠 已生成项目总览', '总览会随探索进度自动更新');
+        // 总览是后台默默更新的，不在对话流里刷一行
       }
     } catch (e) {
       console.warn('[总览] 合成失败', e);
@@ -1300,8 +1328,7 @@ const App: React.FC = () => {
         if (cur && legReady(nodes, cur) && cur.status === 'pending') {
           reachAnchorRef.current?.(cur.id);
           setIsLooping(false);
-          addNotification('warning', `📍 到达路标：${cur.title}`,
-            `${cur.question}\n需要：${anchorBrief(cur)}`);
+          pushFeedItem(anchorAsk(cur.id, cur.title, cur.question, anchorBrief(cur)));
           trackEvent('anchor_reached');
           markMilestone('funnel_anchor_reached');
           return;
@@ -1312,7 +1339,7 @@ const App: React.FC = () => {
           setIsLooping(false);
           if (anchorPromptedRef.current !== waiting.id) {
             anchorPromptedRef.current = waiting.id;
-            addNotification('warning', `📍 卡在路标：${waiting.title}`, `还在等：${anchorBrief(waiting)}`);
+            pushFeedItem(anchorAsk(waiting.id, waiting.title, waiting.question, anchorBrief(waiting)));
           }
           return;
         }
@@ -1323,11 +1350,7 @@ const App: React.FC = () => {
           setIsLooping(false);
           if (!realityPromptedRef.current) {
             realityPromptedRef.current = true;
-            addNotification(
-              'warning',
-              `🟡 需要现实反馈（${queue.length} 项）`,
-              `推理已经到头了，继续想下去也不会更准。待验证：${queue.slice(0, 3).map(q => q.title).join('、')}${queue.length > 3 ? ' 等' : ''}`,
-            );
+            pushFeedItem(realityAsk(queue));
           }
           trackEvent('explore_halted', { reason: 'awaiting_reality' });
           return;
@@ -1339,7 +1362,7 @@ const App: React.FC = () => {
           if (isLoopingRef.current) setTimeout(() => { if (isLoopingRef.current) runExplorationCycleRef.current?.(); }, 8000);
         } else if (!continuousModeRef.current) {
           setIsLooping(false);
-          addNotification('info', '🎉 探索完成', '所有节点已探索完毕，可以生成研究报告了！');
+          pushFeedItem(feedStatus('🎉 全部写完了，可以生成研究报告', { tone: 'good' }));
         }
       }
       return;
@@ -1348,7 +1371,7 @@ const App: React.FC = () => {
     // 无人看管预算：跑够额度就停下来问一句，避免整夜空跑烧钱
     if (unattendedRef.current >= UNATTENDED_BUDGET) {
       setIsLooping(false);
-      setUnattendedPrompt(true);
+      pushFeedItem(unattendedAsk(UNATTENDED_BUDGET));
       trackEvent('explore_halted', { reason: 'unattended_budget' });
       return;
     }
@@ -1358,6 +1381,15 @@ const App: React.FC = () => {
     const cid = unexplored.id;
     const nodeTitle = unexplored.title;
     updateNode(cid, { status: NodeStatus.EXPLORING });
+    // 开始写了 = 之前挂着的「下一篇？/ 还在看吗？/ 已暂停」都过时了，顺手收掉
+    patchFeed(f => pushFeed(
+      closeAsks(closeAsks(closeAsks(f, 'step', '已继续'), 'unattended', '已继续'), 'halted', '已恢复'),
+      feedStatus(`✍️ 正在写《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid }),
+    ));
+    // 用户在对话流里补过一句要求 → 这一次带进提示词（走「已有背景」那一栏），写完清空
+    const target: ProblemNode = unexplored.userAsk
+      ? { ...unexplored, notes: `${unexplored.notes ? unexplored.notes + '\n' : ''}用户要求：${unexplored.userAsk}` }
+      : unexplored;
     
     try {
       try { if (currentProject) await assertBrowserResearchAllowed(currentProject, cid); }
@@ -1371,16 +1403,16 @@ const App: React.FC = () => {
       );
       
       const explorationPromise = isResearch 
-        ? exploreResearchNode(unexplored, nodes, (c: KnowledgeCard) => {
+        ? exploreResearchNode(target, nodes, (c: KnowledgeCard) => {
+            // 知识卡片自己有地方看，不再逐条刷进对话流
             setKnowledgeCards(p => [...p, c]);
-            addNotification('discovery', '💡 新知识卡片', `在「${nodeTitle}」中发现：${c.title}`);
           }, (f: ResearchFinding) => {
             setResearchFindings(p => [...p, f]);
             if (f.importance === 'high') {
               addNotification('discovery', '🔥 重要发现', f.insight.slice(0, 50) + '...');
             }
           }, questionFactContext(currentProject?.inquiries, unexplored.id))
-        : exploreNode(unexplored, nodes, questionFactContext(currentProject?.inquiries, unexplored.id));
+        : exploreNode(target, nodes, questionFactContext(currentProject?.inquiries, unexplored.id));
       
       const result = await Promise.race([explorationPromise, timeoutPromise]) as any;
       
@@ -1446,27 +1478,30 @@ const App: React.FC = () => {
           
           return [...updatedPrev, ...newNodes];
         });
-        addNotification('info', '🌿 发现新方向', `从「${nodeTitle}」衍生出 ${result.subProblems.length} 个新探索方向`);
+        pushFeedItem(feedStatus(`🌿《${nodeTitle}》拆出 ${result.subProblems.length} 个新方向`, { detail: result.subProblems.map((sp: any) => sp.title).filter(Boolean).join('、') }));
       }
       
       if (result.triggerDecision) { 
+        const pendingDecision: DecisionPoint = { 
+          nodeId: cid, 
+          context: result.decisionContext, 
+          options: [
+            { label: '方案A：继续', action: 'continue' }, 
+            { label: '方案B：新子方向', action: 'add_subproblem' }, 
+            { label: '方案C：终止', action: 'terminate' }
+          ] 
+        };
         updateNode(cid, { 
           status: NodeStatus.NEEDS_REVIEW, 
           confidence: result.confidence, 
           notes: result.notes, 
           taskType, 
-          pendingDecision: { 
-            nodeId: cid, 
-            context: result.decisionContext, 
-            options: [
-              { label: '方案A：继续', action: 'continue' }, 
-              { label: '方案B：新子方向', action: 'add_subproblem' }, 
-              { label: '方案C：终止', action: 'terminate' }
-            ] 
-          } 
+          userAsk: undefined,
+          ...(isStubNote(unexplored.fullNote) && result.notes ? { fullNote: fillStubNote(unexplored.fullNote!, result.notes) } : {}),
+          pendingDecision,
         }); 
         setIsLooping(false);
-        addNotification('warning', '⚠️ 需要您的决策', `「${nodeTitle}」遇到了分支点，请做出选择`);
+        pushFeedItem(branchAsk({ ...unexplored, pendingDecision }));
       } else {
         // ===== 该标记「已完成」，还是「该去问现实了」？=====
         // research 模式的 exploreResearchNode 不产出假设 → 沿用节点上已有的（可能含人工回填的现实证据）
@@ -1482,8 +1517,11 @@ const App: React.FC = () => {
         // ⚠️ updateNode 是 {...n, ...u} 的浅合并：显式传 hypothesis: undefined 会把已有假设**抹掉**。
         // research 模式的 exploreResearchNode 不产出 hypothesis，若无条件带上这个 key，
         // 用户辛苦回填的现实证据会被一轮探索清空。所以只在真的有值时才写。
+        // 框架里的空壳：写完把占位正文换成真内容，不然笔记页还显示「还没开始写」
+        const filled = isStubNote(unexplored.fullNote) && result.notes ? { fullNote: fillStubNote(unexplored.fullNote!, result.notes) } : {};
         const withHyp = (u: Partial<ProblemNode>): Partial<ProblemNode> =>
-          hypothesis ? { ...u, hypothesis } : u;
+          hypothesis ? { ...u, ...filled, hypothesis, userAsk: undefined } : { ...u, ...filled, userAsk: undefined };
+        let finalStatus: NodeStatus = NodeStatus.SOLVED;
 
         if (contradicted) {
           updateNode(cid, withHyp({
@@ -1491,10 +1529,10 @@ const App: React.FC = () => {
             validationReason: '现实证据与假设冲突，需要转向',
             noteUpdatedAt: Date.now(),
           }));
-          addNotification('warning', '🔴 假设被现实推翻', `「${nodeTitle}」的判断与现实证据冲突，先记一笔再转向`);
+          finalStatus = NodeStatus.CONTRADICTED;
           trackEvent('hypothesis_contradicted');
-          // 转向是这个系统里最值得留痕的时刻：记下来之后随时可以 fork 回到旧路线
-          setTimeout(() => contradictedDecisionRef.current?.(cid), 400);
+          // 转向是这个系统里最值得留痕的时刻：在对话流里问一句，记下来之后随时可以 fork 回到旧路线
+          pushFeedItem(contradictedAsk({ ...unexplored, hypothesis }));
         } else if (hits.length) {
           // 注意：这里**不要** setIsLooping(false)。
           // 单个节点该验证了不代表整个探索该停——挂起它，循环继续跑别的节点，
@@ -1504,7 +1542,8 @@ const App: React.FC = () => {
             validationReason: summarizeHits(hits),
             noteUpdatedAt: Date.now(),
           }));
-          addNotification('info', '🟡 需要现实验证', `「${nodeTitle}」：${hits[0].label} —— ${hits[0].detail}`);
+          finalStatus = NodeStatus.VALIDATING;
+          pushFeedItem(feedStatus(`🟡《${nodeTitle}》要问现实：${hits[0].label}`, { key: `write:${cid}`, nodeId: cid, detail: hits[0].detail, tone: 'warn' }));
           trackEvent('validation_triggered', { reason: hits[0].reason });
         } else {
           updateNode(cid, withHyp({
@@ -1519,10 +1558,25 @@ const App: React.FC = () => {
           没有这个动作，AI 只能按自己的节奏往下跑，两边的认知就此分叉。
           「持续探索」是用户明确要求不打扰的模式，那时不停。
         */
-        if (paceRef.current === 'step' && !continuousModeRef.current) {
+        const stepping = paceRef.current === 'step' && !continuousModeRef.current;
+        if (stepping) {
           setIsLooping(false);
           setJustWroteId(cid);
           trackEvent('step_pause');
+          // 被推翻的那篇先回答「接下来怎么走」，答完再问「下一篇」，一次只问一件事
+          if (finalStatus !== NodeStatus.CONTRADICTED) {
+            const written: ProblemNode = { ...unexplored, status: finalStatus, notes: result.notes, hypothesis };
+            const after = nodes.map(n => (n.id === cid ? written : n));
+            let prog = outlineRef.current?.status === 'confirmed' ? outlineProgress(outlineRef.current, after) : plainProgress(after);
+            // 框架里的篇目写完了，但探索中又长出了新方向（子问题 / 用户在岔路口给的方向）——也给一个「写下一篇」
+            if (!prog.next) {
+              const extra = after.find(n => n.status === NodeStatus.UNEXPLORED && n.noteType !== 'overview' && n.noteType !== 'readme' && n.noteType !== 'simulation');
+              if (extra) prog = { ...prog, next: { nodeId: extra.id, title: extra.title, question: '' } };
+            }
+            pushFeedItem(stepAsk(written, prog));
+          }
+        } else if (finalStatus === NodeStatus.SOLVED) {
+          pushFeedItem(feedStatus(`✅ 写完《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid }));
         }
 
         // 「总览优先」：每解决若干节点，自动刷新一次项目总览，让用户随时看到最新进展
@@ -1547,13 +1601,13 @@ const App: React.FC = () => {
         setIsLooping(false);
         isProcessingRef.current = false;
         const isQuota = (e as any)?.name === 'TrialQuotaError';
-        addNotification(
-          'warning',
-          isQuota ? '⚠️ 体验额度已用完' : '⚠️ 模型服务连不上，已暂停探索',
+        pushFeedItem(feedStatus(`✍️ 没写成《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid, tone: 'warn' }));
+        pushFeedItem(haltedAsk(
+          isQuota ? '⚠️ 体验额度用完了，已暂停' : '⚠️ 模型连不上，已暂停',
           isQuota
-            ? '自动探索已暂停。可在右上角设置里换成你自己的模型（Ollama / DeepSeek / 任何 OpenAI 兼容接口）继续。'
-            : `自动探索已暂停，避免空转。错误：${(e as Error).message}`,
-        );
+            ? '可以在设置里换成你自己的模型（Ollama / DeepSeek / 任何 OpenAI 兼容接口）继续。'
+            : `错误：${(e as Error).message}`,
+        ));
         trackEvent('explore_halted', { reason: isQuota ? 'quota' : 'infra' });
         return;
       }
@@ -1564,8 +1618,7 @@ const App: React.FC = () => {
         updateNode(cid, { status: NodeStatus.UNEXPLORED });
         setIsLooping(false);
         isProcessingRef.current = false;
-        addNotification('warning', '⚠️ 连续失败，已暂停探索',
-          `连续 ${MAX_CONSECUTIVE_FAILS} 个节点都失败了，先停下来避免空转。最后一个错误：${(e as Error).message}`);
+        pushFeedItem(haltedAsk(`⚠️ 连续 ${MAX_CONSECUTIVE_FAILS} 篇都没写成，已暂停`, `最后一个错误：${(e as Error).message}`));
         trackEvent('explore_halted', { reason: 'consecutive' });
         return;
       }
@@ -1577,29 +1630,30 @@ const App: React.FC = () => {
       if (retryCount < MAX_RETRIES) {
         // 还可以重试，保持UNEXPLORED状态，继续探索
         updateNode(cid, { status: NodeStatus.UNEXPLORED });
-        addNotification('warning', '⚠️ 探索遇到问题', `「${nodeTitle}」将自动重试 (${retryCount}/${MAX_RETRIES})`);
+        pushFeedItem(feedStatus(`↻《${nodeTitle}》出错了，自动重试 ${retryCount}/${MAX_RETRIES}`, { key: `write:${cid}`, nodeId: cid, tone: 'warn' }));
         // 不停止循环，让它继续
       } else {
         // 超过重试次数，标记为需要人工处理
+        const pendingDecision: DecisionPoint = {
+          nodeId: cid,
+          context: '自动探索多次失败，需要人工干预',
+          options: [
+            { label: '重新探索', action: 'continue' },
+            { label: '跳过此节点', action: 'terminate' }
+          ]
+        };
         updateNode(cid, { 
           status: NodeStatus.NEEDS_REVIEW, 
           notes: `自动探索失败，请手动处理。错误: ${(e as Error).message}`,
-          pendingDecision: {
-            nodeId: cid,
-            context: '自动探索多次失败，需要人工干预',
-            options: [
-              { label: '重新探索', action: 'continue' },
-              { label: '跳过此节点', action: 'terminate' }
-            ]
-          }
+          pendingDecision,
         });
-        addNotification('warning', '⚠️ 需要人工处理', `「${nodeTitle}」探索失败，请手动处理`);
+        pushFeedItem(branchAsk({ ...unexplored, pendingDecision }));
         // 继续探索其他节点，不停止
       }
     } finally { 
       isProcessingRef.current = false; 
     }
-  }, [nodes, decision, updateNode, focusedNodeId, currentProject?.explorationMode, addNotification, proposeNewDirection]);
+  }, [nodes, decision, updateNode, focusedNodeId, currentProject?.explorationMode, addNotification, pushFeedItem, patchFeed, proposeNewDirection]);
 
   // 让 ref 始终指向最新的探索循环（持续模式里用它自我重排，避免卡死）
   useEffect(() => { runExplorationCycleRef.current = runExplorationCycle; }, [runExplorationCycle]);
@@ -1619,12 +1673,17 @@ const App: React.FC = () => {
       // 重新开跑：允许再次提示「需要现实反馈」，并重置原地打转计数
       realityPromptedRef.current = false;
       emptyRoundsRef.current = 0;
-      const t = setTimeout(() => refreshOverviewRef.current?.('start'), 200);
+      // 「一篇一停」每写一篇都会重新开跑一次；以前每次开跑都重写一遍总览（多一次模型调用）。
+      // 现在同一个项目 6 小时内只在开跑时写一次，其余靠「每写完 3 篇刷新一次」。
+      const pid = currentProjectId || '';
+      const last = overviewStartAtRef.current[pid] || 0;
+      if (Date.now() - last < 6 * 3600_000) return;
+      const t = setTimeout(() => { overviewStartAtRef.current[pid] = Date.now(); refreshOverviewRef.current?.('start'); }, 200);
       return () => clearTimeout(t);
     }
   }, [isLooping]);
 
-  const handleDecisionChoice = (action: 'continue' | 'add_subproblem' | 'terminate', subTitle?: string) => { if (!decision) return; if (action === 'terminate') updateNode(decision.nodeId, { status: NodeStatus.INVALID, pendingDecision: undefined }); else if (action === 'add_subproblem' && subTitle) addNode(subTitle, [decision.nodeId]); else if (action === 'continue') updateNode(decision.nodeId, { status: NodeStatus.SOLVED, pendingDecision: undefined }); setDecision(null); setIsLooping(true); };
+  const handleDecisionChoice = (action: 'continue' | 'add_subproblem' | 'terminate', subTitle?: string) => { if (!decision) return; closeFeedAsks('branch', '已在笔记里处理', decision.nodeId); if (action === 'terminate') updateNode(decision.nodeId, { status: NodeStatus.INVALID, pendingDecision: undefined }); else if (action === 'add_subproblem' && subTitle) addNode(subTitle, [decision.nodeId]); else if (action === 'continue') updateNode(decision.nodeId, { status: NodeStatus.SOLVED, pendingDecision: undefined }); setDecision(null); setIsLooping(true); };
   const handleNodeClick = (node: ProblemNode) => { setSelectedNodeId(node.id); if (node.status === NodeStatus.NEEDS_REVIEW && node.pendingDecision) setDecision(node.pendingDecision); };
 
   // 点击笔记里的 [[标题]]：已存在则跳转，不存在则创建一篇新笔记并关联（Obsidian 行为）
@@ -1855,6 +1914,15 @@ ${plan.lead.duty}
   // 默认 step。老项目没存过 pace，也按一篇一停走——这正是要改掉的那个默认行为。
   const projectPace: ExplorationPace = currentProject?.pace || 'step';
   const [outlineBusy, setOutlineBusy] = useState(false);
+  /** 框架草稿默认只在对话流里放精简版；点「我要改改」才在中间栏展开编辑器 */
+  const [outlineEditing, setOutlineEditing] = useState(false);
+  // 用户点开了别的笔记 = 先不改框架了；对话流里那张卡还在，随时能再点「我要改改」
+  useEffect(() => { if (selectedNodeId) setOutlineEditing(false); }, [selectedNodeId]);
+  useEffect(() => { setOutlineEditing(false); }, [currentProjectId]);
+  // 用户点开了某篇笔记 / 项目页 / 要改框架 → 右侧笔记栏展开给他看
+  useEffect(() => { if (selectedNodeId) setNoteOpen(true); }, [selectedNodeId]);
+  useEffect(() => { if (projectPage) setNoteOpen(true); }, [projectPage]);
+  useEffect(() => { if (outlineEditing) setNoteOpen(true); }, [outlineEditing]);
   /** 刚写完的那一篇（step 模式下循环停在这里等人） */
   const [justWroteId, setJustWroteId] = useState<string | null>(null);
 
@@ -1869,7 +1937,7 @@ ${plan.lead.duty}
   }, []);
 
   /** 让 AI 拟一份目录。只出标题和「这篇要回答什么」，不写正文。 */
-  const handleProposeOutline = useCallback(async (projId?: string, goal?: string) => {
+  const handleProposeOutline = useCallback(async (projId?: string, goal?: string, noteOverride?: string) => {
     const pid = projId || currentProjectId;
     if (!pid || outlineBusy) return;
     setOutlineBusy(true);
@@ -1881,21 +1949,25 @@ ${plan.lead.duty}
         .map(n => n.title);
       const { outline, problems } = await proposeOutline(g, proj?.explorationMode || 'research', {
         existingTitles: existing,
-        userNote: proj?.outline?.userNote,
+        userNote: noteOverride ?? proj?.outline?.userNote,
       });
       if (!outline) {
         addNotification('warning', '🗺️ 这次没拟出框架', problems.join('；') || '模型没给出可用的方向');
         return;
       }
-      patchProject(pid, { outline });
+      const withNote = noteOverride ? setUserNote(outline, noteOverride) : outline;
+      patchProject(pid, { outline: withNote });
       trackEvent('outline_proposed', { items: outline.items.length });
-      if (problems.length) addNotification('info', '🗺️ 框架已拟好（有几条被丢掉）', problems.join('；'));
+      // 上一份没答的框架卡作废，换成新的这份
+      patchFeed(f => pushFeed(closeAsks(f, 'outline', '已重拟'), outlineAsk(withNote)), pid);
+      setRightChatOpen(true);
+      if (problems.length) addNotification('info', '🗺️ 有几条被丢掉了', problems.join('；'));
     } catch (e: any) {
       addNotification('warning', '🗺️ 拟框架失败', e?.message || String(e));
     } finally {
       setOutlineBusy(false);
     }
-  }, [currentProjectId, outlineBusy, addNotification, patchProject]);
+  }, [currentProjectId, outlineBusy, addNotification, patchProject, patchFeed]);
 
   // 新建项目时要在 createProjectWithMode 里调它，而那个回调定义在前面，所以走 ref
   useEffect(() => { proposeOutlineRef.current = handleProposeOutline; }, [handleProposeOutline]);
@@ -1909,7 +1981,7 @@ ${plan.lead.duty}
    * 关键：**这一步不调模型，一篇正文都不生成。** 用户拿到的是一份目录，
    * 然后由他点「写这一篇」开始第一篇。
    */
-  const handleConfirmOutline = useCallback(() => {
+  const handleConfirmOutline = useCallback((): string | undefined => {
     if (!currentProjectId || !projectOutline) return;
     const proj = projectsRef.current.find(p => p.id === currentProjectId);
     const rootId = (proj?.nodes || []).find(n => n.noteType === 'overview')?.id
@@ -1928,12 +2000,17 @@ ${plan.lead.duty}
     const first = keptItems(outline).find(i => i.id === outline.startId) || keptItems(outline)[0];
     if (first?.nodeId) setSelectedNodeId(first.nodeId);
     trackEvent('outline_confirmed', { items: keptItems(outline).length });
-    addNotification('info', '🗺️ 框架定了', `一共 ${keptItems(outline).length} 篇。点「▶ 写这一篇」开始第一篇，写完会停下来等你。`);
-  }, [currentProjectId, projectOutline, patchProject, addNotification]);
+    setOutlineEditing(false);
+    closeFeedAsks('outline', '已确认');
+    addNotification('info', `🗺️ 框架定了，一共 ${keptItems(outline).length} 篇`, '每写完一篇会停下来问你。');
+    return first?.nodeId;
+  }, [currentProjectId, projectOutline, patchProject, addNotification, closeFeedAsks]);
 
   const handleDiscardOutline = useCallback(() => {
     if (currentProjectId) patchProject(currentProjectId, { outline: undefined });
-  }, [currentProjectId, patchProject]);
+    setOutlineEditing(false);
+    closeFeedAsks('outline', '已放弃这份框架');
+  }, [currentProjectId, patchProject, closeFeedAsks]);
 
   // 没走框架流程的项目也要能说出「还剩几篇、下一篇是谁」，
   // 否则一篇一停就退化成一个说不出下一步的空壳条
@@ -1947,23 +2024,33 @@ ${plan.lead.duty}
   const handleStepNext = useCallback(() => {
     setJustWroteId(null);
     setIsLooping(true);
-  }, []);
+    closeFeedAsks('step', '继续写下一篇');
+  }, [closeFeedAsks]);
 
   /** 「这篇重写」——用户此刻的判断是方向不对，不是错别字，所以是清空重跑而不是打开编辑器 */
+  /** 重写：框架里的那一篇恢复成占位正文（写出来的内容会再填回去） */
+  const rewriteStub = (n: ProblemNode): string => {
+    const it = projectOutline?.items.find(i => i.id === n.outlineItemId);
+    return it ? stubNote(it) : n.fullNote || '';
+  };
   const handleStepRewrite = useCallback(() => {
     if (!justWroteId) return;
+    const n = nodes.find(x => x.id === justWroteId);
     updateNode(justWroteId, {
       status: NodeStatus.UNEXPLORED,
       notes: '',
       validationReason: undefined,
       noteUpdatedAt: Date.now(),
+      ...(n?.outlineItemId ? { fullNote: rewriteStub(n) } : {}),
     });
+    forceNodeRef.current = justWroteId;
     setJustWroteId(null);
     setIsLooping(true);
+    closeFeedAsks('step', '重写这篇');
     trackEvent('step_rewrite');
-  }, [justWroteId, updateNode]);
+  }, [justWroteId, updateNode, closeFeedAsks, nodes, projectOutline]);
 
-  const handleStepStop = useCallback(() => { setJustWroteId(null); setIsLooping(false); }, []);
+  const handleStepStop = useCallback(() => { setJustWroteId(null); setIsLooping(false); closeFeedAsks('step', '先停一下'); }, [closeFeedAsks]);
 
   /** 某一篇的「▶ 写这一篇」：指定下一轮就写它 */
   const handleWriteThis = useCallback((nodeId: string) => {
@@ -1971,16 +2058,18 @@ ${plan.lead.duty}
     setJustWroteId(null);
     setSelectedNodeId(nodeId);
     setIsLooping(true);
+    closeFeedAsks('step', '改写指定的一篇');
     trackEvent('write_this_one');
-  }, []);
+  }, [closeFeedAsks]);
 
   /** 「剩下的一次写完」：用户明确说不用再停了 */
   const handleSwitchToAuto = useCallback(() => {
     if (currentProjectId) patchProject(currentProjectId, { pace: 'auto' });
     setJustWroteId(null);
     setIsLooping(true);
+    closeFeedAsks('step', '剩下的一次写完');
     trackEvent('pace_auto');
-  }, [currentProjectId, patchProject]);
+  }, [currentProjectId, patchProject, closeFeedAsks]);
 
   // ===== 仿真笔记 =====
   // 「先仿真、再探针」：仿真只回答「这个判断对哪个数最敏感」，
@@ -2226,7 +2315,7 @@ ${plan.lead.duty}
   // 避免像以前那样把 FC 调用量白白烧掉。
   const inboxItems = useMemo(
     () => (currentProject ? buildInbox([{ ...currentProject, nodes, probes: projectProbes, route: projectRoute }], loadPending()) : []),
-    [currentProject, nodes, projectProbes, projectRoute, notifications.length],
+    [currentProject, nodes, projectProbes, projectRoute],
   );
 
   useEffect(() => {
@@ -2374,6 +2463,119 @@ ${plan.lead.duty}
     if (na) { const ok = await openLeg(next, na); if (ok) setTimeout(() => setIsLooping(true), 500); }
   }, [currentProjectId, currentProjectId, openLeg]);
 
+  // ===== 对话流：问题卡的回答 =====
+  const projectFeed = currentProject?.feed;
+  // 「只看重要」：进度行里的普通信息不显示，问题卡和告警永远显示
+  const visibleFeed = useMemo(
+    () => (notificationMode === 'important' ? (projectFeed || []).filter(f => f.kind === 'ask' || f.tone !== 'info') : projectFeed || []),
+    [projectFeed, notificationMode],
+  );
+  const pendingAskCount = useMemo(() => openAsks(projectFeed).length, [projectFeed]);
+
+  /** 不经弹窗直接记一条决策（对话流里答的，快照在回答这一刻取） */
+  const recordDecisionDirect = useCallback((nodeId: string, trigger: DecisionTrigger, question: string, options: DecisionOption[]) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node || !currentProjectId) return;
+    const record = createDecision({ nodeId, nodeTitle: node.title, question, options, trigger, snapshot: captureSubtree(nodes, nodeId) });
+    setProjects(prev => prev.map(p => p.id === currentProjectId ? saveStage({ ...p, nodes, decisions: [...(p.decisions || []), record] }, `决策：${question}`, '保留决策时的完整项目状态（后续操作执行前）', record.id) : p));
+    trackEvent('record_decision', { trigger });
+  }, [nodes, currentProjectId]);
+
+  const handleAnswerFeed = useCallback((item: FeedItem, optionId: string, text?: string) => {
+    const ask = item.ask;
+    if (!ask || ask.answer) return;
+    const opt = ask.options.find(o => o.id === optionId);
+    const typed = (text || '').trim();
+    // 「我要改改」只是打开编辑器，不算拍板——卡片留着，改完在编辑器里确认
+    if (ask.type === 'outline' && optionId === 'edit') {
+      if (projectOutline?.status === 'draft' && projectOutline.id === item.ref) { setOutlineEditing(true); setSelectedNodeId(null); }
+      else patchFeed(f => answerFeed(f, item.id, '已过期'));
+      return;
+    }
+    const label = typed ? (opt && opt.id !== ask.input?.optionId ? `${opt.label}：“${typed}”` : `“${typed}”`) : (opt?.label || optionId);
+    patchFeed(f => answerFeed(f, item.id, label));
+    trackEvent('feed_answer', { type: ask.type, option: optionId, typed: typed ? 1 : 0 });
+    const node = item.nodeId ? nodes.find(n => n.id === item.nodeId) : undefined;
+
+    switch (ask.type) {
+      case 'step': {
+        if (optionId === 'next') {
+          const nextId = outlineDone.next?.nodeId;
+          if (typed && nextId) updateNode(nextId, { userAsk: typed });
+          setJustWroteId(null); setIsLooping(true);
+        } else if (optionId === 'rewrite' && node) {
+          updateNode(node.id, { status: NodeStatus.UNEXPLORED, notes: '', validationReason: undefined, userAsk: typed || undefined, noteUpdatedAt: Date.now(), ...(node.outlineItemId ? { fullNote: rewriteStub(node) } : {}) });
+          forceNodeRef.current = node.id;
+          setJustWroteId(null); setIsLooping(true);
+          trackEvent('step_rewrite');
+        } else if (optionId === 'stop') {
+          setJustWroteId(null); setIsLooping(false);
+        } else if (optionId === 'auto') {
+          if (currentProjectId) patchProject(currentProjectId, { pace: 'auto' });
+          setJustWroteId(null); setIsLooping(true);
+          trackEvent('pace_auto');
+        }
+        break;
+      }
+      case 'branch': {
+        if (!node) break;
+        if (optionId === 'terminate') updateNode(node.id, { status: NodeStatus.INVALID, pendingDecision: undefined });
+        else if (optionId === 'retry') updateNode(node.id, { status: NodeStatus.UNEXPLORED, pendingDecision: undefined });
+        else if (optionId === 'add_subproblem' && typed) { addNode(typed, [node.id]); updateNode(node.id, { status: NodeStatus.SOLVED, pendingDecision: undefined }); }
+        else updateNode(node.id, { status: NodeStatus.SOLVED, pendingDecision: undefined });
+        if (decision?.nodeId === node.id) setDecision(null);
+        setIsLooping(true);
+        break;
+      }
+      case 'contradicted': {
+        if (!node) break;
+        if (optionId !== 'skip') {
+          const st = node.hypothesis?.statement;
+          const drop = optionId === 'drop';
+          recordDecisionDirect(node.id, 'contradicted',
+            st ? `「${st}」被现实推翻了，接下来怎么走？` : `「${node.title}」的假设被现实推翻了，接下来怎么走？`,
+            [
+              { label: '换一个假设，继续探索这个方向', chosen: !drop, reason: !drop && typed ? typed : undefined },
+              { label: '这个方向作废，把力气转到别处', chosen: drop, reason: drop && typed ? typed : undefined },
+            ]);
+          if (drop) updateNode(node.id, { status: NodeStatus.INVALID });
+        }
+        // 一篇一停：转向的事答完了，再问「下一篇」
+        if (justWroteId === node.id) pushFeedItem(stepAsk(node, outlineDone));
+        break;
+      }
+      case 'reality': {
+        if (optionId === 'open' && item.nodeId) setSelectedNodeId(item.nodeId);
+        break;
+      }
+      case 'anchor': {
+        if (optionId === 'skip' && item.ref) handleSkipAnchor(item.ref);
+        else if (currentProject) openProjectPage(currentProject.id, 'root', 'research');
+        break;
+      }
+      case 'unattended': {
+        if (optionId === 'go') { unattendedRef.current = 0; setIsLooping(true); trackEvent('unattended_resume'); }
+        break;
+      }
+      case 'halted': {
+        if (optionId === 'settings') setShowSettingsModal(true);
+        else { consecutiveFailRef.current = 0; setIsLooping(true); }
+        break;
+      }
+      case 'outline': {
+        if (projectOutline?.status !== 'draft' || projectOutline.id !== item.ref) break;
+        if (optionId === 'confirm') {
+          const firstId = handleConfirmOutline();
+          // 「就这样，开始写」= 确认 + 直接写第一篇，省掉一次点击
+          if (firstId) { forceNodeRef.current = firstId; setTimeout(() => setIsLooping(true), 50); }
+        } else if (optionId === 'redo') {
+          handleProposeOutline(undefined, undefined, typed || undefined);
+        }
+        break;
+      }
+    }
+  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage]);
+
   /** 打开决策记录弹窗（打开时就对节点子树做快照，保证删除/失效前的状态被留存） */
   const openDecisionRecorder = useCallback((nodeId: string, trigger: DecisionTrigger, opts?: { pendingAction?: 'delete' | 'invalidate'; presetQuestion?: string; presetOptions?: { label: string; chosen: boolean }[]; skippable?: boolean }) => {
     const node = nodes.find(n => n.id === nodeId);
@@ -2412,7 +2614,14 @@ ${plan.lead.duty}
       skippable: true, // 跳过 = 不留记录，节点状态已经改了
     });
   }, [nodes, openDecisionRecorder]);
-  useEffect(() => { contradictedDecisionRef.current = handleContradicted; }, [handleContradicted]);
+  // 自动发现的「被现实推翻」（路标没通过 / 手机回填）不再弹窗，在对话流里问一句；
+  // 笔记里手动点的 onContradicted 仍走 handleContradicted 弹完整表单
+  useEffect(() => {
+    contradictedDecisionRef.current = (nodeId: string) => {
+      const n = nodes.find(x => x.id === nodeId);
+      if (n) pushFeedItem(contradictedAsk(n));
+    };
+  }, [nodes, pushFeedItem]);
 
   const handleSaveDecision = useCallback((question: string, options: DecisionOption[]) => {
     if (!decisionDraft || !currentProjectId || decisionDraft.projectId !== currentProjectId) return;
@@ -2448,7 +2657,95 @@ ${plan.lead.duty}
   }, [currentProjectId]);
   const handleGenerateReport = async () => { if (!currentProject || isGeneratingReport) return; setIsGeneratingReport(true); try { setResearchReport(await generateResearchReport(currentProject.metaProblem, nodes, knowledgeCards)); } finally { setIsGeneratingReport(false); } };
 
+  // 左侧项目树的小绿灯：自动写作循环在跑，或 AI 团队 / 项目经理在这个项目里干活
+  const activeProjectIds = projects.filter(p => (p.id === currentProjectId && isLooping) || inquiryTeams.isProjectRunning(p.id) || inquiryTeams.isManaging(p.id)).map(p => p.id);
   const worktreeBusy = !!(isLooping || isProcessingRef.current || isGeneratingReport || teamBusy || outlineBusy || routeBusy || simBusy || overviewRefreshingRef.current || isProposingRef.current || (currentProjectId && inquiryTeams.isProjectRunning(currentProjectId)));
+  // ===== 项目「活着」：长期关注、低频醒来看一眼 =====
+  // 所有项目默认 watching；醒来看到的东西记进项目自己的关注日志，不刷对话框。
+  const aliveProjectIds = projects.filter((p, i) => lifeOf(p, Date.now(), i).state === 'watching').map(p => p.id);
+  const [wakingId, setWakingId] = useState<string | null>(null);
+  const pulseBusyRef = useRef(false);
+  const patchLife = useCallback((projectId: string, fn: (life: NonNullable<Project['life']>) => NonNullable<Project['life']>) => {
+    setProjects(prev => prev.map((p, i) => (p.id === projectId ? { ...p, life: fn(lifeOf(p, Date.now(), i)) } : p)));
+  }, []);
+  // 老项目没有 life 字段：补上默认值（第一次醒来错开，不会一起醒）
+  useEffect(() => {
+    if (!loadedOwner || !projects.some(p => !p.life)) return;
+    const now = Date.now();
+    let k = 0;
+    setProjects(prev => prev.map(p => (p.life ? p : { ...p, life: defaultLife(now, k++) })));
+  }, [loadedOwner, projects.length]);
+  // 用户打开项目 = 他还在关注它；很久没来看导致放慢的节奏，拉回来
+  useEffect(() => { if (currentProjectId) patchLife(currentProjectId, l => touchViewed(l, Date.now())); }, [currentProjectId, patchLife]);
+
+  const readPulseBudget = (): PulseBudget | null => { try { return JSON.parse(localStorage.getItem('aae-pulse-budget') || 'null'); } catch { return null; } };
+  const writePulseBudget = (b: PulseBudget) => { try { localStorage.setItem('aae-pulse-budget', JSON.stringify(b)); } catch {} };
+
+  /** 让一个项目醒来看一眼：一次小模型调用，结果写进关注日志 */
+  const wakeProject = useCallback(async (projectId: string, manual = false) => {
+    if (pulseBusyRef.current) return;
+    const idx = projectsRef.current.findIndex(p => p.id === projectId);
+    const project = projectsRef.current[idx];
+    if (!project) return;
+    pulseBusyRef.current = true;
+    setWakingId(projectId);
+    const now = Date.now();
+    writePulseBudget(spendBudget(readPulseBudget(), now));
+    try {
+      const res = await callLLM(buildPulseMessages(project, now), { jsonMode: true, maxTokens: 700, timeoutMs: 60000 });
+      const parsed = parsePulse(res.content);
+      const before = lifeOf(project, now, idx);
+      const { life, added } = applyPulse(before, parsed, Date.now());
+      const show = notableToShow(before, added, Date.now());
+      patchLife(projectId, () => (show ? { ...life, lastNotifiedAt: Date.now() } : life));
+      // 只有真正值得打扰的才在对话流里出一行，而且每个项目一天最多一行
+      if (show) pushFeedItem(feedStatus(`🌱 关注到：${show.title}`, { detail: show.detail || undefined, tone: 'good' }), projectId);
+      trackEvent('pulse_wake', { added: added.length, manual: manual ? 1 : 0 });
+    } catch (e) {
+      patchLife(projectId, l => failPulse(l, Date.now(), e instanceof Error ? e.message : String(e)));
+    } finally {
+      pulseBusyRef.current = false;
+      setWakingId(null);
+    }
+  }, [patchLife, pushFeedItem]);
+
+  // 调度：每 5 分钟看一次有没有该醒的项目；一次只醒一个；全局每天最多 6 次、两次之间至少隔 20 分钟
+  useEffect(() => {
+    if (!user || !loadedOwner) return;
+    const tick = () => {
+      if (pulseBusyRef.current) return;
+      // 免配置体验额度很少（匿名一天 5 次），不能让后台醒来把新用户的额度吃掉：体验模式下只在用户点「现在看一眼」时醒
+      if (isTrialMode()) return;
+      const now = Date.now();
+      if (!budgetAllows(readPulseBudget(), now)) return;
+      const due = pickDue(projectsRef.current, now, id =>
+        (id === feedProjectRef.current && isLoopingRef.current) || inquiryTeams.isProjectRunning(id));
+      if (due) void wakeProject(due.id);
+    };
+    const first = setTimeout(tick, 60_000);
+    const timer = setInterval(tick, 5 * 60_000);
+    return () => { clearTimeout(first); clearInterval(timer); };
+  }, [user, loadedOwner, wakeProject]);
+
+  const pulsePanel = currentProject ? (
+    <ProjectPulse
+      life={lifeOf(currentProject, Date.now(), projects.indexOf(currentProject))}
+      waking={wakingId === currentProject.id}
+      autoOff={isTrialMode()}
+      onWakeNow={() => void wakeProject(currentProject.id, true)}
+      onCadence={h => patchLife(currentProject.id, l => setCadence(l, h, Date.now()))}
+      onToggle={on => patchLife(currentProject.id, l => setWatching(l, on, Date.now()))}
+      onToFact={note => {
+        try {
+          inquiryTeams.change(currentProject.id, 'root', currentProject.metaProblem || currentProject.name, w => addFact(w, { claim: note.title + (note.detail ? `：${note.detail}` : ''), source: 'AI 项目经理的关注日志（待核实）', excerpt: '', scope: '' }));
+          patchLife(currentProject.id, l => ({ ...l, journal: l.journal.map(j => (j.id === note.id ? { ...j, handled: 'fact' as const } : j)) }));
+        } catch (e) { addNotification('warning', '没能记进事实看板', e instanceof Error ? e.message : String(e)); }
+      }}
+      onDismiss={note => patchLife(currentProject.id, l => ({ ...l, journal: l.journal.map(j => (j.id === note.id ? { ...j, handled: 'dismissed' as const } : j)) }))}
+      onOpenNote={title => { const n = resolveNodeByTitle(nodes, title); if (n) setSelectedNodeId(n.id); }}
+    />
+  ) : null;
+
   const stopProjectWork = () => {
     isLoopingRef.current = false;
     setIsLooping(false); setContinuousMode(false);
@@ -2489,15 +2786,20 @@ ${plan.lead.duty}
   if (routeInfo.type === 'delegate' && routeInfo.nodeId) return <DelegationView nodeId={routeInfo.nodeId} taskTitle={routeInfo.taskTitle} />;
 
   /** 落地页是否展示仿真区块：管理员入口和验证码环节要专注，不塞东西 */
-  const showLandingSim = !isLoginAsAdmin && !isOtpSent;
+  const showLandingSim = !isLoginAsAdmin && !isOtpSent && !landingLogin;
 
   if (!user) return (
-    /*
-      首屏改版：把「可以动手的东西」放在要邮箱之前。
-      访客平均只停留 10 秒、91% 直接跳出——十秒读不完三条介绍，但够拖两下滑块。
-      仿真区块只在正常落地时出现；管理员入口和验证码环节要专注，不塞东西。
-    */
-    <div className="min-h-screen w-screen overflow-y-auto bg-slate-950 p-4 flex items-center justify-center">
+    <div className="h-[100dvh] w-full overflow-y-auto bg-slate-950 text-slate-200">
+      <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/95 backdrop-blur px-4 py-3">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+          <span className="font-semibold">HiExplore</span>
+          <div className="flex items-center gap-2">
+            <select aria-label="Language" className="bg-slate-800 text-slate-200 rounded-lg p-2 text-xs" value={language} onChange={e => setLanguage(e.target.value as 'zh-CN' | 'en')}><option value="zh-CN">简体中文</option><option value="en">English</option></select>
+            <button type="button" onClick={() => { setLandingLogin(true); setIsLoginAsAdmin(false); setLoginMethod('email'); document.getElementById('landing-content')?.scrollIntoView({ block: 'start' }); }} className="shrink-0 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-sm font-semibold text-white">{ui('登录 / 注册', 'Log in / Sign up')}</button>
+          </div>
+        </div>
+      </header>
+      <main id="landing-content" className="scroll-mt-20 flex justify-center p-4 sm:py-8">
       <div className={`w-full ${showLandingSim ? 'max-w-5xl lg:grid lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-6 lg:items-start' : 'max-w-md'}`}>
       {showLandingSim && (
         <SimPreview
@@ -2508,12 +2810,11 @@ ${plan.lead.duty}
           }}
         />
       )}
-      <div className="flex justify-end mb-2"><select aria-label="Language" className="bg-slate-800 text-slate-200 rounded-lg p-2 text-sm" value={language} onChange={e => setLanguage(e.target.value as 'zh-CN' | 'en')}><option value="zh-CN">简体中文</option><option value="en">English</option></select></div>
       <div id="landing-card" className="max-w-md w-full mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-emerald-600"></div>
         <div className="text-center mb-6">
           <div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">🧭</div>
-          <h2 className="text-xl sm:text-2xl font-bold">HiExplore</h2>
+          <h2 className="text-xl sm:text-2xl font-bold">{landingLogin ? ui('邮箱登录 / 注册', 'Email login / sign up') : 'HiExplore'}</h2>
           {isLoginAsAdmin ? (
             <p className="text-slate-500 text-xs sm:text-sm mt-2">{ui("管理员验证")}</p>
           ) : (
@@ -2527,7 +2828,7 @@ ${plan.lead.duty}
           )}
         </div>
 
-        {!isLoginAsAdmin && !isOtpSent && (
+        {!isLoginAsAdmin && !isOtpSent && !landingLogin && (
           <div className="mb-6 space-y-2 text-[12px] text-slate-400 leading-6">
             <div className="flex gap-2"><span className="text-blue-400">01</span><span>{ui("给问题打分：稀缺性、深度、可验证性等六个维度，先筛掉不值得研究的")}</span></div>
             <div className="flex gap-2"><span className="text-blue-400">02</span><span>{ui("值得的问题一键立项，AI 组一支分工的团队长期跑，你关掉也在继续")}</span></div>
@@ -2539,7 +2840,7 @@ ${plan.lead.duty}
           免注册体验提到主按钮位置。原来它排在邮箱表单和「管理员入口」之后、
           用的还是次级灰色样式——等于把转化率最高的入口藏在了最不显眼的地方。
         */}
-        {!isLoginAsAdmin && !isOtpSent && hasTrialBackend() && (
+        {!isLoginAsAdmin && !isOtpSent && !landingLogin && hasTrialBackend() && (
           <div className="mb-5">
             <button
               onClick={() => { trackEvent('trial_start'); setUser(auth.loginAsGuest()); }}
@@ -2549,7 +2850,7 @@ ${plan.lead.duty}
           </div>
         )}
 
-        {!isLoginAsAdmin && !isOtpSent && hasTrialBackend() && (
+        {!isLoginAsAdmin && !isOtpSent && !landingLogin && hasTrialBackend() && (
           <div className="flex items-center gap-3 mb-5">
             <div className="flex-1 h-px bg-slate-800" />
             <span className="text-[11px] text-slate-600">{ui("或登录以长期保存")}</span>
@@ -2621,7 +2922,7 @@ ${plan.lead.duty}
             {/* 邮箱验证码登录 */}
             {loginMethod === 'email' && !isOtpSent && (
               <>
-                <input type="email" placeholder={ui("电子邮箱")} value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
+                <input key={landingLogin ? "login" : "landing"} autoFocus={landingLogin} aria-label={ui("电子邮箱")} type="email" autoComplete="email" placeholder={ui("电子邮箱")} value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
                 <button onClick={async () => {
                   if (!loginEmail.includes('@')) { alert('请输入正确的邮箱'); return; }
                   if (hasAuthBackend()) {
@@ -2691,6 +2992,7 @@ ${plan.lead.duty}
         </div>
       </div>
       </div>
+      </main>
     </div>
   );
 
@@ -2738,18 +3040,6 @@ ${plan.lead.duty}
           {/* 设备安全：待确认的写操作 + 急停（没注册设备时整条不渲染） */}
           <DeviceGuard />
 
-          {/* 现实验证欠账：有待执行的探针就提醒一下，点进去落到那个节点 */}
-          {pendingProbeCount(projectProbes) > 0 && (
-            <button
-              onClick={() => {
-                const p = projectProbes.find(x => x.status === 'draft' || x.status === 'running');
-                if (p) setSelectedNodeId(p.nodeId);
-              }}
-              className="px-2.5 py-1.5 bg-purple-900/40 hover:bg-purple-600 hover:text-white border border-purple-500/40 rounded-full transition-colors text-[11px] font-bold text-purple-300 flex items-center gap-1"
-              title={ui("待执行的现实验证探针——推理停在这里了，等你去问现实")}
-            >{ui("🔬 待验证")}<span className="text-[9px] opacity-70">{pendingProbeCount(projectProbes)}</span></button>
-          )}
-
           {/* 问题广场：筛选有价值的问题 */}
           <button
             onClick={() => setShowQuestionBoard(true)}
@@ -2757,55 +3047,7 @@ ${plan.lead.duty}
             title={ui("问题广场：筛选有价值的问题")}
           >{ui("问题广场", "Questions")}</button>
 
-          {/* 通知按钮 */}
-          <div className="relative">
-            <button 
-              aria-label={ui("通知", "Notifications")}
-              onClick={() => setShowNotificationPanel(!showNotificationPanel)} 
-              className="relative p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-slate-400"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
-              {visibleNotifications.length > 0 && (
-                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                  {visibleNotifications.length > 9 ? '9+' : visibleNotifications.length}
-                </span>
-              )}
-            </button>
-            
-            {/* 通知面板 */}
-            {showNotificationPanel && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowNotificationPanel(false)} />
-                <div className="absolute right-0 top-full mt-2 w-80 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 max-h-[400px] overflow-hidden flex flex-col">
-                  <div className="p-3 border-b border-slate-700 flex items-center justify-between">
-                    <span className="text-sm font-bold text-white">{ui("通知")}</span>
-                    {visibleNotifications.length > 0 && (
-                      <button onClick={() => setNotifications([])} className="text-[10px] text-slate-500 hover:text-slate-300">{ui("全部清除")}</button>
-                    )}
-                  </div>
-                  <div className="flex-1 overflow-y-auto">
-                    {visibleNotifications.length === 0 ? (
-                      <div className="p-8 text-center text-slate-500 text-xs">{ui("暂无通知")}</div>
-                    ) : (
-                      visibleNotifications.map(n => (
-                        <div key={n.id} className={`p-3 border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer ${n.type === 'discovery' ? 'bg-emerald-500/5' : n.type === 'warning' ? 'bg-orange-500/5' : ''}`} onClick={() => clearNotification(n.id)}>
-                          <div className="flex items-start gap-2">
-                            <span className="text-sm">{n.type === 'discovery' ? '💡' : n.type === 'warning' ? '⚠️' : 'ℹ️'}</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-medium text-slate-200">{n.title}</div>
-                              <div className="text-[10px] text-slate-400 mt-0.5 line-clamp-2">{n.message}</div>
-                              <div className="text-[9px] text-slate-600 mt-1">{new Date(n.time).toLocaleTimeString()}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
+          <button onClick={() => { setMarketSeek(null); setShowServiceMarket(true); }} className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-[11px] font-medium text-slate-200">{ui('服务广场', 'Services')}</button>
           {/* 个人中心 */}
           <div className="relative">
             <button 
@@ -2842,7 +3084,7 @@ ${plan.lead.duty}
             </div>
           </div>
           <div className="flex-1 overflow-hidden">
-            <NotesPanel projects={projectsView} currentProjectId={currentProjectId} selectedNodeId={selectedNodeId} search={notesSearch} onSearch={setNotesSearch} onOpenNode={openNode} onCreateProject={handleCreateProject} onCreateDirection={handleCreateDirection} onAddChild={handleCreateChild} onBuildTeam={handleBuildTeam} onCleanup={handleCleanupProject} onImport={handleImportMd} onExportVault={handleExportVault} onSaveToFolder={handleSaveToFolder} onOpenPage={openProjectPage} selectedPage={activeProjectPage} />
+            <NotesPanel activeProjectIds={activeProjectIds} aliveProjectIds={aliveProjectIds} projects={projectsView} currentProjectId={currentProjectId} selectedNodeId={selectedNodeId} search={notesSearch} onSearch={setNotesSearch} onOpenNode={openNode} onCreateProject={handleCreateProject} onCreateDirection={handleCreateDirection} onAddChild={handleCreateChild} onBuildTeam={handleBuildTeam} onCleanup={handleCleanupProject} onImport={handleImportMd} onExportVault={handleExportVault} onSaveToFolder={handleSaveToFolder} onOpenPage={openProjectPage} selectedPage={activeProjectPage} />
           </div>
           </>}
         </aside>
@@ -2857,12 +3099,11 @@ ${plan.lead.duty}
         
         {notesPanelMode === 0 && <div className="app-notes-handle w-8 h-full bg-slate-900 border-r border-slate-800 flex items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNotesPanelMode(1)}><div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">{ui("展开面板")}</div></div>}
 
-        {/* ===== 中间：笔记内容（Obsidian 主编辑区） ===== */}
-        <div className="flex-1 relative z-0 min-w-0 bg-slate-800">
-          {/* 顶部工具条 */}
-          <div className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between gap-3 overflow-x-auto px-3 py-2 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/60 pointer-events-none">
-            <div className="text-[11px] text-slate-500 flex-shrink-0 pointer-events-auto">{currentProject && <button onClick={() => openProjectPage(currentProject.id, 'root', 'research')} className="hover:text-blue-300">{ui("◈ 项目总览")}</button>}</div>
-            <div className="hidden md:flex items-center gap-2 flex-shrink-0 pointer-events-auto">
+        {/* ===== 中间：对话（主战场：AI 的进度、需要你拍板的问题、和团队说话都在这里） ===== */}
+        <div className="app-team-chat flex-1 min-w-0 h-full flex flex-col bg-slate-900 overflow-hidden">
+          <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between gap-3 bg-slate-900/80">
+            <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5 flex-shrink-0"><span>💬</span>{ui("对话")}{isLooping && <span className="text-[10px] font-normal text-slate-500 animate-pulse">{ui("· AI 正在写")}</span>}</h3>
+            <div className="flex items-center gap-1.5 flex-shrink-0 overflow-x-auto scroll-hide">
               <button
                 onClick={() => {
                   const next = !continuousMode;
@@ -2873,7 +3114,7 @@ ${plan.lead.duty}
                   if (next && currentProjectId) patchProject(currentProjectId, { pace: 'auto' });
                   if (next) { setJustWroteId(null); addNotification('info', '♾️ 持续探索已开启', '不再一篇一停。AI 会连着写下去并自主提出新方向，保持本应用打开即可。'); }
                 }}
-                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white animate-pulse' : 'bg-slate-700/70 text-slate-200 hover:bg-emerald-600 hover:text-white'}`}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white animate-pulse' : 'bg-slate-700/70 text-slate-200 hover:bg-emerald-600 hover:text-white'}`}
                 title={ui("7×24 持续探索：探索完会自主提出新方向，永不停（保持应用打开即可）")}
               >♾️ {continuousMode ? ui("探索中") : ui("持续探索")}</button>
               {/*
@@ -2885,28 +3126,36 @@ ${plan.lead.duty}
                 <button
                   onClick={() => handleProposeOutline()}
                   disabled={outlineBusy}
-                  className="px-3 py-1.5 bg-slate-700/70 hover:bg-blue-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-2.5 py-1 bg-slate-700/70 hover:bg-blue-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
                   title={ui("先只列出打算写哪几篇（不写正文），跟你对齐之后再一篇一篇填")}
                 >🗺️ {outlineBusy ? ui("拟稿中…") : projectOutline ? '重理框架' : '先理框架'}</button>
               )}
-              <button onClick={() => setShowGraphModal(true)} className="px-3 py-1.5 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title={ui("打开关系图谱")}>{ui("🕸️ 图谱")}</button>
-              <button onClick={() => setRightChatOpen(v => !v)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${rightChatOpen ? 'bg-blue-600 text-white' : 'bg-slate-700/70 text-slate-200 hover:bg-blue-600 hover:text-white'}`} title={ui("切换 AI 对话栏")}>{ui("💬 对话")}</button>
+              <button onClick={() => setShowGraphModal(true)} className="px-2.5 py-1 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title={ui("打开关系图谱")}>{ui("🕸️ 图谱")}</button>
             </div>
-            <button className="md:hidden pointer-events-auto text-xs text-slate-300" onClick={() => setNotesPanelMode(v => v ? 0 : 1)}>{ui("项目笔记")}</button>
           </div>
+          <div className="flex-1 overflow-hidden">
+            <TeamChat key={`${currentProjectId || 'none'}:${currentProject?.worktree?.activeBranchId || 'main'}`} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} feed={visibleFeed} onAnswerFeed={handleAnswerFeed} feedBusy={outlineBusy} />
+          </div>
+        </div>
 
-          <div className="h-full pt-11 flex flex-col min-h-0">
-            {/*
-              框架还在草稿阶段时，中间栏整个让给它。
-              这是刻意的：这一刻用户唯一该做的事就是把目录看一遍、改一改，
-              旁边再摆一篇笔记只会让他分心，也会让人误以为"已经开始写了"。
-            */}
-            {projectOutline?.status === 'draft' && (selectedNode || !projectPage) ? (
+        {/* ===== 右侧：笔记 / 项目总览（看内容的地方；交互和决策都在中间的对话里） ===== */}
+        {noteOpen && (
+          <div className="app-note-panel fixed inset-x-0 top-14 bottom-0 z-40 md:static md:z-0 h-full flex flex-col bg-slate-800 border-l border-slate-700/60 min-w-0 flex-shrink-0" style={{ width: isMobileWidth ? undefined : noteWidth }}>
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-700/60 bg-slate-800/80 flex-shrink-0">
+              <div className="text-[11px] text-slate-500 min-w-0 truncate">{currentProject && selectedNode ? <button onClick={() => openProjectPage(currentProject.id, 'root', 'research')} className="hover:text-blue-300">{ui("← 回到项目总览")}</button> : <span className="text-slate-600">{currentProject?.name || ''}</span>}</div>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button onClick={() => setNoteWidth(w => (w > 600 ? 560 : 820))} className="hidden md:block p-1.5 hover:bg-slate-700 rounded text-slate-400" title={ui("切换宽度")}><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button>
+                <button onClick={() => setNoteOpen(false)} className="p-1.5 hover:bg-slate-700 rounded text-slate-400" title={ui("收起")}><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 17 5-5-5-5M13 17l5-5-5-5"/></svg></button>
+              </div>
+            </div>
+          <div className="flex-1 flex flex-col min-h-0">
+            {/* 点了对话流里的「我要改改」：右栏整个让给框架编辑器 */}
+            {projectOutline?.status === 'draft' && outlineEditing ? (
               <div className="flex-1 min-h-0 overflow-y-auto px-5 md:px-8 py-6 scroll-hide">
                 <OutlinePlanner
                   outline={projectOutline}
                   onChange={handleOutlineChange}
-                  onConfirm={handleConfirmOutline}
+                  onConfirm={() => { const firstId = handleConfirmOutline(); if (firstId) { forceNodeRef.current = firstId; setTimeout(() => setIsLooping(true), 50); } }}
                   onRegenerate={() => handleProposeOutline()}
                   onDiscard={handleDiscardOutline}
                   busy={outlineBusy}
@@ -2914,20 +3163,6 @@ ${plan.lead.duty}
               </div>
             ) : (
             <>
-            {justWroteNode && (
-              <div className="px-5 md:px-8 pt-3 flex-shrink-0">
-                <StepBar
-                  justWrote={justWroteNode}
-                  progress={outlineDone}
-                  onNext={handleStepNext}
-                  onRewrite={handleStepRewrite}
-                  onStop={handleStepStop}
-                  onOpen={id => setSelectedNodeId(id)}
-                  onSwitchToAuto={handleSwitchToAuto}
-                  busy={isLooping}
-                />
-              </div>
-            )}
             <div className="flex-1 min-h-0">
             {selectedNode ? (
               <NodeDetails node={selectedNode} variant="center" isFocused={focusedNodeId === selectedNodeId} isWide={isDetailsWide} onToggleWide={() => setIsDetailsWide(!isDetailsWide)} onClose={() => setSelectedNodeId(null)} onSendMessage={async (id, text) => { const node = nodes.find(n => n.id === id); if (!node) return; const updated = [...(node.chatHistory || []), { role: 'user', text } as ChatMessage]; updateNode(id, { chatHistory: updated }); const epoch = workspaceEpochRef.current; const resp = await chatWithNode(node, text, updated, questionFactContext(currentProject?.inquiries, node.id)); if (epoch !== workspaceEpochRef.current) return; updateNode(id, { chatHistory: [...updated, { role: 'model', text: resp } as ChatMessage] }); }} onUpdateNotes={(id, notes) => updateNode(id, { notes })} onUpdateNodeData={(id, updates) => updateNode(id, updates)} onAddChildNode={(parentId, title) => { const id = uuidv4(); const dir: ProblemNode = { id, title, status: NodeStatus.UNEXPLORED, confidence: 0, dependencies: [parentId], notes: '', chatHistory: [], agentResults: [], noteType: 'direction', fullNote: directionTemplate(title), noteUpdatedAt: Date.now() }; setNodes(prev => [...prev, dir]); setSelectedNodeId(id); }} allNodes={nodes} onNavigate={(id) => setSelectedNodeId(id)} onWikiLink={handleWikiLink} decisions={projectDecisions} onRecordDecision={(id) => openDecisionRecorder(id, 'manual')} onForkDecision={(id) => { const stage = currentProject?.worktree?.stages.find(s => s.decisionId === id); if (stage) openProjectPage(currentProject!.id, 'root', 'worktree'); else handleForkDecision(id); }} onMentionAgent={mentionAgentInChat} probes={projectProbes} onAddProbes={handleAddProbes} onUpdateProbe={handleUpdateProbe} onContradicted={handleContradicted} projectGoal={currentProject?.metaProblem || currentProject?.name} route={projectRoute} routeBusy={routeBusy} onPlanRoute={handlePlanRoute} onSettleAnchor={handleSettleAnchor} onSkipAnchor={handleSkipAnchor} onDesignAnchorProbes={handleDesignAnchorProbes} onDesignSim={handleDesignSim} simBusy={simBusy} onSimProbe={handleSimProbe} onWriteThis={handleWriteThis} isWriting={isLooping} onAppendToSummary={(text) => { if (!currentProjectId) return; setProjects(prev => prev.map(p => p.id === currentProjectId ? { ...p, summaryNote: (p.summaryNote || '') + text } : p)); }} />
@@ -2935,9 +3170,12 @@ ${plan.lead.duty}
               <ProjectWorkspace project={{ ...currentProject, nodes }} scopeId={activeProjectPage.scopeId} page={activeProjectPage.page} teams={inquiryTeams}
                 onPage={(page, scopeId = activeProjectPage.scopeId) => openProjectPage(currentProject.id, scopeId, page)} onNote={id => openNode(currentProject.id, id)}
                 routePanel={<RouteMap route={projectRoute} nodes={nodes} busy={routeBusy} onPlan={handlePlanRoute} onSettle={handleSettleAnchor} onSkip={handleSkipAnchor} onDesignProbes={handleDesignAnchorProbes} onNavigate={id => openNode(currentProject.id, id)} />}
+                onSaveSuccess={text => setProjects(prev => prev.map(p => p.id === currentProject.id ? { ...p, overviewSuccessCriteria: text } : p))}
                 onSaveBrief={text => setProjects(prev => prev.map(p => p.id === currentProject.id ? { ...migrateProjectOverview(p), overviewBrief: text } : p))}
                 onSaveSummary={(id, text) => updateNode(id, { fullNote: text, autoNote: false, noteUpdatedAt: Date.now() })}
-                worktree={worktreeActions} busy={worktreeBusy} onStop={stopProjectWork} onGenerateReport={handleGenerateReport} generating={isGeneratingReport} />
+                worktree={worktreeActions} busy={worktreeBusy} onStop={stopProjectWork} onGenerateReport={handleGenerateReport} generating={isGeneratingReport}
+                pulsePanel={pulsePanel}
+                onSeekHelp={(fact, question) => { setMarketSeek(seekFromFact(fact, question, currentProject.id)); setShowServiceMarket(true); trackEvent('fact_seek_help'); addNotification('info', `🤝 去服务广场为「${fact.claim.slice(0, 24)}${fact.claim.length > 24 ? '…' : ''}」找人验证`, ''); }} />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="text-5xl opacity-40">📂</div>
@@ -2950,23 +3188,13 @@ ${plan.lead.duty}
             </>
             )}
           </div>
-        </div>
-
-        {/* ===== 右侧：AI 对话 ===== */}
-        <div data-open={rightChatOpen} className="app-team-chat hidden md:flex h-full flex-col bg-slate-900 border-l border-slate-800 overflow-hidden transition-all duration-300" style={{ width: rightChatOpen ? rightChatWidth : 0 }}>
-          <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
-            <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5"><span>🤝</span>{ui("团队群聊")}</h3>
-            <button onClick={() => setRightChatOpen(false)} className="p-1.5 hover:bg-slate-800 rounded text-slate-400" title={ui("收起")}><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 17 5-5-5-5M13 17l5-5-5-5"/></svg></button>
           </div>
-          <div className="flex-1 overflow-hidden">
-            <TeamChat key={`${currentProjectId || 'none'}:${currentProject?.worktree?.activeBranchId || 'main'}`} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} />
-          </div>
-        </div>
+        )}
 
-        {/* 收起时的右侧重新展开把手 */}
-        {!rightChatOpen && (
-          <div className="hidden md:flex w-8 h-full bg-slate-900 border-l border-slate-800 items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setRightChatOpen(true)} title={ui("展开 AI 对话")}>
-            <div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">{ui("AI 对话")}</div>
+        {/* 笔记栏收起时的展开把手 */}
+        {!noteOpen && (
+          <div className="hidden md:flex w-8 h-full bg-slate-900 border-l border-slate-800 items-center justify-center cursor-pointer hover:bg-slate-800 z-20 group" onClick={() => setNoteOpen(true)} title={ui("展开笔记")}>
+            <div className="rotate-90 whitespace-nowrap text-[10px] font-bold text-slate-500 group-hover:text-blue-400">{ui("笔记")}</div>
           </div>
         )}
 
@@ -2984,9 +3212,9 @@ ${plan.lead.duty}
         )}
       </main>
       {nativeIOS && <nav aria-label={ui('主要导航', 'Main navigation')} className="ios-navigation grid grid-cols-4 shrink-0 border-t border-slate-800 bg-slate-950 md:hidden">
-        <button className="py-3 text-xs" onClick={() => { setRightChatOpen(false); setNotesPanelMode(0); if (currentProject) openProjectPage(currentProject.id, 'root', 'research'); }}>{ui('◈ 总览', '◈ Overview')}</button>
-        <button className="py-3 text-xs" onClick={() => { setRightChatOpen(false); setNotesPanelMode(v => v ? 0 : 1); }}>{ui('▤ 项目与笔记', '▤ Notes')}</button>
-        <button className="py-3 text-xs" onClick={() => { setNotesPanelMode(0); setRightChatOpen(v => !v); }}>{ui('◎ AI 团队', '◎ AI team')}</button>
+        <button className="py-3 text-xs" onClick={() => { setNotesPanelMode(0); setNoteOpen(true); if (currentProject) openProjectPage(currentProject.id, 'root', 'research'); }}>{ui('◈ 总览', '◈ Overview')}</button>
+        <button className="py-3 text-xs" onClick={() => { setNoteOpen(false); setNotesPanelMode(v => v ? 0 : 1); }}>{ui('▤ 项目与笔记', '▤ Notes')}</button>
+        <button className="py-3 text-xs" onClick={() => { setNotesPanelMode(0); setNoteOpen(false); }}>{ui('◎ AI 团队', '◎ AI team')}</button>
         <button className="py-3 text-xs" onClick={() => setShowUserMenu(true)}>{ui('◉ 我的', '◉ Account')}</button>
       </nav>}
 
@@ -3066,29 +3294,9 @@ ${plan.lead.duty}
       {/* 下载客户端 */}
       {showDownloadModal && <DownloadModal onClose={() => setShowDownloadModal(false)} />}
 
+      {showServiceMarket && <ServiceMarket seek={marketSeek} projects={projectsView} currentProjectId={currentProjectId} onClose={() => { setShowServiceMarket(false); setMarketSeek(null); }} onProject={c => { const p = projectsView.find(p => p.id === c.projectId); if (!p) return; openProjectPage(c.projectId, c.branchId === (p.worktree?.activeBranchId || 'main') ? c.scopeId : 'root', c.branchId === (p.worktree?.activeBranchId || 'main') ? 'research' : 'worktree'); setShowServiceMarket(false); }} />}
       {/* 问题广场 */}
       {showQuestionBoard && <QuestionBoard userKey={user?.username || 'guest'} onClose={() => setShowQuestionBoard(false)} onStartProject={(text) => handleCreateProject(text)} />}
-
-      {/* 无人看管预算用尽：停下来确认一次，避免整夜空跑 */}
-      {unattendedPrompt && (
-        <div className="fixed inset-0 z-[115] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-7 text-center">
-            <div className="text-3xl mb-3">☕</div>
-            <h3 className="text-base font-bold text-white mb-2">{ui("已连续探索")}{UNATTENDED_BUDGET}{ui("轮，先停一下")}</h3>
-            <p className="text-[12px] text-slate-400 leading-6">{ui("这段时间没有检测到你的操作。自动探索每一轮都会真实调用模型并产生费用， 所以到这里先暂停，确认你还在看。")}</p>
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => { setUnattendedPrompt(false); }}
-                className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm font-bold"
-              >{ui("先停着")}</button>
-              <button
-                onClick={() => { unattendedRef.current = 0; setUnattendedPrompt(false); setIsLooping(true); trackEvent('unattended_resume'); }}
-                className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold"
-              >{ui("继续探索")}</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 反馈弹窗：带上业务上下文，方便复现用户遇到的问题 */}
       {showFeedback && (

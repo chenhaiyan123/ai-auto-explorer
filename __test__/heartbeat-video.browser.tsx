@@ -1,0 +1,17 @@
+import React,{useEffect,useState}from'react';import{createRoot}from'react-dom/client';
+import ProjectWorkspace from'../components/ProjectWorkspace';import ProjectNotesTree from'../components/ProjectNotesTree';
+import{useInquiryTeams}from'../services/useInquiryTeams';import type{Project}from'../types';
+import{setLanguage}from'../services/language';import type{ProjectPage}from'../services/projectWorktree';import'../index.css';
+setLanguage('zh-CN');const API='http://127.0.0.1:4311';
+function Demo(){
+ const[projects,setProjects]=useState<Project[]>([]),[rev,setRev]=useState(-1),[view,setView]=useState<ProjectPage>('research'),[note,setNote]=useState<string|null>(null),[message,setMessage]=useState('');
+ const teams=useInquiryTeams(projects,setProjects,'chinese-video',async()=>{throw Error('模型实测已完成，回放模式不重复调用。');});
+ useEffect(()=>{const load=()=>fetch(API+'/demo').then(r=>r.json()).then(d=>{setRev(old=>{if(old!==d.rev)setProjects([d.project]);return d.rev;});setMessage(d.message);});load();const id=setInterval(load,500);return()=>clearInterval(id);},[]);
+ async function phase(stage:string){setNote(null);setView(stage.includes('evidence')?'facts':'research');await fetch(API+'/demo/stage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage})});}
+ const p=projects[0];if(!p)return <p>载入项目…</p>;
+ return <main className="h-screen flex flex-col bg-slate-950 text-slate-200"><header style={{height:48}} className="flex items-center justify-between px-5 border-b border-slate-700 bg-slate-900"><strong className="text-xl text-emerald-300">HiExplore <span className="text-sm text-slate-300 ml-3">给一个问题，更长的生命</span></strong><span className="text-xs text-amber-200">本机实机录屏 · 真实模型运行记录回放 · 模拟非门店实测</span></header>
+ <div className="flex flex-1 min-h-0"><aside className="w-60 bg-slate-900 flex-shrink-0"><ProjectNotesTree projects={projects} currentProjectId={p.id} selectedNodeId={note} selectedPage={{scopeId:'root',page:view}} search="" onSearch={()=>{}} onOpenNode={(_,id)=>setNote(id)} onCreateProject={()=>{}} onCreateDirection={()=>{}} onAddChild={()=>{}} onBuildTeam={()=>{}} onCleanup={()=>{}} onOpenPage={(_,__,page)=>{setNote(null);setView(page);}}/></aside>
+ <section className="flex-1 min-w-0">{note?<div className="p-7 space-y-4"><button onClick={()=>setNote(null)}>返回项目总览</button><h1 className="text-xl">{p.nodes.find(n=>n.id===note)?.title}</h1><pre className="whitespace-pre-wrap text-sm">{p.nodes.find(n=>n.id===note)?.fullNote}</pre></div>:<ProjectWorkspace key={rev} project={p} scopeId="root" page={view} teams={teams} onPage={page=>setView(page)} onNote={setNote} worktree={{save:()=>{},branch:()=>{},switchBranch:()=>{},recordDecision:()=>{},legacyFork:()=>{}}} busy={false} onStop={()=>{}}/>}</section></div>
+ <footer style={{height:44}} className="flex items-center gap-3 px-4 bg-slate-900 border-t border-slate-700 text-xs"><span className="text-slate-500">录制控制</span>{[['quiet-zero-calls','安静等待'],['first-evidence','实验一数据'],['first-working','第一轮分析'],['first-audit','第一轮审计'],['second-evidence','实验二数据'],['second-working','第二轮分析'],['second-audit','第二轮审计'],['quiet-end','无新线索检查']].map(([stage,label])=><button className="rounded border border-slate-700 px-2 py-1" key={stage} onClick={()=>phase(stage)}>{label}</button>)}<span className="text-emerald-300 ml-auto">{message}</span></footer>
+ </main>;
+}createRoot(document.getElementById('root')!).render(<Demo/>);

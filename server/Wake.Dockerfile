@@ -11,6 +11,7 @@ WORKDIR /app
 COPY server/wake-server.mjs server/wake-storage.mjs server/shared-models.mjs server/billing.mjs server/alipay-provider.mjs ./server/
 COPY server/wake-notifications.mjs ./server/
 COPY server/project-sync.mjs ./server/
+COPY server/project-mandates.mjs server/service-market.mjs server/market-demands.mjs ./server/
 COPY server/wechat-provider.mjs server/wechat-certificates.mjs ./server/
 COPY shared/billing-plans.json ./shared/
 COPY --from=build /app/server/.wake-build ./server/.wake-build

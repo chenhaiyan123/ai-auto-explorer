@@ -1,3 +1,4 @@
+import ProjectMandatePanel from './ProjectMandatePanel';
 import ProjectBrief from './ProjectBrief';
 import ResearchActivation from './ResearchActivation';
 import ExplorationLoop from './ExplorationLoop';
@@ -19,7 +20,7 @@ const button = 'rounded-lg bg-slate-800 px-3 py-2 text-xs hover:bg-slate-700 dis
 const resultLabels = { running: '进行中', progress: '有新进展', waiting: '等待新依据', failed: '执行受阻', interrupted: '执行中断' };
 const kinds = { hypothesis: '假设', plan: '待执行计划', observation: '候选观察', limitation: '证据局限' };
 
-export default function ProjectLifePanel({ project, scopeId, teams, onFacts, browserBusy, onPage, onNote }: { project: Project; scopeId: string; teams: ReturnType<typeof useInquiryTeams>; onFacts: () => void; browserBusy?: boolean; onPage?: (page: ProjectPage, scopeId?: string) => void; onNote?: (id: string) => void }) {
+export default function ProjectLifePanel({ project, scopeId, teams, onFacts, browserBusy, onPage, onNote, onSaveSuccess }: { project: Project; onSaveSuccess?: (text: string) => void; scopeId: string; teams: ReturnType<typeof useInquiryTeams>; onFacts: () => void; browserBusy?: boolean; onPage?: (page: ProjectPage, scopeId?: string) => void; onNote?: (id: string) => void }) {
   const { t } = useLanguage();
   const heartbeatPanel = useRef<HTMLDetailsElement>(null);
   const runsPanel = useRef<HTMLDetailsElement>(null);
@@ -96,7 +97,16 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
   };
   return <section aria-label={ui("智能生命体")} className="rounded-xl border border-emerald-800/60 bg-slate-900/70 p-4 space-y-4">
     <div className="flex items-center justify-between gap-2"><h3 className="text-xs text-slate-400">{t('AI 项目经理 · 项目近况', 'AI project manager · Brief')}</h3><button className={button} aria-expanded={settings} onClick={() => setSettings(!settings)}>{t('研究设置', 'Research settings')}</button></div>
-    <ProjectBrief project={project} scopeId={scopeId} state={state} connected={connected} runningScopes={Object.keys(project.inquiries || {}).filter(id => teams.isRunning(project.id, id))} onFacts={onFacts} onReview={() => openDetails(heartbeatPanel)} onSettings={() => setSettings(true)} onTeam={() => onPage?.('team', scopeId)} />
+    <ProjectBrief onSaveSuccess={onSaveSuccess} project={project} scopeId={scopeId} state={state} connected={connected} runningScopes={Object.keys(project.inquiries || {}).filter(id => teams.isRunning(project.id, id))} onFacts={onFacts} onReview={() => openDetails(heartbeatPanel)} onSettings={() => setSettings(true)} onTeam={() => onPage?.('team', scopeId)} />
+    {WAKE_API && <ProjectMandatePanel mandate={reply?.mandate} question={context.question} busy={busy} connected={connected} checkpoint={!!state?.checkpoint} stopCode={state?.stopCode}
+      onSave={body => act(async () => { await wakeRequest(context, '/mandate', 'PUT', body); policyLoaded.current = false; setMessage(t('约定已保存，整个项目已暂停。检查团队模型后手动恢复。', 'Agreement saved; the whole project is paused. Check team models before resuming.')); })}
+      onAction={(action, note) => act(async () => {
+        if (action === 'resume' && (browserBusy || teams.isProjectRunning(project.id))) throw new Error(t('请先暂停浏览器研究。', 'Pause browser research first.'));
+        await wakeRequest(context, '/mandate/action', 'POST', { action, expectedRevision: reply?.mandate?.revision, note });
+        if (action === 'resume') { await sync(); await wakeRequest(context, '/policy', 'PUT', { enabled: true }); }
+        policyLoaded.current = false;
+      })}
+      onDiscard={() => act(async () => { await wakeRequest(context, '/checkpoint/discard', 'POST', {}); })} />}
     {!WAKE_API && <p className="text-xs text-amber-300">{ui("云端执行器待接入。目前关闭页面后不会继续研究。")}</p>}
     {reply?.testMode && <p className="text-xs text-amber-300">{ui("本机模拟环境 · 不调用真实模型，结果只用于验证流程。")}</p>}
     {settings && state && <div className="flex flex-wrap gap-x-5 gap-y-2 text-[11px] text-slate-400"><span>{ui("待处理线索")}{state.events.filter(e => e.status === 'pending').length}</span><span>{ui("今日调用")}{state.budget.day === utcDay(Date.now()) ? state.budget.calls : 0} / {state.policy.maxCallsPerDay}</span><span>{ui("下次检查")}{state.policy.enabled ? when(state.nextCheckAt) : ui("已暂停")}</span><span>{ui("策略复盘")}{state.policy.enabled ? when(state.nextReviewAt) : ui("已暂停")}</span></div>}
@@ -150,7 +160,7 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
         {run.findings?.map((f, i) => <div key={i} className="border-l-2 border-blue-600 pl-3"><p>{ui(kinds[f.kind])}：{f.claim}</p><p className="text-[11px] text-slate-500 break-all">{ui("依据：")}{f.evidenceIds.join('、') || ui("规划性推断，无已确认事实")}</p>{['observation', 'limitation'].includes(f.kind) && <button className="mt-1 text-blue-300" onClick={() => adopt(run, i)}>{ui("送事实看板核验 →")}</button>}</div>)}
         <p className="text-slate-500">{ui("记忆依据：本轮读取")}{run.contextSnapshot?.facts.filter(f => f.status === 'confirmed').length || 0}{ui("条已确认事实。候选发现不会自动写入已验证记忆。")}</p>
         {run.memoryChanges && <p className="text-slate-500">{ui("相较上轮，各角色共用的事实记忆：新增")}{run.memoryChanges.added.length}{ui("· 撤回")}{run.memoryChanges.withdrawn.length}{ui("· 修订")}{run.memoryChanges.updated.length}。<span className="break-all">{[...run.memoryChanges.added, ...run.memoryChanges.withdrawn, ...run.memoryChanges.updated].join('、')}</span></p>}
-        {run.contextSnapshot?.facts.some(f => f.status === 'confirmed' && !context.facts.some(currentFact => currentFact.id === f.id && JSON.stringify(currentFact) === JSON.stringify(f))) && <p className="text-amber-300">{ui("此历史轮次引用的事实已有变化或撤回，请按当前事实看板重新核对，勿直接沿用旧结论。")}</p>}
+        {run.contextSnapshot?.facts.some(f => f.status === 'confirmed' && !context.facts.some(currentFact => (['id', 'claim', 'source', 'excerpt', 'scope', 'status'] as const).every(key => currentFact[key] === f[key]))) && <p className="text-amber-300">{ui("此历史轮次引用的事实已有变化或撤回，请按当前事实看板重新核对，勿直接沿用旧结论。")}</p>}
         {state.events.filter(e => run.eventIds.includes(e.id)).map(e => <details key={e.id}><summary className="cursor-pointer text-blue-300">{ui("线索：")}{e.title}</summary><pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-400">{e.body}</pre>{/^https?:\/\//i.test(e.source) ? <a className="break-all text-blue-300" href={e.source} target="_blank" rel="noreferrer">{ui("查看来源 ↗")}</a> : <p>{e.source}</p>}</details>)}
         {run.steps.map((step, i) => <details key={i}><summary className="cursor-pointer text-slate-400">{ui(INQUIRY_ROLES[step.role].name)} · {step.purpose} · {step.completedAt ? ui("已返回") : ui("尚未返回")}</summary><pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-400">{step.result || ui("请求已预留预算；中断时不会自动重试。")}</pre></details>)}
       </div></details>)}

@@ -4,6 +4,7 @@ export type ProblemLife = 'watching' | 'waiting' | 'dormant' | 'resolved';
 export interface WaitItem {
   id: string; key: string; kind: 'data' | 'observation' | 'decision' | 'permission'; title: string; detail: string;
   source: string; owner: string; condition: string; trigger: { type: 'user_reply' } | { type: 'source_match'; sourceHost: string; keywords: string[] }; nextCheckAt?: number; contextVersion: number;
+  decisionBrief?: { recommendation: string; rationale: string; risks: string; alternative: string; evidenceIds: string[]; evidenceBasis: string };
   status: 'waiting' | 'received' | 'declined' | 'cancelled'; createdAt: number; resolvedAt?: number; answer?: string;
 }
 export interface JudgmentChange {
@@ -28,6 +29,7 @@ const clean = (v: unknown, limit = 1500) => typeof v === 'string' ? v.trim().sli
 const norm = (v: string) => v.toLowerCase().replace(/\s+/g, '');
 export const needsHuman = (h: ProblemHeartbeat) => h.waits.some(w => w.status === 'waiting' && w.kind !== 'observation');
 export const judgmentSupported = (s: Awakening, j: JudgmentChange) => j.evidenceIds.every(e => s.context.facts.some(f => f.id === e && f.status === 'confirmed')) && j.evidenceBasis === JSON.stringify(j.evidenceIds.map(e => s.context.facts.find(f => f.id === e)));
+export const waitEvidenceCurrent = (s: Awakening, w: WaitItem) => !w.decisionBrief || (w.decisionBrief.evidenceIds.every(id => s.context.facts.some(f => f.id === id && f.status === 'confirmed')) && w.decisionBrief.evidenceBasis === JSON.stringify(w.decisionBrief.evidenceIds.map(id => s.context.facts.find(f => f.id === id))));
 export function attentionLevel(input: { importance: number; novelty: number; confidence: number; actionNeeded?: boolean; verifiedRisk?: boolean }, h: ProblemHeartbeat): 'silent' | 'digest' | 'now' {
   // Mandatory decisions are visible even in quiet mode. Low actionability must not erase important knowledge.
   if (input.actionNeeded || input.verifiedRisk) return 'now';
@@ -57,7 +59,16 @@ export function collectWaits(s: Awakening, proposals: unknown, now: number, id: 
       if (!/^[a-z0-9.-]+$/.test(sourceHost) || !Array.isArray(raw.trigger.keywords) || raw.trigger.keywords.length < 1 || raw.trigger.keywords.length > 5 || !raw.trigger.keywords.every((k: unknown) => typeof k === 'string' && k.trim() && k.length <= 100)) throw new Error('Invalid source matching condition');
       trigger = { type: 'source_match', sourceHost, keywords: raw.trigger.keywords.map((k: string) => k.trim().toLowerCase()) };
     }
-    const wait: WaitItem = { id: id(), key, kind: raw.kind, title, detail, condition, trigger, source, owner: owner || (raw.kind === 'observation' ? 'Project manager' : 'You'), contextVersion: s.contextVersion, createdAt: now, status: 'waiting', nextCheckAt: s.nextCheckAt };
+    let decisionBrief: WaitItem['decisionBrief'];
+    if (raw.decisionBrief !== undefined && ['decision', 'permission'].includes(raw.kind)) {
+      const b = raw.decisionBrief;
+      if (!b || !Array.isArray(b.evidenceIds) || b.evidenceIds.length > 10 || !b.evidenceIds.every((id: unknown) => typeof id === 'string' && s.context.facts.some(f => f.id === id && f.status === 'confirmed'))) throw new Error('Decision brief references unverified evidence');
+      const evidenceIds = [...new Set<string>(b.evidenceIds)];
+      const recommendation = clean(b.recommendation), rationale = clean(b.rationale), risks = clean(b.risks), alternative = clean(b.alternative);
+      if (!recommendation || !rationale || !risks || !alternative) throw new Error('Decision brief needs recommendation, reasoning, risks and alternative');
+      decisionBrief = { recommendation, rationale, risks, alternative, evidenceIds, evidenceBasis: JSON.stringify(evidenceIds.map(id => s.context.facts.find(f => f.id === id))) };
+    }
+    const wait: WaitItem = { id: id(), key, kind: raw.kind, title, detail, condition, trigger, source, decisionBrief, owner: owner || (raw.kind === 'observation' ? 'Project manager' : 'You'), contextVersion: s.contextVersion, createdAt: now, status: 'waiting', nextCheckAt: s.nextCheckAt };
     h = { ...h, waits: [...h.waits, wait], lifecycle: 'waiting' };
     if (wait.kind !== 'observation') h = addProblemUpdate(h, { id: id(), key: `wait:${wait.id}`, category: 'action', level: 'now', title, body: detail, reason: condition, evidenceIds: [], createdAt: now, targetId: wait.id });
   }
@@ -103,6 +114,7 @@ export function heartbeatAction(s: Awakening, body: any, now: number, id: () => 
     const wait = h.waits.find(w => w.id === body.id && w.status === 'waiting');
     const answer = clean(body.answer, 6000); if (!wait || !answer) throw new Error('Waiting item is closed or answer is empty');
     if (['permission', 'decision'].includes(wait.kind) && wait.contextVersion !== s.contextVersion) throw new Error('Context changed. Ask the manager for a fresh decision request.');
+    if (body.decision === 'approve' && !waitEvidenceCurrent(s, wait)) throw new Error('Decision evidence changed. Request an updated briefing before approving.');
     if (!['provide', 'approve', 'decline'].includes(body.decision) || (['permission', 'decision'].includes(wait.kind) && body.decision === 'provide')) throw new Error('Choose approve or decline for this request');
     h = { ...h, lifecycle: 'watching', updates: h.updates.map(u => u.targetId === wait.id && !u.readAt ? { ...u, readAt: now } : u), waits: h.waits.map(w => w.id === wait.id ? { ...w, status: body.decision === 'decline' ? 'declined' : 'received', answer, resolvedAt: now } : w) };
     event = { id: `wait-reply:${wait.id}`, kind: 'input', title: wait.title, body: `Waiting item: ${wait.id}\nDecision: ${body.decision}\n${answer}\nThis is a user response, not an automatically verified fact. Any permission is limited to this request; no external experiment has been executed.`, source: clean(body.source, 1200) || 'User response', at: now, status: 'pending' };
