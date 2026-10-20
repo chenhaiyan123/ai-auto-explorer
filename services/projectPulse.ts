@@ -84,7 +84,7 @@ const clip = (s: string | undefined, n: number) => {
   return t.length > n ? t.slice(0, n) + '…' : t;
 };
 
-export const buildPulseMessages = (p: Project, now = Date.now()) => {
+export const buildPulseMessages = (p: Project, now = Date.now(), opts: { web?: boolean } = {}) => {
   const life = p.life;
   const notes = (p.nodes || [])
     .filter(n => n.noteType !== 'readme' && n.noteType !== 'simulation')
@@ -105,9 +105,11 @@ export const buildPulseMessages = (p: Project, now = Date.now()) => {
     '规则：',
     '1. 没有真正新的东西就返回空的 observations——这很正常，不要硬凑。',
     '2. 最多 3 条，每条标题 ≤ 20 字、说明 ≤ 80 字。不要重复「已经记过的」。',
-    '3. 你不能上网。不要编造具体的论文、数据、链接；需要去现实里核实的，用 clue 或 question 写清楚「去哪查、查什么」。',
+    opts.web
+      ? '3. 你可以联网搜索。优先找与项目直接相关、近一年的新进展、数据、报道；每条来自网上的观察都要把 source 填成对应的搜索结果编号；对不上编号的不要写成事实，只能写成 question。'
+      : '3. 你不能上网。不要编造具体的论文、数据、链接；需要去现实里核实的，用 clue 或 question 写清楚「去哪查、查什么」。',
     '4. notable 只给真正需要用户知道的（会改变方向、或需要他做决定），大多数应为 false。',
-    '只返回 JSON：{"summary":"一句话，≤30字","observations":[{"kind":"inspiration|clue|evidence|question","title":"","detail":"","relatedTitle":"相关笔记标题或空","notable":false}]}',
+    `只返回 JSON：{"summary":"一句话，≤30字","observations":[{"kind":"inspiration|clue|evidence|question","title":"","detail":"","relatedTitle":"相关笔记标题或空","notable":false${opts.web ? ',"source":搜索结果编号或null' : ''}}]}`,
   ].join('\n');
   const user = [
     `项目：${p.name}`,
@@ -126,7 +128,8 @@ export const buildPulseMessages = (p: Project, now = Date.now()) => {
 const KINDS: PulseKind[] = ['inspiration', 'clue', 'evidence', 'question'];
 export interface PulseResult { summary: string; observations: Omit<PulseNote, 'id' | 'at'>[] }
 
-export const parsePulse = (text: string): PulseResult => {
+export const parsePulse = (text: string, sources: { index: number; title: string; url: string; site?: string }[] = []): PulseResult => {
+  const byIndex = new Map(sources.map(s => [Number(s.index), s]));
   let raw: any;
   try { raw = JSON.parse(text); }
   catch {
@@ -146,9 +149,12 @@ export const parsePulse = (text: string): PulseResult => {
         detail: clip(typeof o.detail === 'string' ? o.detail : '', 120),
         relatedTitle: typeof o.relatedTitle === 'string' && o.relatedTitle.trim() ? clip(o.relatedTitle, 40) : undefined,
         notable: o.notable === true,
+        ...(byIndex.has(Number(o.source)) ? { url: byIndex.get(Number(o.source))!.url, site: byIndex.get(Number(o.source))!.site || hostOf(byIndex.get(Number(o.source))!.url) } : {}),
       })),
   };
 };
+
+const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 
 let seq = 0;
 const noteId = () => `pn${Date.now().toString(36)}${(seq++).toString(36)}`;

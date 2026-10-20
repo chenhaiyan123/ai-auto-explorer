@@ -19,14 +19,20 @@ const prepareMessages = messages => {
   if (Buffer.byteLength(JSON.stringify(prepared)) > 120000) throw fail('上下文过长，请缩小任务范围');
   return prepared;
 };
+const isDashScopeURL = base => { try { return /(^|\.)dashscope(-intl)?\.aliyuncs\.com$/.test(new URL(base).hostname); } catch { return false; } };
+/** 联网搜索：搜索结果会被塞进输入，输入 token 会暴涨；预留不够会被判「超额」并自动停用模型，所以单独多留一截。 */
+export const SEARCH_INPUT_ALLOWANCE = 12000;
+/** 搜索本身按次收费（百炼约 $10/千次），折成 token 计入该模型的额度，防止平台 Key 被白用 */
+export const SEARCH_FEE_TOKENS = 1500;
 // Shared by preflight and dispatch; keep the conservative reservation unchanged.
 function checkFunding(s, owner, body, messages) {
   const settings = s.models[body.modelId]; if (!settings?.enabled || !settings.apiKey) throw fail('共享模型尚未启用或已暂停');
+  if (body.webSearch === true && !isDashScopeURL(settings.baseUrl)) throw fail('联网搜索目前只支持通义千问（百炼）模型');
   if (s.calls.length >= 10000) throw fail('用量记录已达首版上限，请由运维归档');
   // Uncertain calls keep their reservation in held; only the remaining available balance can fund new work.
   // Never retry the original request or freeze the entire account because a response was lost.
   const maxTokens = Math.min(int(body.maxTokens ?? 2048, 1, 16384, '请求输出上限'), settings.maxOutputTokens);
-  const reserved = Buffer.byteLength(JSON.stringify(messages)) * 2 + 2048 + maxTokens;
+  const reserved = Buffer.byteLength(JSON.stringify(messages)) * 2 + 2048 + maxTokens + (body.webSearch === true ? SEARCH_INPUT_ALLOWANCE + SEARCH_FEE_TOKENS : 0);
   const available = wallet(s, owner, body.modelId)?.available || 0;
   if (available < reserved) throw fail(`此模型额度不足：当前可用 ${available} Token，本次需预留 ${reserved} Token，还差 ${reserved - available} Token。预留是保守上限，不是实际费用；可缩小材料范围、换用有额度的模型或接入自有 API`, 402);
   if (usedToday(s, body.modelId) + reserved > settings.dailyTokens) throw fail(`此共享模型今日额度不足：剩余 ${Math.max(0, settings.dailyTokens - usedToday(s, body.modelId))} Token，本次需预留 ${reserved} Token；等待 UTC 次日重置或选择其他模型`, 429);
@@ -190,23 +196,34 @@ export class SharedModels {
     }).catch(e => { throw Object.assign(e, { notSent: true }); });
     let dispatched = false;
     try {
-      const request = buildModelRequest(reservation.settings, messages, { maxTokens: reservation.maxTokens, jsonMode: body.jsonMode === true });
+      const webSearch = body.webSearch === true;
+      const request = buildModelRequest(reservation.settings, messages, { maxTokens: reservation.maxTokens, jsonMode: body.jsonMode === true && !webSearch, webSearch });
       delete request.headers['anthropic-dangerous-direct-browser-access'];
       await this.beforeSend();
       if (scope.projectId) await this.guardProject(owner, scope.projectId, { revision: scope.mandateRevision });
       dispatched = true;
       const response = await this.fetcher(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body), signal: AbortSignal.timeout(60000), redirect: 'error' });
-      if (!response.ok) throw fail(`模型供应商返回 HTTP ${response.status}；用量待核对`, 502);
+      if (!response.ok) {
+        const detail = providerError(await response.text().catch(() => ''), reservation.settings.apiKey);
+        // 400/401/403/404/429 是供应商在处理前就拒绝了请求，不产生用量：直接按 0 结算，不再把预留额度卡在「待核对」里。
+        // 5xx / 超时仍然保持待核对，因为供应商可能已经算过费。
+        if ([400, 401, 403, 404, 429].includes(response.status)) {
+          await this.settle(id, 0, 'rejected', `供应商拒绝请求 HTTP ${response.status}${detail ? '：' + detail : ''}，未产生用量`);
+          throw Object.assign(fail(`模型供应商返回 HTTP ${response.status}${detail ? '：' + detail : ''}；未产生用量，已自动释放预留`, 502), { settledZero: true });
+        }
+        throw fail(`模型供应商返回 HTTP ${response.status}${detail ? '：' + detail : ''}；用量待核对`, 502);
+      }
       const raw = await response.text(); if (raw.length > 1_000_000) throw fail('模型响应过大，用量待核对', 502);
       const data = JSON.parse(raw); const usage = providerUsage(data.usage, reservation.settings.provider);
-      const settled = await this.settle(id, usage.total, 'settled', '按供应商返回用量结算');
+      const searches = webSearch ? searchCount(data.usage) : 0;
+      const settled = await this.settle(id, usage.total + searches * SEARCH_FEE_TOKENS, 'settled', searches ? `按供应商返回用量结算（含联网搜索 ${searches} 次，每次折 ${SEARCH_FEE_TOKENS} Token）` : '按供应商返回用量结算');
       const parsed = parseModelResponse(data, reservation.settings.provider);
       if (!parsed.content?.trim()) throw fail('模型没有返回正文；已按实际用量结算', 502);
-      return { content: parsed.content.split(reservation.settings.apiKey).join('[REDACTED]'), usage: { prompt_tokens: usage.input, completion_tokens: usage.output }, callId: settled.call.id };
+      return { content: parsed.content.split(reservation.settings.apiKey).join('[REDACTED]'), usage: { prompt_tokens: usage.input, completion_tokens: usage.output }, callId: settled.call.id, ...(webSearch ? { sources: parsed.sources || [] } : {}) };
     } catch (e) {
       await this.transaction(s => {
         const call = s.calls.find(c => c.id === id);
-        if (call.status !== 'reserved') return;
+        if (call.status !== 'reserved') return; // 已按 0 结算的拒绝请求等，不再改动
         if (dispatched) { call.status = 'uncertain'; call.error = '请求已发送，用量尚未确认；保留预留额度，不自动重试'; }
         else { const balance = wallet(s, owner, body.modelId); balance.held -= call.reserved; balance.available += call.reserved; Object.assign(call, { status: 'cancelled', charged: 0, completedAt: Date.now() }); }
       });
@@ -215,6 +232,18 @@ export class SharedModels {
   }
 }
 function walletView(account) { return account?.balances || {}; }
+/** 供应商错误信息：只留短短一句，便于排查（去掉密钥） */
+function providerError(raw, apiKey) {
+  let msg = '';
+  try { const d = JSON.parse(raw); msg = d.error?.message || d.message || d.error?.code || d.code || ''; } catch { msg = ''; }
+  msg = String(msg || '').replace(/\s+/g, ' ').slice(0, 160);
+  return apiKey ? msg.split(apiKey).join('[REDACTED]') : msg;
+}
+/** DashScope 原生接口在 usage.plugins.search.count 里报告搜索次数；拿不到就按 1 次算（宁可多记） */
+function searchCount(u) {
+  const n = u?.plugins?.search?.count;
+  return Number.isSafeInteger(n) && n >= 0 && n <= 20 ? n : 1;
+}
 export function providerUsage(u, provider) {
   if (!u || typeof u !== 'object') throw fail('供应商没有返回 Token 用量，需人工核对', 502);
   const number = v => int(v, 0, 1e9, '供应商 Token 用量');
@@ -222,7 +251,8 @@ export function providerUsage(u, provider) {
     const input = number(u.input_tokens) + number(u.cache_creation_input_tokens ?? 0) + number(u.cache_read_input_tokens ?? 0);
     const output = number(u.output_tokens); return { input, output, total: input + output };
   }
-  const input = number(u.prompt_tokens); const output = number(u.completion_tokens);
+  // DashScope 原生接口（联网搜索）用 input_tokens / output_tokens
+  const input = number(u.prompt_tokens ?? u.input_tokens); const output = number(u.completion_tokens ?? u.output_tokens);
   const total = u.total_tokens === undefined ? input + output : number(u.total_tokens);
   if (total < input + output) throw fail('供应商用量字段不一致，需人工核对', 502);
   return { input, output: total - input, total };

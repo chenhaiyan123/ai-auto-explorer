@@ -24,7 +24,7 @@ export function saveMandate(s, owner, projectId, body, now = Date.now()) {
   if ((old?.history.length || 0) >= 100) throw mandateError('约定版本达到首版上限，请归档');
   const goal = text(body.goal, 1500, '阶段目标'), acceptance = text(body.acceptance, 2500, '验收标准'), stopCondition = text(body.stopCondition, 1500, '停止条件');
   if (!Number.isSafeInteger(body.deadline) || body.deadline <= now || body.deadline > now + 366 * 86400000) throw mandateError('截止时间须在未来一年内', 'INVALID_MANDATE', 400);
-  if (!Array.isArray(body.tools) || !body.tools.includes('model_analysis') || body.tools.some(t => !['model_analysis', 'paper_search'].includes(t))) throw mandateError('首版仅支持材料分析和论文元数据检索', 'INVALID_MANDATE', 400);
+  if (!Array.isArray(body.tools) || !body.tools.includes('model_analysis') || body.tools.some(t => !['model_analysis', 'paper_search', 'web_search'].includes(t))) throw mandateError('首版仅支持材料分析、论文元数据检索和联网搜索', 'INVALID_MANDATE', 400);
   if (!body.budgets || typeof body.budgets !== 'object' || Array.isArray(body.budgets) || !Object.keys(body.budgets).length || Object.keys(body.budgets).length > 50) throw mandateError('请设置至少一个共享模型预算', 'INVALID_MANDATE', 400);
   const budgets = Object.fromEntries(Object.entries(body.budgets).map(([id, b]) => {
     if (!Object.hasOwn(s.models, id) || !b) throw mandateError('预算引用了不存在的共享模型', 'INVALID_MANDATE', 400);

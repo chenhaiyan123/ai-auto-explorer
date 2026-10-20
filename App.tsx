@@ -8,7 +8,7 @@ import { billingRequest, BILLING_CHANGED, BILLING_API, BillingAccount } from './
 import AdminDashboard from './components/AdminDashboard';
 import { sharedRequest, SHARED_API } from './services/sharedModelsClient';
 import RouteMap from './components/RouteMap';
-import { assertBrowserResearchAllowed, pauseCloudProject } from './services/wakeClient';
+import { assertBrowserResearchAllowed, pauseCloudProject, WAKE_API } from './services/wakeClient';
 import { migrateProjectOverview, isOverviewNote, projectOverviewContext, overviewExportNodes } from './services/projectOverview';
 import { UserStats, KnowledgeCard, ResearchFinding } from './types';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -40,6 +40,7 @@ import { recoverInquiry, questionFactContext, addFact } from './services/inquiry
 import { lifeOf, defaultLife, pickDue, budgetAllows, spendBudget, buildPulseMessages, parsePulse, applyPulse, failPulse, notableToShow, touchViewed, setCadence, setWatching, type PulseBudget } from './services/projectPulse';
 import ProjectPulse from './components/ProjectPulse';
 import { callLLM } from './services/llmProvider';
+import type { SharedCatalog } from './services/sharedModelsClient';
 import QuestionEvaluator from './components/QuestionEvaluator';
 import QuestionBoard from './components/QuestionBoard';
 import TeamChat from './components/TeamChat';
@@ -2662,8 +2663,13 @@ ${plan.lead.duty}
   const worktreeBusy = !!(isLooping || isProcessingRef.current || isGeneratingReport || teamBusy || outlineBusy || routeBusy || simBusy || overviewRefreshingRef.current || isProposingRef.current || (currentProjectId && inquiryTeams.isProjectRunning(currentProjectId)));
   // ===== 项目「活着」：长期关注、低频醒来看一眼 =====
   // 所有项目默认 watching；醒来看到的东西记进项目自己的关注日志，不刷对话框。
-  const aliveProjectIds = projects.filter((p, i) => lifeOf(p, Date.now(), i).state === 'watching').map(p => p.id);
+  const aliveProjectIds = projects.filter((p, i) => lifeOf(p, Date.now(), i).state === 'watching' || cloudWatch[p.id]?.enabled).map(p => p.id);
   const [wakingId, setWakingId] = useState<string | null>(null);
+  /** 各项目云端长期关注的状态（来自项目总览里的云端面板）。开着云端的项目，浏览器里就不再自己醒，免得重复花钱 */
+  const [cloudWatch, setCloudWatch] = useState<Record<string, { enabled: boolean; nextCheckAt?: number; lastSummary?: string; lastAt?: number }>>({});
+  const cloudWatchRef = useRef(cloudWatch);
+  useEffect(() => { cloudWatchRef.current = cloudWatch; }, [cloudWatch]);
+  const [openActivation, setOpenActivation] = useState(0);
   const pulseBusyRef = useRef(false);
   const patchLife = useCallback((projectId: string, fn: (life: NonNullable<Project['life']>) => NonNullable<Project['life']>) => {
     setProjects(prev => prev.map((p, i) => (p.id === projectId ? { ...p, life: fn(lifeOf(p, Date.now(), i)) } : p)));
@@ -2681,6 +2687,17 @@ ${plan.lead.duty}
   const readPulseBudget = (): PulseBudget | null => { try { return JSON.parse(localStorage.getItem('aae-pulse-budget') || 'null'); } catch { return null; } };
   const writePulseBudget = (b: PulseBudget) => { try { localStorage.setItem('aae-pulse-budget', JSON.stringify(b)); } catch {} };
 
+  /** 找一个能联网搜索的共享模型（百炼/千问，额度够一次搜索的预留） */
+  const pickSearchModel = async (): Promise<string | null> => {
+    if (!SHARED_API) return null;
+    try { if (!localStorage.getItem('aae-auth-token')) return null; } catch { return null; }
+    try {
+      const c = await sharedRequest<SharedCatalog>('/shared/catalog');
+      const m = c.models.find(x => x.enabled && x.hasKey && /dashscope(-intl)?\.aliyuncs\.com/.test(x.baseUrl) && (c.balances[x.id]?.available || 0) >= 20000);
+      return m?.id || null;
+    } catch { return null; }
+  };
+
   /** 让一个项目醒来看一眼：一次小模型调用，结果写进关注日志 */
   const wakeProject = useCallback(async (projectId: string, manual = false) => {
     if (pulseBusyRef.current) return;
@@ -2692,8 +2709,21 @@ ${plan.lead.duty}
     const now = Date.now();
     writePulseBudget(spendBudget(readPulseBudget(), now));
     try {
-      const res = await callLLM(buildPulseMessages(project, now), { jsonMode: true, maxTokens: 700, timeoutMs: 60000 });
-      const parsed = parsePulse(res.content);
+      // 能联网就联网：登录了、后台有开放的千问共享模型且额度够，就走联网搜索（带出处）；否则退回只靠推理
+      let parsed: ReturnType<typeof parsePulse> | null = null;
+      const searchModel = await pickSearchModel();
+      if (searchModel) {
+        try {
+          const r = await sharedRequest<{ content: string; sources?: { index: number; title: string; url: string; site?: string }[] }>('/shared/chat', 'POST', {
+            modelId: searchModel, requestId: crypto.randomUUID(), messages: buildPulseMessages(project, now, { web: true }), maxTokens: 700, webSearch: true,
+          }, 90000);
+          parsed = parsePulse(r.content, r.sources || []);
+        } catch (e) { console.warn('[pulse] 联网搜索不可用，退回推理', e); }
+      }
+      if (!parsed) {
+        const res = await callLLM(buildPulseMessages(project, now), { jsonMode: true, maxTokens: 700, timeoutMs: 60000 });
+        parsed = parsePulse(res.content);
+      }
       const before = lifeOf(project, now, idx);
       const { life, added } = applyPulse(before, parsed, Date.now());
       const show = notableToShow(before, added, Date.now());
@@ -2719,7 +2749,7 @@ ${plan.lead.duty}
       const now = Date.now();
       if (!budgetAllows(readPulseBudget(), now)) return;
       const due = pickDue(projectsRef.current, now, id =>
-        (id === feedProjectRef.current && isLoopingRef.current) || inquiryTeams.isProjectRunning(id));
+        (id === feedProjectRef.current && isLoopingRef.current) || inquiryTeams.isProjectRunning(id) || !!cloudWatchRef.current[id]?.enabled);
       if (due) void wakeProject(due.id);
     };
     const first = setTimeout(tick, 60_000);
@@ -2732,12 +2762,13 @@ ${plan.lead.duty}
       life={lifeOf(currentProject, Date.now(), projects.indexOf(currentProject))}
       waking={wakingId === currentProject.id}
       autoOff={isTrialMode()}
+      cloud={WAKE_API ? { ...(cloudWatch[currentProject.id] || { enabled: false }), onSetup: () => setOpenActivation(n => n + 1) } : undefined}
       onWakeNow={() => void wakeProject(currentProject.id, true)}
       onCadence={h => patchLife(currentProject.id, l => setCadence(l, h, Date.now()))}
       onToggle={on => patchLife(currentProject.id, l => setWatching(l, on, Date.now()))}
       onToFact={note => {
         try {
-          inquiryTeams.change(currentProject.id, 'root', currentProject.metaProblem || currentProject.name, w => addFact(w, { claim: note.title + (note.detail ? `：${note.detail}` : ''), source: 'AI 项目经理的关注日志（待核实）', excerpt: '', scope: '' }));
+          inquiryTeams.change(currentProject.id, 'root', currentProject.metaProblem || currentProject.name, w => addFact(w, { claim: note.title + (note.detail ? `：${note.detail}` : ''), source: note.url || 'AI 项目经理的关注日志（待核实）', excerpt: '', scope: '' }));
           patchLife(currentProject.id, l => ({ ...l, journal: l.journal.map(j => (j.id === note.id ? { ...j, handled: 'fact' as const } : j)) }));
         } catch (e) { addNotification('warning', '没能记进事实看板', e instanceof Error ? e.message : String(e)); }
       }}
@@ -3175,6 +3206,8 @@ ${plan.lead.duty}
                 onSaveSummary={(id, text) => updateNode(id, { fullNote: text, autoNote: false, noteUpdatedAt: Date.now() })}
                 worktree={worktreeActions} busy={worktreeBusy} onStop={stopProjectWork} onGenerateReport={handleGenerateReport} generating={isGeneratingReport}
                 pulsePanel={pulsePanel}
+                onCloudState={st => setCloudWatch(prev => (JSON.stringify(prev[currentProject.id]) === JSON.stringify(st) ? prev : { ...prev, [currentProject.id]: st }))}
+                openActivation={openActivation}
                 onSeekHelp={(fact, question) => { setMarketSeek(seekFromFact(fact, question, currentProject.id)); setShowServiceMarket(true); trackEvent('fact_seek_help'); addNotification('info', `🤝 去服务广场为「${fact.claim.slice(0, 24)}${fact.claim.length > 24 ? '…' : ''}」找人验证`, ''); }} />
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">

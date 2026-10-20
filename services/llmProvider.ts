@@ -107,6 +107,8 @@ export interface LLMCallOptions {
   temperature?: number;
   jsonMode?: boolean;
   timeoutMs?: number;
+  /** 联网搜索（目前只有通义千问支持，走 DashScope 原生接口以拿到来源链接） */
+  webSearch?: boolean;
 }
 
 export interface LLMResult {
@@ -114,6 +116,8 @@ export interface LLMResult {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   /** 体验模式下返回的剩余次数信息 */
   trial?: { scope: 'anon' | 'user'; remaining: number; limit: number };
+  /** 联网搜索时供应商返回的来源（编号与模型正文里的 [n] 对应） */
+  sources?: { index: number; title: string; url: string; site?: string }[];
 }
 
 /** 体验额度用完时抛出的错误（前端可据此引导注册/填 Key） */

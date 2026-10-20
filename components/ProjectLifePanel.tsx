@@ -20,7 +20,7 @@ const button = 'rounded-lg bg-slate-800 px-3 py-2 text-xs hover:bg-slate-700 dis
 const resultLabels = { running: '进行中', progress: '有新进展', waiting: '等待新依据', failed: '执行受阻', interrupted: '执行中断' };
 const kinds = { hypothesis: '假设', plan: '待执行计划', observation: '候选观察', limitation: '证据局限' };
 
-export default function ProjectLifePanel({ project, scopeId, teams, onFacts, browserBusy, onPage, onNote, onSaveSuccess }: { project: Project; onSaveSuccess?: (text: string) => void; scopeId: string; teams: ReturnType<typeof useInquiryTeams>; onFacts: () => void; browserBusy?: boolean; onPage?: (page: ProjectPage, scopeId?: string) => void; onNote?: (id: string) => void }) {
+export default function ProjectLifePanel({ project, scopeId, teams, onFacts, browserBusy, onPage, onNote, onSaveSuccess, onCloudState, openActivation }: { project: Project; onSaveSuccess?: (text: string) => void; /** 云端长期关注的状态（给顶部「长期关注」卡用，开着云端时浏览器里就不再自己醒） */ onCloudState?: (s: { enabled: boolean; nextCheckAt?: number; lastSummary?: string; lastAt?: number }) => void; /** 变化一次就展开「开启长期关注」并滚过去 */ openActivation?: number; scopeId: string; teams: ReturnType<typeof useInquiryTeams>; onFacts: () => void; browserBusy?: boolean; onPage?: (page: ProjectPage, scopeId?: string) => void; onNote?: (id: string) => void }) {
   const { t } = useLanguage();
   const heartbeatPanel = useRef<HTMLDetailsElement>(null);
   const runsPanel = useRef<HTMLDetailsElement>(null);
@@ -38,6 +38,17 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
   const [clue, setClue] = useState(''); const [source, setSource] = useState('');
   const [model, setModel] = useState({ role: 'default', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: '', apiKey: '' });
   const state = reply?.state || undefined;
+  const activationRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!onCloudState || scopeId !== 'root') return;
+    const last = state?.runs?.filter(r => r.completedAt).at(-1);
+    onCloudState({ enabled: !!state?.policy.enabled, nextCheckAt: state?.nextCheckAt, lastSummary: last?.summary?.slice(0, 80), lastAt: last?.completedAt });
+  }, [state?.policy.enabled, state?.nextCheckAt, state?.runs?.length]);
+  useEffect(() => {
+    if (!openActivation || !activationRef.current) return;
+    activationRef.current.open = true;
+    activationRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [openActivation]);
   const refresh = async (signal?: AbortSignal) => {
     const result = await wakeRequest(current.current, '/state', 'GET', undefined, signal);
     if (!alive.current) return;
@@ -111,7 +122,7 @@ export default function ProjectLifePanel({ project, scopeId, teams, onFacts, bro
     {reply?.testMode && <p className="text-xs text-amber-300">{ui("本机模拟环境 · 不调用真实模型，结果只用于验证流程。")}</p>}
     {settings && state && <div className="flex flex-wrap gap-x-5 gap-y-2 text-[11px] text-slate-400"><span>{ui("待处理线索")}{state.events.filter(e => e.status === 'pending').length}</span><span>{ui("今日调用")}{state.budget.day === utcDay(Date.now()) ? state.budget.calls : 0} / {state.policy.maxCallsPerDay}</span><span>{ui("下次检查")}{state.policy.enabled ? when(state.nextCheckAt) : ui("已暂停")}</span><span>{ui("策略复盘")}{state.policy.enabled ? when(state.nextReviewAt) : ui("已暂停")}</span></div>}
     {error && <p role="alert" className="text-xs text-rose-300">{error}</p>}{message && <p role="status" className="text-xs text-emerald-300">{message}</p>}
-    {WAKE_API && !state?.policy.enabled && <details className="rounded-lg border border-emerald-800/50 p-3"><summary className="cursor-pointer text-sm text-emerald-300">{t('开启或恢复长期关注', 'Start or resume ongoing research')}</summary><div className="mt-3"><ResearchActivation busy={busy} starterTokens={reply?.starterTokens || 0} mailReady={!!reply?.notifications?.ready} recipient={reply?.notifications?.recipient || ''}
+    {WAKE_API && !state?.policy.enabled && <details ref={activationRef} className="rounded-lg border border-emerald-800/50 p-3"><summary className="cursor-pointer text-sm text-emerald-300">{t('开启或恢复长期关注', 'Start or resume ongoing research')}</summary><div className="mt-3"><ResearchActivation busy={busy} starterTokens={reply?.starterTokens || 0} mailReady={!!reply?.notifications?.ready} recipient={reply?.notifications?.recipient || ''}
       onAdvanced={() => setSettings(true)} onStart={(modelId, paperQuery, emailEnabled) => act(async () => {
         if (browserBusy || teams.isProjectRunning(project.id)) throw new Error(t('请先暂停浏览器研究并等待完成。', 'Pause browser research and wait for it to finish first.'));
         await wakeRequest(context, '/activate', 'POST', { context, modelId, paperQuery, emailEnabled });

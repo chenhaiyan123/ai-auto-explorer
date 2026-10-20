@@ -584,6 +584,9 @@ export interface PulseNote {
   detail: string;
   /** 关联的笔记标题（如果有） */
   relatedTitle?: string;
+  /** 联网搜索得到的出处（只有能对上搜索结果的才有） */
+  url?: string;
+  site?: string;
   /** 值得打扰用户（只有这种才会在对话流里出一行） */
   notable?: boolean;
   /** 用户已转成事实候选 / 已忽略 */

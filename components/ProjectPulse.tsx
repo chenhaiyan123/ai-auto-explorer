@@ -24,7 +24,9 @@ const ProjectPulse: React.FC<{
   onOpenNote?: (title: string) => void;
   /** 免配置体验额度下不自动醒来 */
   autoOff?: boolean;
-}> = ({ autoOff, life, waking, onWakeNow, onCadence, onToggle, onToFact, onDismiss, onOpenNote }) => {
+  /** 云端长期关注（关掉电脑也会醒）。undefined = 这个部署没有云端执行器 */
+  cloud?: { enabled: boolean; nextCheckAt?: number; lastSummary?: string; lastAt?: number; onSetup: () => void };
+}> = ({ cloud, autoOff, life, waking, onWakeNow, onCadence, onToggle, onToFact, onDismiss, onOpenNote }) => {
   const [all, setAll] = useState(false);
   const notes = life.journal.filter(j => j.handled !== 'dismissed').slice().reverse();
   const shown = all ? notes : notes.slice(0, 4);
@@ -50,6 +52,18 @@ const ProjectPulse: React.FC<{
         <button onClick={() => onToggle(!on)} className="px-2 py-0.5 rounded text-slate-500 hover:text-slate-300">{on ? '暂停关注' : '恢复关注'}</button>
         <span className="text-[11px] text-slate-500 ml-auto">没新东西会自动放慢；很久没打开也会放慢</span>
       </div>
+      {cloud && (cloud.enabled ? (
+        <div className="text-[12px] text-emerald-300/90 flex flex-wrap gap-x-2">
+          <span>☁️ 已交给云端：关掉电脑也会按时醒来，并联网查论文和网页线索</span>
+          {cloud.nextCheckAt ? <span className="text-slate-400">下次 {when(cloud.nextCheckAt)}</span> : null}
+          {cloud.lastSummary ? <span className="text-slate-400">· 上次：{cloud.lastSummary}</span> : null}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 flex-wrap text-[12px]">
+          <span className="text-slate-400">现在只在这个页面开着时醒来。</span>
+          <button onClick={cloud.onSetup} className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white">交给云端（关掉电脑也继续）</button>
+        </div>
+      ))}
       {notes.length === 0 ? (
         <p className="text-[12px] text-slate-500">还没记下什么。醒来时想到的灵感、线索、可以找的证据会记在这里，不会刷到对话框里。</p>
       ) : (
@@ -61,6 +75,7 @@ const ProjectPulse: React.FC<{
                 <div className="min-w-0 flex-1">
                   <span className="text-slate-200 font-medium">{n.title}</span>
                   {n.detail && <span className="text-slate-400"> —— {n.detail}</span>}
+                  {n.url && <a href={n.url} target="_blank" rel="noopener noreferrer" className="ml-1 text-blue-300 hover:underline" title={n.url}>↗ {n.site || '出处'}</a>}
                   {n.relatedTitle && onOpenNote && <button onClick={() => onOpenNote(n.relatedTitle!)} className="ml-1 text-blue-300 hover:underline">[[{n.relatedTitle}]]</button>}
                   <span className="text-slate-600 ml-1.5">{when(n.at)}</span>
                 </div>

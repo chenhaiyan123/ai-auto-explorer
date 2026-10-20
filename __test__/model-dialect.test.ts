@@ -1,4 +1,4 @@
-import { buildModelRequest } from '../services/modelRequest';
+import { buildModelRequest, parseModelResponse } from '../services/modelRequest';
 let pass = 0, fail = 0; const ok = (c: unknown, m: string) => { if (c) pass++; else { fail++; console.error('✗', m); } };
 const msgs = [{ role: 'user', content: '返回 JSON' }];
 const ds = (model: string) => buildModelRequest({ provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', model, apiKey: 'k' } as any, msgs, { jsonMode: true }).body as any;
@@ -12,4 +12,9 @@ const other = buildModelRequest({ provider: 'openai-compatible', baseUrl: 'https
 ok(other.model === 'deepseek-chat' && !('thinking' in other) && !('enable_thinking' in other), 'other hosts untouched');
 const km = buildModelRequest({ provider: 'openai-compatible', baseUrl: 'https://api.moonshot.cn/v1', model: 'kimi-k2.6', apiKey: 'k' } as any, msgs).body as any;
 ok(km.thinking.type === 'disabled' && km.temperature === 0.6, 'kimi k2.6');
+const ws = buildModelRequest({ provider: 'openai-compatible', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus', apiKey: 'k' } as any, msgs, { webSearch: true, jsonMode: true, maxTokens: 300 });
+ok(ws.url === 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation' && (ws.body as any).parameters.enable_search === true && !('response_format' in (ws.body as any)), 'web search → native');
+ok(buildModelRequest({ provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', apiKey: 'k' } as any, msgs, { webSearch: true }).url.endsWith('/chat/completions'), 'web search ignored elsewhere');
+const pr = parseModelResponse({ output: { choices: [{ message: { content: '答' }, finish_reason: 'stop' }], search_info: { search_results: [{ index: 1, title: 'T', url: 'https://x.cn/a', site_name: 'X' }, { index: 2, title: 'bad', url: 'javascript:alert(1)' }] } }, usage: { input_tokens: 5, output_tokens: 2 } }, 'openai-compatible');
+ok(pr.content === '答' && pr.sources!.length === 1 && pr.sources![0].site === 'X' && pr.usage!.prompt_tokens === 5, 'native parse + unsafe url dropped');
 console.log(`model-dialect: ${pass} passed, ${fail} failed`); if (fail) process.exit(1);

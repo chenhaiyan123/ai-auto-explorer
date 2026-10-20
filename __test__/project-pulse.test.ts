@@ -47,4 +47,6 @@ ok(failPulse(l0, now, 'x').nextWakeAt >= now + 6 * H, 'failure backs off');
 // 设置
 ok(setCadence(l0, 72, now).cadenceHours === 72 && setCadence(l0, 5, now).cadenceHours === 24, 'cadence validated');
 ok(setWatching(l0, false, now).state === 'paused' && setWatching({ ...l0, state: 'paused' }, true, now).nextWakeAt === now + D, 'pause/resume');
+const web = parsePulse('{"summary":"s","observations":[{"kind":"evidence","title":"有出处","detail":"d","source":2},{"kind":"clue","title":"没出处","source":7}]}', [{ index: 2, title: 't', url: 'https://www.example.cn/p' }]);
+ok(web.observations[0].url === 'https://www.example.cn/p' && web.observations[0].site === 'example.cn' && !web.observations[1].url, 'web sources mapped by index');
 console.log(`project-pulse: ${pass} passed, ${fail} failed`); if (fail) process.exit(1);

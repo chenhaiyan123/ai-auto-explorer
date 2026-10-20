@@ -9,7 +9,9 @@ import InquiryPanel from './InquiryPanel';
 import ProjectHome from './ProjectHome';
 import ExplorationWorktree, { type WorktreeActions } from './ExplorationWorktree';
 
-export default function ProjectWorkspace({ project, scopeId, page, teams, onPage, onNote, worktree, busy, onStop, onGenerateReport, generating, onSaveBrief, onSaveSummary, onSaveSuccess, routePanel, onSeekHelp, pulsePanel }: {
+export default function ProjectWorkspace({ project, scopeId, page, teams, onPage, onNote, worktree, busy, onStop, onGenerateReport, generating, onSaveBrief, onSaveSummary, onSaveSuccess, routePanel, onSeekHelp, pulsePanel, onCloudState, openActivation }: {
+  onCloudState?: React.ComponentProps<typeof ProjectLifePanel>['onCloudState'];
+  openActivation?: number;
   /** 项目总览顶部的「长期关注」卡 */
   pulsePanel?: React.ReactNode;
   onSeekHelp?: (fact: import('../services/inquiry').InquiryFact, question: string) => void;
@@ -27,7 +29,7 @@ export default function ProjectWorkspace({ project, scopeId, page, teams, onPage
       {scope === 'root' && (page === 'team' || page === 'facts') && <div className="border-t border-slate-800 py-3 space-y-2"><p className="text-[11px] text-slate-500">{ui("当前查看：项目核心问题。各想法拥有独立的")}{page === 'team' ? ui("团队") : ui("事实看板")}：</p><div className="flex flex-wrap gap-2">{project.nodes.filter(n => !n.noteType || n.noteType === 'direction').map(n => <button key={n.id} className="text-[11px] text-blue-300 rounded-lg bg-slate-800 px-2 py-1" onClick={() => onPage(page, n.id)}>{n.title} · {page === 'team' ? `${project.inquiries?.[n.id]?.rounds.length || 0} 轮` : `${project.inquiries?.[n.id]?.facts.length || 0} 条`}</button>)}</div></div>}
     </header>
     <div className={`flex-1 min-h-0 ${page === 'team' || page === 'facts' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
-      <div className={page === 'research' ? 'max-w-6xl mx-auto px-3 pt-3' : 'hidden'}>{scope === 'root' && pulsePanel && <div className="mb-3">{pulsePanel}</div>}<ProjectLifePanel onSaveSuccess={scope === 'root' ? onSaveSuccess : undefined} key={`${project.id}:${project.worktree?.activeBranchId || 'main'}:${scope}`} project={project} scopeId={scope} teams={teams} browserBusy={busy} onFacts={() => onPage('facts', scope)} onPage={onPage} onNote={onNote} /></div>
+      <div className={page === 'research' ? 'max-w-6xl mx-auto px-3 pt-3' : 'hidden'}>{scope === 'root' && pulsePanel && <div className="mb-3">{pulsePanel}</div>}<ProjectLifePanel onCloudState={onCloudState} openActivation={openActivation} onSaveSuccess={scope === 'root' ? onSaveSuccess : undefined} key={`${project.id}:${project.worktree?.activeBranchId || 'main'}:${scope}`} project={project} scopeId={scope} teams={teams} browserBusy={busy} onFacts={() => onPage('facts', scope)} onPage={onPage} onNote={onNote} /></div>
       {page === 'research' && <div className="max-w-6xl mx-auto p-3 space-y-3">
         {scope === 'root' && <details className="rounded-xl border border-blue-500/30 p-4"><summary className="cursor-pointer text-sm font-semibold text-blue-300">{ui("与 AI 项目经理沟通 · 梳理进展与下一步")}</summary><div className="mt-3"><ProjectManagerPanel key={project.id} project={project} teams={teams} onTeam={() => onPage('team', 'root')} /></div></details>}
         <details className="rounded-xl border border-slate-700 p-4"><summary className="cursor-pointer text-sm">{t('自主能力与边界 · 7 项', 'Autonomy & boundaries · 7 areas')}</summary><dl className="mt-3 space-y-3 text-xs leading-relaxed">
