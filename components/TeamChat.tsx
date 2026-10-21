@@ -2,6 +2,7 @@ import { t as ui } from '../services/language';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Project, ProblemNode, ChatMessage, NodeStatus, FeedItem } from '../types';
 import { callGemini, factMessages } from '../services/geminiService';
+import { keyInfoContext } from '../services/keyInfo';
 import { INQUIRY_ROLES, questionFactContext } from '../services/inquiry';
 import { resolveNodeByTitle } from '../services/noteLinks';
 import MarkdownView from './MarkdownView';
@@ -102,7 +103,7 @@ const TeamChat: React.FC<{
     return parts.join('\n\n');
   };
 
-  const projectCtx = () => project ? `项目：${project.name}\n目标：${project.metaProblem || project.name}` : '';
+  const projectCtx = () => project ? [`项目：${project.name}\n目标：${project.metaProblem || project.name}`, keyInfoContext(project.keyInfo)].filter(Boolean).join('\n') : '';
 
   // 让某个成员发言
   const speak = async (agent: string, userText: string, history: ChatMsg[]): Promise<string> => {

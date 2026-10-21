@@ -16,7 +16,9 @@ import MessageBoard from './components/MessageBoard';
 import { v4 as uuidv4 } from 'uuid';
 import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage, DecisionOption, DecisionTrigger, Probe, FeedItem } from './types';
 import { type HelpSeek, seekFromFact } from './services/factHelp';
-import { batchProgress, batchAsk, BATCH_SIZE, charterAsk, type Batch } from './services/agentFeed';
+import { batchProgress, batchAsk, BATCH_SIZE, charterAsk, infoAsk, type Batch } from './services/agentFeed';
+import { keyInfoContext, questionsFromBrief, addPending, nextPending, pendingCount, markAsked, answerInfo, skipInfo, remember } from './services/keyInfo';
+import KeyInfoPanel from './components/KeyInfoPanel';
 import { briefMarkdown, charterFromText, charterLabel } from './services/projectBrief';
 import { pushFeed, answerFeed, closeAsks, openAsks, status as feedStatus, stepAsk, branchAsk, contradictedAsk, realityAsk, anchorAsk, unattendedAsk, haltedAsk, outlineAsk } from './services/agentFeed';
 import { DecisionRecordModal, DecisionTimelineModal, DecisionDraft } from './components/DecisionCenter';
@@ -951,6 +953,8 @@ const App: React.FC = () => {
     setChatPrefill({ text: `@${agent} `, nonce: Date.now() });
   }, []);
   const [nodes, setNodes] = useState<ProblemNode[]>([]);
+  const nodesRef = useRef<ProblemNode[]>([]);
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   const workspaceEpochRef = useRef(0);
   const projectHydrationRef = useRef<{ nodes: ProblemNode[]; cards: KnowledgeCard[]; findings: ResearchFinding[] } | null>(null);
   const pendingSelectRef = useRef<string | null>(null); // 切换项目后要自动选中的节点
@@ -1393,8 +1397,11 @@ const App: React.FC = () => {
       batchRef.current ? batchProgress(batchRef.current, nodeTitle) : feedStatus(`✍️ 正在写《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid }),
     ));
     // 用户在对话流里补过一句要求 → 这一次带进提示词（走「已有背景」那一栏），写完清空
-    const target: ProblemNode = unexplored.userAsk
-      ? { ...unexplored, notes: `${unexplored.notes ? unexplored.notes + '\n' : ''}用户要求：${unexplored.userAsk}` }
+    // 再加上 AI 记忆里用户交代过的关键信息（预算、手上的资源、目标人群……），写的时候按用户原话来
+    const memo = keyInfoContext(projectsRef.current.find(p => p.id === feedProjectRef.current)?.keyInfo, 1200);
+    const extra = [unexplored.userAsk ? `用户要求：${unexplored.userAsk}` : '', memo].filter(Boolean).join('\n');
+    const target: ProblemNode = extra
+      ? { ...unexplored, notes: `${unexplored.notes ? unexplored.notes + '\n' : ''}${extra}` }
       : unexplored;
     
     try {
@@ -2006,7 +2013,8 @@ ${plan.lead.duty}
       || (proj?.nodes || [])[0]?.id || '';
     const { outline, nodes: fresh } = confirmOutline(projectOutline, rootId);
     setNodes(prev => [...prev, ...fresh]);
-    patchProject(currentProjectId, { outline, pace: 'step' });
+    // 简报里「只有你知道」的问题排进待问队列（AI 记忆），开工前一个一个问
+    patchProject(currentProjectId, { outline, pace: 'step', keyInfo: addPending(proj?.keyInfo, questionsFromBrief(outline.brief), 'brief') });
     // 把商量好的目录写进总览：「我们说好要写哪几篇」得有个固定的地方可查
     const md = outlineToMarkdown(outline, fresh) + (outline.brief ? `\n\n${briefMarkdown(outline.brief, proj?.charter)}` : '');
     setProjects(prev => prev.map(p => p.id === currentProjectId ? {
@@ -2028,6 +2036,31 @@ ${plan.lead.duty}
    * 框架 / 简报定了之后：还没谈过花钱权限 → 先问清楚再开始写（等用户回话才往下走）；
    * 谈过了 → 直接写第一篇。
    */
+  /**
+   * AI 项目经理主动问下一件只有用户知道的事（一次只挂一张卡）。
+   * kickoffNodeId：开工前问的，问完才写这一篇。返回 false = 没什么要问的。
+   */
+  const askNextInfo = useCallback((pid: string, kickoffNodeId?: string): boolean => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    const k = nextPending(proj?.keyInfo);
+    if (!proj || !k) return false;
+    if (!kickoffNodeId && openAsks(proj.feed).some(f => f.ask?.type === 'info')) return true; // 已经有一张在等了，不叠
+    const list = markAsked(proj.keyInfo, k.id);
+    projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, keyInfo: list } : p));
+    patchProject(pid, { keyInfo: list });
+    patchFeed(f => pushFeed(f, infoAsk(k, pendingCount(list) - 1, kickoffNodeId)), pid);
+    if (pid === currentProjectId) setRightChatOpen(true);
+    return true;
+  }, [currentProjectId, patchProject, patchFeed]);
+
+  /** 开始写第一篇（开工前该问的都问完了） */
+  const kickoffWriting = useCallback((nodeId?: string) => {
+    const ok = nodeId && nodesRef.current.some(n => n.id === nodeId && n.status === NodeStatus.UNEXPLORED);
+    if (!ok) return;
+    forceNodeRef.current = nodeId!; setJustWroteId(null);
+    setTimeout(() => setIsLooping(true), 50);
+  }, []);
+
   const startAfterOutline = useCallback((firstId?: string) => {
     const pid = currentProjectId;
     if (!pid) return;
@@ -2037,8 +2070,9 @@ ${plan.lead.duty}
       setRightChatOpen(true);
       return;
     }
+    if (askNextInfo(pid, firstId)) return;
     if (firstId) { forceNodeRef.current = firstId; setTimeout(() => setIsLooping(true), 50); }
-  }, [currentProjectId, patchFeed]);
+  }, [currentProjectId, patchFeed, askNextInfo]);
 
   const handleDiscardOutline = useCallback(() => {
     if (currentProjectId) patchProject(currentProjectId, { outline: undefined });
@@ -2625,7 +2659,9 @@ ${plan.lead.duty}
         const charter = optionId.startsWith('cny:')
           ? { autoBuyCNY: Number(optionId.slice(4)) || 0, confirmedAt: Date.now() }
           : charterFromText(typed);
-        patchProject(currentProjectId, { charter });
+        const kiAfterCharter = remember(projectsRef.current.find(p => p.id === currentProjectId)?.keyInfo, 'budget', '花钱权限', charterLabel(charter), 'charter');
+        projectsRef.current = projectsRef.current.map(p => (p.id === currentProjectId ? { ...p, charter, keyInfo: kiAfterCharter } : p));
+        patchProject(currentProjectId, { charter, keyInfo: kiAfterCharter });
         // 记进项目总览，以后能查「当初说好的」
         setProjects(prev => prev.map(p => p.id === currentProjectId ? {
           ...p,
@@ -2634,9 +2670,32 @@ ${plan.lead.duty}
             : n),
         } : p));
         const startId = item.nodeId && nodes.some(n => n.id === item.nodeId && n.status === NodeStatus.UNEXPLORED) ? item.nodeId : undefined;
-        pushFeedItem(feedStatus(`✅ 记下了：${charterLabel(charter)}${startId ? '。开始写第一篇，写完停下来给你看' : ''}`, { tone: 'good' }));
+        const willAsk = !!startId && !!nextPending(kiAfterCharter);
+        pushFeedItem(feedStatus(`📌 记进 AI 记忆：${charterLabel(charter)}${startId && !willAsk ? '。开始写第一篇，写完停下来给你看' : ''}`, { tone: 'good' }));
         trackEvent('charter_set', { autoBuy: charter.autoBuyCNY, monthly: charter.monthlyCNY || 0 });
-        if (startId) { forceNodeRef.current = startId; setJustWroteId(null); setTimeout(() => setIsLooping(true), 50); }
+        if (startId && !askNextInfo(currentProjectId, startId)) kickoffWriting(startId);
+        break;
+      }
+      case 'info': {
+        if (!currentProjectId || !item.ref) break;
+        const cur = projectsRef.current.find(p => p.id === currentProjectId)?.keyInfo;
+        const k = cur?.find(x => x.id === item.ref);
+        if (!k) break;
+        let list = cur!;
+        if (optionId === 'answer' && typed) {
+          list = answerInfo(cur, k.id, typed);
+          pushFeedItem(feedStatus(`📌 记进 AI 记忆：${k.question.replace(/[？?]$/, '')} → ${typed}`, { tone: 'good' }));
+        } else if (optionId === 'skip') {
+          list = skipInfo(cur, k.id);
+        }
+        projectsRef.current = projectsRef.current.map(p => (p.id === currentProjectId ? { ...p, keyInfo: list } : p));
+        patchProject(currentProjectId, { keyInfo: list });
+        trackEvent('key_info', { option: optionId, source: k.source });
+        if (optionId === 'start') { pushFeedItem(feedStatus('好，剩下的以后再问。开始写第一篇，写完停下来给你看')); kickoffWriting(item.nodeId); break; }
+        // 答了 / 跳过：趁你在，接着问下一个；开工前的问完就开始写
+        const chain = optionId !== 'later' || !!item.nodeId;
+        if (chain && askNextInfo(currentProjectId, item.nodeId)) break;
+        if (item.nodeId) { pushFeedItem(feedStatus('问完了，开始写第一篇，写完停下来给你看')); kickoffWriting(item.nodeId); }
         break;
       }
       case 'outline': {
@@ -2651,7 +2710,7 @@ ${plan.lead.duty}
         break;
       }
     }
-  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline]);
+  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline, askNextInfo, kickoffWriting]);
 
   /** 打开决策记录弹窗（打开时就对节点子树做快照，保证删除/失效前的状态被留存） */
   const openDecisionRecorder = useCallback((nodeId: string, trigger: DecisionTrigger, opts?: { pendingAction?: 'delete' | 'invalidate'; presetQuestion?: string; presetOptions?: { label: string; chosen: boolean }[]; skippable?: boolean }) => {
@@ -2806,6 +2865,13 @@ ${plan.lead.duty}
       patchLife(projectId, () => (show ? { ...life, lastNotifiedAt: Date.now() } : life));
       // 只有真正值得打扰的才在对话流里出一行，而且每个项目一天最多一行
       if (show) pushFeedItem(feedStatus(`🌱 关注到：${show.title}`, { detail: show.detail || undefined, tone: 'good' }), projectId);
+      // 醒来时想到一件只有用户知道的事 → 记进待问，主动问（同一时间只挂一张）
+      if (parsed.askUser) {
+        const ki = addPending(projectsRef.current.find(p => p.id === projectId)?.keyInfo, [parsed.askUser], 'pulse');
+        projectsRef.current = projectsRef.current.map(p => (p.id === projectId ? { ...p, keyInfo: ki } : p));
+        patchProject(projectId, { keyInfo: ki });
+      }
+      askNextInfo(projectId);
       trackEvent('pulse_wake', { added: added.length, manual: manual ? 1 : 0 });
     } catch (e) {
       patchLife(projectId, l => failPulse(l, Date.now(), e instanceof Error ? e.message : String(e)));
@@ -2813,7 +2879,7 @@ ${plan.lead.duty}
       pulseBusyRef.current = false;
       setWakingId(null);
     }
-  }, [patchLife, pushFeedItem]);
+  }, [patchLife, pushFeedItem, patchProject, askNextInfo]);
 
   // 调度：每 5 分钟看一次有没有该醒的项目；一次只醒一个；全局每天最多 6 次、两次之间至少隔 20 分钟
   useEffect(() => {
@@ -2833,7 +2899,22 @@ ${plan.lead.duty}
     return () => { clearTimeout(first); clearInterval(timer); };
   }, [user, loadedOwner, wakeProject]);
 
-  const pulsePanel = currentProject ? (
+  const keyInfoPanel = currentProject ? (
+    <KeyInfoPanel items={currentProject.keyInfo} onChange={fn => {
+      const pid = currentProject.id;
+      setProjects(prev => prev.map(p => {
+        if (p.id !== pid) return p;
+        const keyInfo = fn(p.keyInfo || []);
+        // 在面板里答了 / 删了的问题，聊天里那张卡就收起来
+        const stillPending = new Set(keyInfo.filter(k => k.status === 'pending').map(k => k.id));
+        const feed = (p.feed || []).map(f => (f.ask?.type === 'info' && !f.ask.answer && f.ref && !stillPending.has(f.ref)
+          ? { ...f, ask: { ...f.ask, answer: { label: '已在 AI 记忆里处理', at: Date.now(), auto: true } } } : f));
+        return { ...p, keyInfo, feed };
+      }));
+    }} />
+  ) : null;
+
+  const pulsePanel = currentProject ? (<div className="space-y-3">
     <ProjectPulse
       life={lifeOf(currentProject, Date.now(), projects.indexOf(currentProject))}
       waking={wakingId === currentProject.id}
@@ -2853,6 +2934,8 @@ ${plan.lead.duty}
       onDismiss={note => patchLife(currentProject.id, l => ({ ...l, journal: l.journal.map(j => (j.id === note.id ? { ...j, handled: 'dismissed' as const } : j)) }))}
       onOpenNote={title => { const n = resolveNodeByTitle(nodes, title); if (n) setSelectedNodeId(n.id); }}
     />
+    {keyInfoPanel}
+  </div>
   ) : null;
 
   const stopProjectWork = () => {
@@ -3275,7 +3358,7 @@ ${plan.lead.duty}
                 onSaveBrief={text => setProjects(prev => prev.map(p => p.id === currentProject.id ? { ...migrateProjectOverview(p), overviewBrief: text } : p))}
                 onSaveSummary={(id, text) => updateNode(id, { fullNote: text, autoNote: false, noteUpdatedAt: Date.now() })}
                 worktree={worktreeActions} busy={worktreeBusy} onStop={stopProjectWork} onGenerateReport={handleGenerateReport} generating={isGeneratingReport}
-                pulsePanel={pulsePanel}
+                pulsePanel={pulsePanel} memoryPanel={keyInfoPanel}
                 onCloudState={st => setCloudWatch(prev => (JSON.stringify(prev[currentProject.id]) === JSON.stringify(st) ? prev : { ...prev, [currentProject.id]: st }))}
                 openActivation={openActivation}
                 onSeekHelp={(fact, question) => { setMarketSeek(seekFromFact(fact, question, currentProject.id)); setShowServiceMarket(true); trackEvent('fact_seek_help'); addNotification('info', `🤝 去服务广场为「${fact.claim.slice(0, 24)}${fact.claim.length > 24 ? '…' : ''}」找人验证`, ''); }} />

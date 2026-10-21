@@ -333,6 +333,27 @@ export interface ProjectBrief {
   shortTerm: string;
   /** 长期靠积累和迭代能做到什么 */
   longTerm: string;
+  /** 开工前要主动问用户的问题（只有用户知道答案的） */
+  asks?: { topic: KeyInfoTopic; question: string }[];
+}
+
+/**
+ * 关键信息（AI 记忆里「你交代过的」）：AI 项目经理主动问、用户亲口答的。
+ * 和已核验事实分开放：这是用户关于自己的约束和意愿，他说了就算。
+ */
+export type KeyInfoTopic = 'goal' | 'support' | 'resources' | 'permissions' | 'budget' | 'other';
+export interface KeyInfo {
+  id: string;
+  topic: KeyInfoTopic;
+  question: string;
+  answer: string;
+  /** pending = 还没问 / 问了没答；answered = 用户答了；skipped = 用户说不确定，让 AI 按常理假设 */
+  status: 'pending' | 'answered' | 'skipped';
+  /** 谁提出的这个问题：开工简报 / 醒来看一眼 / 花钱权限 / 用户自己补的 */
+  source: 'brief' | 'pulse' | 'charter' | 'user';
+  at: number;
+  askedAt?: number;
+  answeredAt?: number;
 }
 
 /**
@@ -366,7 +387,7 @@ export interface ChatMessage {
 
 // ========== 对话流（Agent Feed）==========
 // 像 Codex 一样：AI 在干什么、需要人拍板的地方，都以一行字 / 一张问题卡出现在右侧聊天记录里。
-export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline' | 'batch' | 'charter';
+export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline' | 'batch' | 'charter' | 'info';
 export interface FeedOption { id: string; label: string; primary?: boolean }
 export interface FeedItem {
   id: string;
@@ -582,6 +603,8 @@ export interface IntentAnalysis {
 export interface Project {
   /** 用户对项目简报的答复（花钱权限） */
   charter?: ProjectCharter;
+  /** AI 记忆：用户交代过的关键信息 + 还要问的问题 */
+  keyInfo?: KeyInfo[];
   /** 用户维护的项目目标与范围，AI 摘要不得覆盖。 */
   overviewBrief?: string;
   /** User-owned acceptance criteria, never inferred from AI completion. */

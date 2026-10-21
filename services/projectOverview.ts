@@ -1,4 +1,5 @@
 import type { Project, ProblemNode } from '../types';
+import { keyInfoContext } from './keyInfo';
 
 export const isOverviewNote = (node: ProblemNode) => node.noteType === 'readme' || node.noteType === 'overview';
 export const overviewBrief = (project: Project) => project.overviewBrief ?? project.nodes.filter(n => n.noteType === 'readme').map(n => n.fullNote || n.notes || '').filter(Boolean).join('\n\n---\n\n');
@@ -13,7 +14,7 @@ export function migrateProjectOverview(project: Project): Project {
 }
 
 export function projectOverviewContext(project: Project): string {
-  return [project.overviewSuccessCriteria ? `完成标准：${project.overviewSuccessCriteria}` : '', overviewBrief(project), ...project.nodes.filter(n => n.noteType === 'overview').map(n => n.fullNote || n.notes || '')].filter(Boolean).join('\n\n');
+  return [project.overviewSuccessCriteria ? `完成标准：${project.overviewSuccessCriteria}` : '', keyInfoContext(project.keyInfo), overviewBrief(project), ...project.nodes.filter(n => n.noteType === 'overview').map(n => n.fullNote || n.notes || '')].filter(Boolean).join('\n\n');
 }
 
 /** Include the user-owned brief in existing Markdown export paths without altering stored notes. */

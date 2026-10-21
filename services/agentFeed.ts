@@ -1,6 +1,8 @@
 import { FeedItem, FeedAskType, FeedOption, ProblemNode, NodeStatus, Outline } from '../types';
 import { OutlineProgress, keptItems } from './outline';
 import { briefSections, briefFoot, CHARTER_PRESETS } from './projectBrief';
+import { TOPIC_LABEL } from './keyInfo';
+import type { KeyInfo } from '../types';
 
 /**
  * 对话流（Agent Feed）——像 Codex 一样，把「AI 在干什么」和「需要你拍板的地方」
@@ -205,6 +207,25 @@ export const charterAsk = (projectId: string, firstNodeId?: string): FeedItem =>
     detail: '比如要真实的业务数据、找用户访谈、做一次实验或测量——这些光靠推理做不出来，得去服务广场找人或 Agent 做；找不到就发布需求。超过额度的照样先问你。以后可以在项目总览里改。',
     input: { placeholder: '或者直接说，比如「每月最多 300，单笔不超过 100」…', optionId: 'text' },
   });
+
+/**
+ * AI 项目经理主动问一件只有用户知道的事。一次只问一个，答完再问下一个。
+ * kickoff（带 nodeId）= 开工前问的：答完 / 跳过之后才开始写第一篇。
+ */
+export const infoAsk = (k: KeyInfo, remaining: number, kickoffNodeId?: string): FeedItem => {
+  const options: FeedOption[] = [
+    { id: 'skip', label: '不确定，你先按常理假设' },
+    { id: 'later', label: '以后再说' },
+  ];
+  if (kickoffNodeId) options.push({ id: 'start', label: '先不问了，开始写' });
+  return ask('info', `🙋 ${k.question}`, options, {
+    key: `info:${k.id}`,
+    ref: k.id,
+    nodeId: kickoffNodeId,
+    detail: `${TOPIC_LABEL[k.topic]} · 你的回答会记进 AI 记忆，之后写笔记、团队讨论都按这个来${remaining > 0 ? `（之后还有 ${remaining} 个问题）` : ''}`,
+    input: { placeholder: '直接回答…', optionId: 'answer' },
+  });
+};
 
 // ===== 连写一轮（原来的「持续探索」）=====
 // 连写时对话流里只占一行（原地更新进度），写完一轮给一张汇总卡；不再每篇刷一行、也不再无限写下去。

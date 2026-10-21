@@ -1,4 +1,5 @@
-import type { Project, ProjectLife, PulseNote, PulseKind } from '../types';
+import type { Project, ProjectLife, PulseNote, PulseKind, KeyInfoTopic } from '../types';
+import { keyInfoContext, parseAsks } from './keyInfo';
 
 /**
  * 项目「活着」（Project Pulse）。
@@ -109,12 +110,14 @@ export const buildPulseMessages = (p: Project, now = Date.now(), opts: { web?: b
       ? '3. 你可以联网搜索。优先找与项目直接相关、近一年的新进展、数据、报道；每条来自网上的观察都要把 source 填成对应的搜索结果编号；对不上编号的不要写成事实，只能写成 question。'
       : '3. 你不能上网。不要编造具体的论文、数据、链接；需要去现实里核实的，用 clue 或 question 写清楚「去哪查、查什么」。',
     '4. notable 只给真正需要用户知道的（会改变方向、或需要他做决定），大多数应为 false。',
-    `只返回 JSON：{"summary":"一句话，≤30字","observations":[{"kind":"inspiration|clue|evidence|question","title":"","detail":"","relatedTitle":"相关笔记标题或空","notable":false${opts.web ? ',"source":搜索结果编号或null' : ''}}]}`,
+    '5. askUser：如果有一件**只有用户本人知道**、又会改变接下来怎么做的事（他手上有什么数据/资源、目标是谁、能接受什么），就写成一句能直接回答的问题放进 askUser；「用户交代过的」和「还在等用户回答的」里已有的不要再问。没有就省略这个字段——大多数时候都应该省略。',
+    `只返回 JSON：{"summary":"一句话，≤30字","observations":[{"kind":"inspiration|clue|evidence|question","title":"","detail":"","relatedTitle":"相关笔记标题或空","notable":false${opts.web ? ',"source":搜索结果编号或null' : ''}}],"askUser":{"topic":"support|resources|permissions|goal|other","question":""}}`,
   ].join('\n');
   const user = [
     `项目：${p.name}`,
     `目标：${clip(p.metaProblem || p.name, 200)}`,
     (p as any).overviewBrief ? `用户写的目标与范围：${clip((p as any).overviewBrief, 300)}` : '',
+    keyInfoContext(p.keyInfo, 800),
     since,
     notes ? `现有笔记：\n${notes}` : '还没有笔记。',
     facts ? `还在等验证的事实：\n${facts}` : '',
@@ -126,7 +129,7 @@ export const buildPulseMessages = (p: Project, now = Date.now(), opts: { web?: b
 // ===== 解析与回写 =====
 
 const KINDS: PulseKind[] = ['inspiration', 'clue', 'evidence', 'question'];
-export interface PulseResult { summary: string; observations: Omit<PulseNote, 'id' | 'at'>[] }
+export interface PulseResult { summary: string; observations: Omit<PulseNote, 'id' | 'at'>[]; askUser?: { topic: KeyInfoTopic; question: string } }
 
 export const parsePulse = (text: string, sources: { index: number; title: string; url: string; site?: string }[] = []): PulseResult => {
   const byIndex = new Map(sources.map(s => [Number(s.index), s]));
@@ -151,6 +154,7 @@ export const parsePulse = (text: string, sources: { index: number; title: string
         notable: o.notable === true,
         ...(byIndex.has(Number(o.source)) ? { url: byIndex.get(Number(o.source))!.url, site: byIndex.get(Number(o.source))!.site || hostOf(byIndex.get(Number(o.source))!.url) } : {}),
       })),
+    ...(() => { const a = parseAsks(raw?.askUser ? [raw.askUser] : [])[0]; return a ? { askUser: a } : {}; })(),
   };
 };
 

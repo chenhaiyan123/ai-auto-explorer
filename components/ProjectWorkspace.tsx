@@ -9,7 +9,9 @@ import InquiryPanel from './InquiryPanel';
 import ProjectHome from './ProjectHome';
 import ExplorationWorktree, { type WorktreeActions } from './ExplorationWorktree';
 
-export default function ProjectWorkspace({ project, scopeId, page, teams, onPage, onNote, worktree, busy, onStop, onGenerateReport, generating, onSaveBrief, onSaveSummary, onSaveSuccess, routePanel, onSeekHelp, pulsePanel, onCloudState, openActivation }: {
+export default function ProjectWorkspace({ project, scopeId, page, teams, onPage, onNote, worktree, busy, onStop, onGenerateReport, generating, onSaveBrief, onSaveSummary, onSaveSuccess, routePanel, onSeekHelp, pulsePanel, memoryPanel, onCloudState, openActivation }: {
+  /** AI 记忆 ·「你交代过的」 */
+  memoryPanel?: React.ReactNode;
   onCloudState?: React.ComponentProps<typeof ProjectLifePanel>['onCloudState'];
   openActivation?: number;
   /** 项目总览顶部的「长期关注」卡 */
@@ -45,7 +47,7 @@ export default function ProjectWorkspace({ project, scopeId, page, teams, onPage
         </dl></details>
         <details className="rounded-xl border border-slate-700 p-4"><summary className="cursor-pointer text-sm">{t('项目资料、笔记与研究详情', 'Project materials, notes & research details')}</summary><ProjectHome project={project} scopeId={scope} onPage={onPage} onNote={onNote} onGenerateReport={onGenerateReport} generating={generating} onSaveBrief={onSaveBrief} onSaveSummary={onSaveSummary} routePanel={routePanel} /></details>
       </div>}
-      {(page === 'team' || page === 'facts') && <InquiryPanel key={`${project.id}:${scope}`} project={project} nodes={project.nodes} scopeId={scope} mode={page} teams={teams} onOpenFacts={() => onPage('facts', scope)} onSeekHelp={onSeekHelp} />}
+      {(page === 'team' || page === 'facts') && <InquiryPanel key={`${project.id}:${scope}`} project={project} nodes={project.nodes} scopeId={scope} mode={page} teams={teams} onOpenFacts={() => onPage('facts', scope)} onSeekHelp={onSeekHelp} memoryPanel={scope === 'root' ? memoryPanel : undefined} />}
       {page === 'worktree' && <ExplorationWorktree project={project} actions={worktree} busy={busy} onStop={onStop} />}
     </div>
   </div>;

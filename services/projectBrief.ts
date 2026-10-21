@@ -1,4 +1,5 @@
 import type { ProjectBrief, ProjectCharter, OutlineItem } from '../types';
+import { parseAsks } from './keyInfo';
 
 /**
  * 项目简报 —— 开工前先像一个人那样跟用户把事说清楚：
@@ -37,6 +38,8 @@ export function parseBrief(raw: any): ProjectBrief | undefined {
     shortTerm: clean(raw.shortTerm ?? raw.short, 80),
     longTerm: clean(raw.longTerm ?? raw.long, 80),
   };
+  const asks = parseAsks(raw.asks);
+  if (asks.length) b.asks = asks;
   const filled = [b.approach, b.hard.length, b.support.length || b.resources.length || b.permissions.length, b.shortTerm || b.longTerm].filter(Boolean).length;
   return filled >= 3 ? b : undefined;
 }
@@ -51,6 +54,7 @@ export const BRIEF_PROMPT = `同时给一份**项目简报**，放在 "brief" �
 - budget：大概要花多少，给量级（模型调用费 + 可能要买的外部服务），不确定就说不确定
 - shortTerm：短期（这一两周）实际能做到哪一步——实话实说，做不成就说做不成
 - longTerm：长期靠不断积累、迭代能走到哪里——让他知道短期做不到不要紧
+- asks：开工前要问他的 1-3 个问题，只问**只有他知道、又会改变怎么做**的事（他手上有什么数据和资源、目标人群、能接受的范围……），每个问题一句话、能直接回答；topic 取 goal / support / resources / permissions / other（预算会单独问，这里不要问）
 每一条都要具体到这个项目，不要写谁的项目都能套的话。`;
 
 /** 简报 → 对话卡里的分栏（目录也作为「怎么拆」放进去） */

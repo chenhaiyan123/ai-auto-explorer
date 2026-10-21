@@ -89,7 +89,8 @@ function FactBoard({ workspace, change, onSeekHelp }: { workspace: InquiryWorksp
   </div>;
 }
 
-export default function InquiryPanel({ project, nodes, mode, teams, onOpenFacts, scopeId, onSeekHelp }: {
+export default function InquiryPanel({ project, nodes, mode, teams, onOpenFacts, scopeId, onSeekHelp, memoryPanel }: {
+  memoryPanel?: React.ReactNode;
   /** 事实看板里「找合作 Agent 验证」 */
   onSeekHelp?: (fact: InquiryFact, question: string) => void;
   project: Project | null;
@@ -131,6 +132,7 @@ export default function InquiryPanel({ project, nodes, mode, teams, onOpenFacts,
         {/* 团队设置放最上面、默认展开；和项目经理单聊收起来——日常沟通已经在中间的对话里了 */}
         <AgentTeamSettings open workspace={workspace} projectId={project.id} teams={teams} background={background} busy={running || !!teams.isManaging?.(project.id)} />
         {effectiveId === 'root' && <details className="rounded-xl border border-slate-700 p-3"><summary className="text-sm font-semibold cursor-pointer">{ui("单独和 AI 项目经理沟通")}</summary><div className="mt-3"><ProjectManagerPanel project={project} teams={teams} /></div></details>}
+        {memoryPanel}
         <AgentMemoryPanel workspace={workspace} onOpenFacts={onOpenFacts} />
         <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 space-y-3">
           <h3 className="font-semibold text-sm">{ui("围绕这个问题，持续迭代认知")}</h3>

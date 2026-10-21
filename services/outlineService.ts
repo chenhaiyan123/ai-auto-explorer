@@ -39,7 +39,7 @@ ${userNote ? `用户补充：${userNote}\n` : ''}${existingTitles.length ? `已�
   "items": [
     { "title": "不超过 12 字的标题", "question": "这一篇要回答的那一个问题，不超过 25 字", "why": "为什么值得单独成一篇，不超过 25 字" }
   ],
-  "brief": { "approach": "", "hard": [], "support": [], "resources": [], "permissions": [], "budget": "", "shortTerm": "", "longTerm": "" }
+  "brief": { "approach": "", "hard": [], "support": [], "resources": [], "permissions": [], "budget": "", "shortTerm": "", "longTerm": "", "asks": [{ "topic": "support", "question": "" }] }
 }
 
 要求：
