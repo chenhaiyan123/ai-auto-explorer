@@ -46,7 +46,7 @@ const outline: Outline = { id: 'o1', goal: 'g', createdAt: 0, status: 'draft', i
   { id: '1', title: '一', question: 'q1', state: 'keep' }, { id: '2', title: '二', question: 'q2', state: 'drop' }, { id: '3', title: '三', question: 'q3', state: 'keep' },
 ] };
 const oa = outlineAsk(outline);
-ok(oa.list!.length === 2 && oa.ref === 'o1' && oa.text.includes('2 篇'), 'outline ask lists kept items');
+ok(oa.list!.length === 2 && oa.ref === 'o1' && oa.text.includes('2 步'), 'outline ask lists kept items');
 
 // 上限
 let big: FeedItem[] | undefined;
@@ -67,6 +67,14 @@ ok(bf[0].ask!.options[0].id === 'more' && bf[0].ask!.options[0].label.includes('
 const empty = batchAsk({ ...b, done: [] }, 'empty', 0);
 ok(empty.ask!.options.length === 1 && empty.ask!.options[0].id === 'done', 'nothing left: only ok');
 ok(BATCH_SIZE === 5, 'batch size');
+
+// 「做」：卡在现实那一步 → 接上闭环（找人 / 你去做了告诉我结果）
+const stuckNode = { id: 's1', title: '找 5 位退费家长聊', status: NodeStatus.VALIDATING, confidence: 0, dependencies: [], notes: '', hypothesis: { statement: '家长退费主要因为看不到作品', belief: 'medium', unknown: '找 5 位退费家长各聊 15 分钟', evidence: [], updatedAt: 0 } } as any as ProblemNode;
+const sa = stepAsk(stuckNode, { written: 1, total: 3, next: { nodeId: 'n2', title: '下一步' } } as any);
+ok(sa.ask!.options.some(o => o.id === 'seek') && sa.ask!.input!.optionId === 'result' && sa.detail!.startsWith('要在现实里做：'), 'stuck step offers seek + real result');
+ok(sa.text.includes('第 1/3 步') && !sa.text.includes('篇'), 'step wording is about doing');
+const done = stepAsk({ ...stuckNode, status: NodeStatus.SOLVED } as any, { written: 1, total: 3, next: { nodeId: 'n2', title: '下一步' } } as any);
+ok(done.ask!.options[0].label.startsWith('做下一步') && done.ask!.options.some(o => o.id === 'rewrite'), 'done step: next / redo');
 
 console.log(`agent-feed: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

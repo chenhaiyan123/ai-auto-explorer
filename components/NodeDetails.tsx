@@ -588,9 +588,9 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
         {stub && onWriteThis && (
           <div className="rounded-xl border border-blue-500/30 bg-blue-950/20 p-3 flex items-center gap-3 flex-wrap">
             <div className="flex-1 min-w-0">
-              <div className="text-[12px] font-bold text-blue-200">这一篇还没写</div>
+              <div className="text-[12px] font-bold text-blue-200">这一步还没做</div>
               <div className="text-[11px] text-slate-400 mt-0.5 leading-6">
-                写完会停下来，等你看过再决定下一篇。
+                做完会停下来给你看结果，再决定下一步。
               </div>
             </div>
             <button
@@ -598,7 +598,7 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({
               disabled={isWriting}
               className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[12px] font-bold disabled:opacity-40 transition-colors flex-shrink-0"
             >
-              {isWriting ? '写作中…' : '▶ 写这一篇'}
+              {isWriting ? '推进中…' : '▶ 做这一步'}
             </button>
           </div>
         )}

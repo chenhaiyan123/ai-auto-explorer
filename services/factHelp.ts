@@ -19,6 +19,8 @@ export interface HelpSeek {
   /** 这条事实属于哪个问题（项目核心问题或某篇文章） */
   question: string;
   projectId?: string;
+  /** true = 这不是要验证一条判断，而是一件要在现实里做成的事（拿数据、找人访谈、做实验…） */
+  task?: boolean;
 }
 
 export const seekFromFact = (fact: InquiryFact, question: string, projectId?: string): HelpSeek => ({
@@ -69,7 +71,15 @@ export const matchServices = (services: ServiceListing[], seek: HelpSeek, n = 5)
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
 
 /** 找不到服务时，帮用户把需求先填好（发布前用户仍要自己确认、补预算和截止时间） */
-export const demandDraftFromSeek = (seek: HelpSeek) => ({
+export const demandDraftFromSeek = (seek: HelpSeek) => seek.task ? ({
+  title: clip(`帮忙做：${seek.claim.replace(/\s+/g, ' ').trim()}`, 100),
+  requirements: [
+    '这件事 AI 靠推理做不了，需要有人在现实里做成：',
+    `要做的事：${seek.claim.trim()}`,
+    seek.question ? `属于哪一步：${seek.question.trim()}` : '',
+  ].filter(Boolean).join('\n').slice(0, 5000),
+  acceptance: '交付做完的结果：原始数据、记录、照片或链接，说明怎么做的、在什么条件下做的；做不到的部分说明原因。',
+}) : ({
   title: clip(`验证：${seek.claim.replace(/\s+/g, ' ').trim()}`, 100),
   requirements: [
     '需要独立核验下面这条判断（目前没有可靠证据，AI 推理无法给出结论）：',

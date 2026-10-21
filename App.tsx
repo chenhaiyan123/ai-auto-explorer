@@ -1371,7 +1371,7 @@ const App: React.FC = () => {
           endBatchRef.current?.('empty');
         } else {
           setIsLooping(false);
-          pushFeedItem(feedStatus('🎉 全部写完了，可以生成研究报告', { tone: 'good' }));
+          pushFeedItem(feedStatus('🎉 这一轮的步骤都推进完了，可以生成阶段报告，或者拆下一轮', { tone: 'good' }));
         }
       }
       return;
@@ -1394,7 +1394,7 @@ const App: React.FC = () => {
     patchFeed(f => pushFeed(
       closeAsks(closeAsks(closeAsks(f, 'step', '已继续'), 'unattended', '已继续'), 'halted', '已恢复'),
       // 连写时对话流里只有一行进度（原地更新），不每篇刷一行
-      batchRef.current ? batchProgress(batchRef.current, nodeTitle) : feedStatus(`✍️ 正在写《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid }),
+      batchRef.current ? batchProgress(batchRef.current, nodeTitle) : feedStatus(`🔧 正在做「${nodeTitle}」`, { key: `write:${cid}`, nodeId: cid }),
     ));
     // 用户在对话流里补过一句要求 → 这一次带进提示词（走「已有背景」那一栏），写完清空
     // 再加上 AI 记忆里用户交代过的关键信息（预算、手上的资源、目标人群……），写的时候按用户原话来
@@ -1492,7 +1492,7 @@ const App: React.FC = () => {
           return [...updatedPrev, ...newNodes];
         });
         if (batchRef.current) batchRef.current.newDirs += result.subProblems.length;
-        else pushFeedItem(feedStatus(`🌿《${nodeTitle}》拆出 ${result.subProblems.length} 个新方向`, { detail: result.subProblems.map((sp: any) => sp.title).filter(Boolean).join('、') }));
+        else pushFeedItem(feedStatus(`🌿「${nodeTitle}」做的时候冒出 ${result.subProblems.length} 个新任务`, { detail: result.subProblems.map((sp: any) => sp.title).filter(Boolean).join('、') }));
       }
       
       if (result.triggerDecision) { 
@@ -1557,7 +1557,7 @@ const App: React.FC = () => {
             noteUpdatedAt: Date.now(),
           }));
           finalStatus = NodeStatus.VALIDATING;
-          if (!batchRef.current) pushFeedItem(feedStatus(`🟡《${nodeTitle}》要问现实：${hits[0].label}`, { key: `write:${cid}`, nodeId: cid, detail: hits[0].detail, tone: 'warn' }));
+          if (!batchRef.current) pushFeedItem(feedStatus(`🟡「${nodeTitle}」要到现实里做：${hits[0].label}`, { key: `write:${cid}`, nodeId: cid, detail: hits[0].detail, tone: 'warn' }));
           trackEvent('validation_triggered', { reason: hits[0].reason });
         } else {
           updateNode(cid, withHyp({
@@ -1618,7 +1618,7 @@ const App: React.FC = () => {
         setIsLooping(false);
         isProcessingRef.current = false;
         const isQuota = (e as any)?.name === 'TrialQuotaError';
-        pushFeedItem(feedStatus(`✍️ 没写成《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid, tone: 'warn' }));
+        pushFeedItem(feedStatus(`⚠️ 没做成「${nodeTitle}」`, { key: `write:${cid}`, nodeId: cid, tone: 'warn' }));
         if (batchRef.current) endBatchRef.current?.('halted');
         pushFeedItem(haltedAsk(
           isQuota ? '⚠️ 体验额度用完了，已暂停' : '⚠️ 模型连不上，已暂停',
@@ -1637,7 +1637,7 @@ const App: React.FC = () => {
         setIsLooping(false);
         isProcessingRef.current = false;
         if (batchRef.current) endBatchRef.current?.('halted');
-        pushFeedItem(haltedAsk(`⚠️ 连续 ${MAX_CONSECUTIVE_FAILS} 篇都没写成，已暂停`, `最后一个错误：${(e as Error).message}`));
+        pushFeedItem(haltedAsk(`⚠️ 连续 ${MAX_CONSECUTIVE_FAILS} 步都没做成，已暂停`, `最后一个错误：${(e as Error).message}`));
         trackEvent('explore_halted', { reason: 'consecutive' });
         return;
       }
@@ -1649,7 +1649,7 @@ const App: React.FC = () => {
       if (retryCount < MAX_RETRIES) {
         // 还可以重试，保持UNEXPLORED状态，继续探索
         updateNode(cid, { status: NodeStatus.UNEXPLORED });
-        pushFeedItem(feedStatus(`↻《${nodeTitle}》出错了，自动重试 ${retryCount}/${MAX_RETRIES}`, { key: `write:${cid}`, nodeId: cid, tone: 'warn' }));
+        pushFeedItem(feedStatus(`↻「${nodeTitle}」出错了，自动重试 ${retryCount}/${MAX_RETRIES}`, { key: `write:${cid}`, nodeId: cid, tone: 'warn' }));
         // 不停止循环，让它继续
       } else {
         // 超过重试次数，标记为需要人工处理
@@ -1977,7 +1977,7 @@ ${plan.lead.duty}
         userNote: noteOverride ?? proj?.outline?.userNote,
       });
       if (!outline) {
-        addNotification('warning', '🗺️ 这次没拟出框架', problems.join('；') || '模型没给出可用的方向');
+        addNotification('warning', '🗺️ 这次没拆出步骤', problems.join('；') || '模型没给出可用的方向');
         return;
       }
       const withNote = noteOverride ? setUserNote(outline, noteOverride) : outline;
@@ -1988,7 +1988,7 @@ ${plan.lead.duty}
       setRightChatOpen(true);
       if (problems.length) addNotification('info', '🗺️ 有几条被丢掉了', problems.join('；'));
     } catch (e: any) {
-      addNotification('warning', '🗺️ 拟框架失败', e?.message || String(e));
+      addNotification('warning', '🗺️ 拆步骤失败', e?.message || String(e));
     } finally {
       setOutlineBusy(false);
     }
@@ -2028,7 +2028,7 @@ ${plan.lead.duty}
     trackEvent('outline_confirmed', { items: keptItems(outline).length });
     setOutlineEditing(false);
     closeFeedAsks('outline', '已确认');
-    if (proj?.charter) addNotification('info', `🗺️ 框架定了，一共 ${keptItems(outline).length} 篇`, '每写完一篇会停下来问你。');
+    if (proj?.charter) addNotification('info', `🗺️ 步骤定了，一共 ${keptItems(outline).length} 步`, '每做完一步会停下来给你看结果。');
     return first?.nodeId;
   }, [currentProjectId, projectOutline, patchProject, addNotification, closeFeedAsks]);
 
@@ -2092,7 +2092,7 @@ ${plan.lead.duty}
   const handleStepNext = useCallback(() => {
     setJustWroteId(null);
     setIsLooping(true);
-    closeFeedAsks('step', '继续写下一篇');
+    closeFeedAsks('step', '继续做下一步');
   }, [closeFeedAsks]);
 
   /** 「这篇重写」——用户此刻的判断是方向不对，不是错别字，所以是清空重跑而不是打开编辑器 */
@@ -2114,7 +2114,7 @@ ${plan.lead.duty}
     forceNodeRef.current = justWroteId;
     setJustWroteId(null);
     setIsLooping(true);
-    closeFeedAsks('step', '重写这篇');
+    closeFeedAsks('step', '这步重做');
     trackEvent('step_rewrite');
   }, [justWroteId, updateNode, closeFeedAsks, nodes, projectOutline]);
 
@@ -2126,7 +2126,7 @@ ${plan.lead.duty}
     setJustWroteId(null);
     setSelectedNodeId(nodeId);
     setIsLooping(true);
-    closeFeedAsks('step', '改写指定的一篇');
+    closeFeedAsks('step', '改做指定的一步');
     trackEvent('write_this_one');
   }, [closeFeedAsks]);
 
@@ -2138,7 +2138,7 @@ ${plan.lead.duty}
     setJustWroteId(null);
     setContinuousMode(true);
     setIsLooping(true);
-    closeFeedAsks('step', '改成连写一轮');
+    closeFeedAsks('step', '改成连着做一轮');
     pushFeedItem(batchProgress(batchRef.current));
     trackEvent('batch_start', { target });
   }, [closeFeedAsks, pushFeedItem]);
@@ -2155,7 +2155,7 @@ ${plan.lead.duty}
 
   const handleSwitchToAuto = useCallback(() => {
     setJustWroteId(null);
-    closeFeedAsks('step', '剩下的连写一轮');
+    closeFeedAsks('step', '剩下的连着做一轮');
     startBatch(Math.min(BATCH_SIZE, Math.max(1, remainingCount(nodes))));
   }, [closeFeedAsks, startBatch, nodes]);
 
@@ -2596,6 +2596,27 @@ ${plan.lead.duty}
           forceNodeRef.current = node.id;
           setJustWroteId(null); setIsLooping(true);
           trackEvent('step_rewrite');
+        } else if (optionId === 'seek' && node && currentProjectId) {
+          // AI 做不了的那一件现实里的事 → 去服务广场找人 / Agent 做；没有合适的就帮你起草需求
+          const need = node.hypothesis?.unknown || node.hypothesis?.statement || node.title;
+          setMarketSeek({ factId: node.id, claim: need, scope: '', source: '', question: node.title, projectId: currentProjectId, task: true });
+          setShowServiceMarket(true);
+          setJustWroteId(null);
+          trackEvent('step_seek_help');
+        } else if (optionId === 'result' && node && typed && currentProjectId) {
+          // 闭环：用户在现实里做了 → 结果先进事实看板（待核实），再拿真实结果把这一步重新推进一遍
+          try {
+            inquiryTeams.change(currentProjectId, 'root', currentProject?.metaProblem || currentProject?.name || '', w => addFact(w, { claim: `「${node.title}」现实结果：${typed}`, source: '你在现实里做的（你告诉 AI 的）', excerpt: typed, scope: node.hypothesis?.unknown || '' }));
+          } catch (e) { console.warn('[step] 结果没能记进事实看板', e); }
+          const base = node.outlineItemId ? rewriteStub(node) : '';
+          updateNode(node.id, { status: NodeStatus.UNEXPLORED, validationReason: undefined, noteUpdatedAt: Date.now(),
+            ...(base ? { fullNote: `${base}\n## 🧪 现实结果（${new Date().toLocaleDateString()} 你做完告诉我的）\n${typed}\n` } : {}),
+            userAsk: `用户已经在现实里做了这件事，真实结果是：${typed}。按这个结果重新推进这一步：结果说明了什么、原来的判断要不要改、接下来具体做什么。` });
+          pushFeedItem(feedStatus(`🧪 收到现实结果，按它重新推进「${node.title}」`, { tone: 'good', detail: typed }));
+          markMilestone('funnel_reality_evidence');
+          forceNodeRef.current = node.id;
+          setJustWroteId(null); setIsLooping(true);
+          trackEvent('step_reality_result');
         } else if (optionId === 'stop') {
           setJustWroteId(null); setIsLooping(false);
         } else if (optionId === 'auto') {
@@ -2671,7 +2692,7 @@ ${plan.lead.duty}
         } : p));
         const startId = item.nodeId && nodes.some(n => n.id === item.nodeId && n.status === NodeStatus.UNEXPLORED) ? item.nodeId : undefined;
         const willAsk = !!startId && !!nextPending(kiAfterCharter);
-        pushFeedItem(feedStatus(`📌 记进 AI 记忆：${charterLabel(charter)}${startId && !willAsk ? '。开始写第一篇，写完停下来给你看' : ''}`, { tone: 'good' }));
+        pushFeedItem(feedStatus(`📌 记进 AI 记忆：${charterLabel(charter)}${startId && !willAsk ? '。开始做第一步，做完停下来给你看结果' : ''}`, { tone: 'good' }));
         trackEvent('charter_set', { autoBuy: charter.autoBuyCNY, monthly: charter.monthlyCNY || 0 });
         if (startId && !askNextInfo(currentProjectId, startId)) kickoffWriting(startId);
         break;
@@ -2691,11 +2712,11 @@ ${plan.lead.duty}
         projectsRef.current = projectsRef.current.map(p => (p.id === currentProjectId ? { ...p, keyInfo: list } : p));
         patchProject(currentProjectId, { keyInfo: list });
         trackEvent('key_info', { option: optionId, source: k.source });
-        if (optionId === 'start') { pushFeedItem(feedStatus('好，剩下的以后再问。开始写第一篇，写完停下来给你看')); kickoffWriting(item.nodeId); break; }
+        if (optionId === 'start') { pushFeedItem(feedStatus('好，剩下的以后再问。开始做第一步，做完停下来给你看结果')); kickoffWriting(item.nodeId); break; }
         // 答了 / 跳过：趁你在，接着问下一个；开工前的问完就开始写
         const chain = optionId !== 'later' || !!item.nodeId;
         if (chain && askNextInfo(currentProjectId, item.nodeId)) break;
-        if (item.nodeId) { pushFeedItem(feedStatus('问完了，开始写第一篇，写完停下来给你看')); kickoffWriting(item.nodeId); }
+        if (item.nodeId) { pushFeedItem(feedStatus('问完了，开始做第一步，做完停下来给你看结果')); kickoffWriting(item.nodeId); }
         break;
       }
       case 'outline': {
@@ -2710,7 +2731,7 @@ ${plan.lead.duty}
         break;
       }
     }
-  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline, askNextInfo, kickoffWriting]);
+  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline, askNextInfo, kickoffWriting, inquiryTeams]);
 
   /** 打开决策记录弹窗（打开时就对节点子树做快照，保证删除/失效前的状态被留存） */
   const openDecisionRecorder = useCallback((nodeId: string, trigger: DecisionTrigger, opts?: { pendingAction?: 'delete' | 'invalidate'; presetQuestion?: string; presetOptions?: { label: string; chosen: boolean }[]; skippable?: boolean }) => {
@@ -3299,8 +3320,8 @@ ${plan.lead.duty}
               <button
                 onClick={() => { if (continuousMode) endBatch('stopped'); else startBatch(); }}
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white animate-pulse' : 'bg-slate-700/70 text-slate-200 hover:bg-emerald-600 hover:text-white'}`}
-                title={ui("不用每篇都停下来问你：连着写 5 篇，写完给你一张汇总；再点一次可以随时叫停")}
-              >⏩ {continuousMode ? ui(`连写中 · 点击停止`) : ui("连写一轮")}</button>
+                title={ui("不用每步都停下来问你：连着推进 5 步，做完给你一张汇总；再点一次可以随时叫停")}
+              >⏩ {continuousMode ? ui(`连着做 · 点击停止`) : ui("连做一轮")}</button>
               {/*
                 「先理框架」：没有框架的项目（含所有老项目）也能随时补一个。
                 放在「持续探索」旁边是有意的——这两个按钮代表两种相反的节奏，
@@ -3311,8 +3332,8 @@ ${plan.lead.duty}
                   onClick={() => handleProposeOutline()}
                   disabled={outlineBusy}
                   className="px-2.5 py-1 bg-slate-700/70 hover:bg-blue-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                  title={ui("先只列出打算写哪几篇（不写正文），跟你对齐之后再一篇一篇填")}
-                >🗺️ {outlineBusy ? ui("拟稿中…") : projectOutline ? '重理框架' : '先理框架'}</button>
+                  title={ui("先把事情拆成几步、说清楚怎么做，跟你对齐之后再一步一步推进")}
+                >🗺️ {outlineBusy ? ui("拆解中…") : projectOutline ? '重新拆步骤' : '先拆步骤'}</button>
               )}
               <button onClick={() => setShowGraphModal(true)} className="px-2.5 py-1 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title={ui("打开关系图谱")}>{ui("🕸️ 图谱")}</button>
             </div>
@@ -3365,8 +3386,8 @@ ${plan.lead.duty}
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center px-8 gap-4">
                 <div className="text-5xl opacity-40">📂</div>
-                <div className="text-slate-400 text-sm font-bold">{ui("从左侧选择一个项目里的笔记，或新建项目")}</div>
-                <div className="text-slate-600 text-[11px] max-w-sm leading-relaxed">{ui("一个项目有统一的项目总览，里面放 5–10 个关键方向，每个方向是一篇子笔记、可由一个专门的 Agent 负责。用")}<span className="text-purple-400">{ui("[[标题]]")}</span>{ui("互相关联，点上方")}<span className="text-purple-400">{ui("🕸️ 图谱")}</span>{ui("看关系网络。")}</div>
+                <div className="text-slate-400 text-sm font-bold">{ui("说一件你想做成的事，或者从左侧选一个项目")}</div>
+                <div className="text-slate-600 text-[11px] max-w-sm leading-relaxed">{ui("AI 项目经理先把事情拆成几步、说清楚需要你什么，然后一步一步去做、看结果、再调整；AI 做不了的去服务广场找人，没有就发布需求。")}</div>
                 <button onClick={openNewTask} className="mt-2 px-4 py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">{ui("＋ 新建项目")}</button>
               </div>
             )}

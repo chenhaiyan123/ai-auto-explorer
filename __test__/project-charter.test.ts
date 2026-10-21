@@ -26,7 +26,7 @@ ok(parseBrief({ approach: 'x' }) === undefined, 'too thin → undefined');
 ok(parseBrief(null) === undefined && parseBrief('x') === undefined, 'garbage → undefined');
 
 const secs = briefSections(b!, [{ title: '谁在流失', question: '哪类家长不续费' }]);
-ok(secs.map(s => s.label).join('|') === '大概思路|怎么拆（1 篇）|难点|需要你|需要的资源|需要你授权|预算', 'section order');
+ok(secs.map(s => s.label).join('|') === '大概思路|分几步做（1 步）|难点|需要你|需要的资源|需要你授权|预算', 'section order');
 ok(briefFoot(b!)!.includes('短期：') && briefFoot(b!)!.includes('长期：'), 'foot has short & long');
 ok(briefMarkdown(b!, { autoBuyCNY: 50, confirmedAt: 0 }).includes('单笔 ≤ ¥50'), 'markdown carries charter');
 

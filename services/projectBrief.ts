@@ -46,22 +46,22 @@ export function parseBrief(raw: any): ProjectBrief | undefined {
 
 /** 给模型的那段要求（拼在拟目录的提示词里，一次调用拿到目录 + 简报，省 token） */
 export const BRIEF_PROMPT = `同时给一份**项目简报**，放在 "brief" 字段里。读的人是项目的主人，他不想看长文，只想知道：
-- approach：大概怎么做，一两句话（不超过 60 字）
+- approach：大概怎么把这件事做成，一两句话（不超过 60 字）：先做什么拿到什么结果，再据此做什么
 - hard：最难的 1-3 个地方
 - support：需要他本人做的事或拍的板，1-3 条（比如「确认目标用户是谁」「提供过去一年的续费数据」）
 - resources：需要的资源，1-3 条（数据、人、设备、外部服务）
 - permissions：需要他授权你去做的事，1-3 条（比如「联网搜索」「在服务广场找人做访谈」「发布需求」）
 - budget：大概要花多少，给量级（模型调用费 + 可能要买的外部服务），不确定就说不确定
-- shortTerm：短期（这一两周）实际能做到哪一步——实话实说，做不成就说做不成
-- longTerm：长期靠不断积累、迭代能走到哪里——让他知道短期做不到不要紧
+- shortTerm：短期（这一两周）实际能做成哪一步、拿到什么结果——实话实说，做不成就说做不成
+- longTerm：长期靠一轮轮去做、看结果、调整，能走到哪里——让他知道短期做不到不要紧
 - asks：开工前要问他的 1-3 个问题，只问**只有他知道、又会改变怎么做**的事（他手上有什么数据和资源、目标人群、能接受的范围……），每个问题一句话、能直接回答；topic 取 goal / support / resources / permissions / other（预算会单独问，这里不要问）
-每一条都要具体到这个项目，不要写谁的项目都能套的话。`;
+每一条都要具体到这个项目，不要写谁的项目都能套的话。关键是把事做成、拿到结果，不是写报告。`;
 
-/** 简报 → 对话卡里的分栏（目录也作为「怎么拆」放进去） */
+/** 简报 → 对话卡里的分栏（步骤也作为「分几步做」放进去） */
 export function briefSections(b: ProjectBrief, items: Pick<OutlineItem, 'title' | 'question'>[]): { label: string; items: string[] }[] {
   const s: { label: string; items: string[] }[] = [];
   if (b.approach) s.push({ label: '大概思路', items: [b.approach] });
-  if (items.length) s.push({ label: `怎么拆（${items.length} 篇）`, items: items.map(i => `${i.title}${i.question ? ' —— ' + i.question : ''}`) });
+  if (items.length) s.push({ label: `分几步做（${items.length} 步）`, items: items.map(i => `${i.title}${i.question ? ' —— 做成：' + i.question : ''}`) });
   if (b.hard.length) s.push({ label: '难点', items: b.hard });
   if (b.support.length) s.push({ label: '需要你', items: b.support });
   if (b.resources.length) s.push({ label: '需要的资源', items: b.resources });

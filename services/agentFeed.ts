@@ -77,47 +77,62 @@ const ask = (type: FeedAskType, text: string, options: FeedOption[], opts: Parti
 
 // ===== 各个决策点的问题卡 =====
 
-/** 一篇写完的停顿（原来中间栏顶部的 StepBar） */
+/**
+ * 做完一步的停顿：给结果，问下一步。
+ * 这个产品的关键字是「做」——每一步都要落到结果上；
+ * AI 做不了、必须去现实里做的（拿数据、找人、做实验），就在这里接上闭环：
+ * 找人 / 服务去做，或者你自己去做、把结果告诉我，我按真实结果接着推进。
+ */
 export const stepAsk = (node: ProblemNode, progress: OutlineProgress): FeedItem => {
+  const stuck = node.status === NodeStatus.VALIDATING;
   const flag = node.status === NodeStatus.CONTRADICTED ? '🔴 被现实推翻'
-    : node.status === NodeStatus.VALIDATING ? '🟡 写到头了，要问现实'
-    : '✅ 写完';
+    : stuck ? '🟡 推进到要动真格的地方了'
+    : '✅ 做完';
   const options: FeedOption[] = [];
-  if (progress.next) options.push({ id: 'next', label: `写下一篇《${clip(progress.next.title, 14)}》`, primary: true });
-  options.push({ id: 'rewrite', label: '这篇重写' });
-  options.push({ id: 'stop', label: '先停一下' });
-  if (progress.next) options.push({ id: 'auto', label: '剩下的一次写完' });
-  return ask('step', `${flag}《${node.title}》 · ${progress.written}/${progress.total}`, options, {
+  if (stuck) {
+    options.push({ id: 'seek', label: '🤝 找人 / 服务去做', primary: !progress.next });
+    if (progress.next) options.push({ id: 'next', label: `先做下一步「${clip(progress.next.title, 12)}」`, primary: true });
+    options.push({ id: 'stop', label: '先停一下' });
+  } else {
+    if (progress.next) options.push({ id: 'next', label: `做下一步「${clip(progress.next.title, 14)}」`, primary: true });
+    options.push({ id: 'rewrite', label: '这步重做' });
+    options.push({ id: 'stop', label: '先停一下' });
+    if (progress.next) options.push({ id: 'auto', label: '剩下的连着做' });
+  }
+  const need = node.hypothesis?.unknown;
+  return ask('step', `${flag}「${node.title}」 · 第 ${progress.written}/${progress.total} 步`, options, {
     nodeId: node.id,
     key: `write:${node.id}`,
-    detail: clip(node.hypothesis?.statement || node.notes, 90) || undefined,
-    input: { placeholder: progress.next ? '补一句要求，带进下一篇…' : '说说哪里不对，按这个重写…', optionId: progress.next ? 'next' : 'rewrite' },
+    detail: (stuck && need ? `要在现实里做：${clip(need, 90)}` : clip(node.hypothesis?.statement || node.notes, 90)) || undefined,
+    input: stuck
+      ? { placeholder: '你自己去做了？把结果告诉我，我按真实结果重新推进这一步…', optionId: 'result' }
+      : { placeholder: progress.next ? '补一句要求，带进下一步…' : '说说哪里不对，按这个重做…', optionId: progress.next ? 'next' : 'rewrite' },
   });
 };
 
-/** 探索遇到分支点 / 多次失败（原来的 DecisionModal，只有点进节点才会弹） */
+/** 推进时遇到分支点 / 多次失败（原来的 DecisionModal，只有点进节点才会弹） */
 export const branchAsk = (node: ProblemNode): FeedItem => {
   const failed = (node.pendingDecision?.context || '').includes('失败');
   if (failed) {
-    return ask('branch', `⚠️《${node.title}》自动写了几次都失败了`, [
+    return ask('branch', `⚠️「${node.title}」自动做了几次都失败了`, [
       { id: 'retry', label: '再试一次', primary: true },
-      { id: 'terminate', label: '跳过这篇' },
+      { id: 'terminate', label: '跳过这一步' },
     ], { nodeId: node.id, key: `branch:${node.id}` });
   }
-  return ask('branch', `⚠️《${node.title}》走到岔路口了`, [
-    { id: 'continue', label: '这篇算写完，继续', primary: true },
-    { id: 'terminate', label: '放弃这个方向' },
+  return ask('branch', `⚠️「${node.title}」走到岔路口了`, [
+    { id: 'continue', label: '这步算完成，继续', primary: true },
+    { id: 'terminate', label: '放弃这条路' },
   ], {
     nodeId: node.id,
     key: `branch:${node.id}`,
     detail: clip(node.pendingDecision?.context, 120) || undefined,
-    input: { placeholder: '或者给一个新的子方向…', optionId: 'add_subproblem' },
+    input: { placeholder: '或者给一个新的子任务…', optionId: 'add_subproblem' },
   });
 };
 
 /** 假设被现实推翻（原来自动弹 DecisionRecordModal） */
 export const contradictedAsk = (node: ProblemNode): FeedItem =>
-  ask('contradicted', `🔴《${node.title}》的判断被现实推翻了，接下来？`, [
+  ask('contradicted', `🔴「${node.title}」的判断被现实推翻了，接下来？`, [
     { id: 'pivot', label: '换个假设继续', primary: true },
     { id: 'drop', label: '这个方向作废' },
     { id: 'skip', label: '不记录' },
@@ -130,8 +145,8 @@ export const contradictedAsk = (node: ProblemNode): FeedItem =>
 
 /** 推理到头了，剩下的全在等现实 */
 export const realityAsk = (queue: { id: string; title: string }[]): FeedItem =>
-  ask('reality', `🟡 推理到头了，${queue.length} 篇在等现实验证`, [
-    { id: 'open', label: `去《${clip(queue[0]?.title, 12)}》设计验证`, primary: true },
+  ask('reality', `🟡 光靠 AI 推不动了，${queue.length} 步要到现实里去做`, [
+    { id: 'open', label: `去「${clip(queue[0]?.title, 12)}」安排怎么做`, primary: true },
     { id: 'later', label: '先放着' },
   ], {
     nodeId: queue[0]?.id,
@@ -148,10 +163,10 @@ export const anchorAsk = (anchorId: string, title: string, question: string, nee
 
 /** 无人值守预算用完 */
 export const unattendedAsk = (rounds: number): FeedItem =>
-  ask('unattended', `☕ 已经连着写了 ${rounds} 篇，你还在看吗？`, [
+  ask('unattended', `☕ 已经连着做了 ${rounds} 步，你还在看吗？`, [
     { id: 'go', label: '继续', primary: true },
     { id: 'stop', label: '先停着' },
-  ], { key: 'unattended', detail: '每一篇都会真实调用模型、产生费用，所以先停下来确认一次。' });
+  ], { key: 'unattended', detail: '每一步都会真实调用模型、产生费用，所以先停下来确认一次。' });
 
 /** 模型连不上 / 额度用完 */
 export const haltedAsk = (title: string, detail: string): FeedItem =>
@@ -171,7 +186,7 @@ export const outlineAsk = (outline: Outline): FeedItem => {
   if (b) {
     return ask('outline', '🧭 开工前，我先把这件事想了一遍', [
       { id: 'confirm', label: '思路没问题，往下谈预算', primary: true },
-      { id: 'edit', label: '我要改改目录' },
+      { id: 'edit', label: '我要改改步骤' },
       { id: 'redo', label: '重想一份' },
     ], {
       key: `outline:${outline.id}`,
@@ -181,15 +196,15 @@ export const outlineAsk = (outline: Outline): FeedItem => {
       input: { placeholder: '哪里不对就直接说，比如「目标用户是成人，不是小孩」，我按这个重想…', optionId: 'redo' },
     });
   }
-  return ask('outline', `🗺️ 先拟了 ${items.length} 篇的目录，你看行不行`, [
-    { id: 'confirm', label: '就这样，开始写', primary: true },
+  return ask('outline', `🗺️ 先拆成了 ${items.length} 步，你看行不行`, [
+    { id: 'confirm', label: '就这样，开始做', primary: true },
     { id: 'edit', label: '我要改改' },
     { id: 'redo', label: '重拟一份' },
   ], {
     key: `outline:${outline.id}`,
     ref: outline.id,
     list: items.map(i => ({ title: i.title, sub: i.question })),
-    input: { placeholder: '补充要求，比如「加一篇讲定价」，会按这个重拟…', optionId: 'redo' },
+    input: { placeholder: '补充要求，比如「加一步：先做个定价测试」，会按这个重拆…', optionId: 'redo' },
   });
 };
 
@@ -199,7 +214,7 @@ export const outlineAsk = (outline: Outline): FeedItem => {
  */
 export const charterAsk = (projectId: string, firstNodeId?: string): FeedItem =>
   ask('charter', '💰 最后一件事：遇到 AI 自己做不了的，要花钱找人吗？', [
-    { id: 'cny:0', label: '花钱都先问我，开始写', primary: true },
+    { id: 'cny:0', label: '花钱都先问我，开始做', primary: true },
     ...CHARTER_PRESETS.filter(n => n > 0).map(n => ({ id: `cny:${n}`, label: `单笔 ≤ ¥${n} 可以自己下单` })),
   ], {
     key: `charter:${projectId}`,
@@ -217,37 +232,37 @@ export const infoAsk = (k: KeyInfo, remaining: number, kickoffNodeId?: string): 
     { id: 'skip', label: '不确定，你先按常理假设' },
     { id: 'later', label: '以后再说' },
   ];
-  if (kickoffNodeId) options.push({ id: 'start', label: '先不问了，开始写' });
+  if (kickoffNodeId) options.push({ id: 'start', label: '先不问了，开始做' });
   return ask('info', `🙋 ${k.question}`, options, {
     key: `info:${k.id}`,
     ref: k.id,
     nodeId: kickoffNodeId,
-    detail: `${TOPIC_LABEL[k.topic]} · 你的回答会记进 AI 记忆，之后写笔记、团队讨论都按这个来${remaining > 0 ? `（之后还有 ${remaining} 个问题）` : ''}`,
+    detail: `${TOPIC_LABEL[k.topic]} · 你的回答会记进 AI 记忆，之后做事、团队讨论都按这个来${remaining > 0 ? `（之后还有 ${remaining} 个问题）` : ''}`,
     input: { placeholder: '直接回答…', optionId: 'answer' },
   });
 };
 
-// ===== 连写一轮（原来的「持续探索」）=====
-// 连写时对话流里只占一行（原地更新进度），写完一轮给一张汇总卡；不再每篇刷一行、也不再无限写下去。
+// ===== 连着做一轮（原来的「持续探索」）=====
+// 连着做时对话流里只占一行（原地更新进度），一轮做完给一张汇总卡；不再每步刷一行、也不再无限做下去。
 export interface Batch { id: string; target: number; done: { id: string; title: string; flag?: string }[]; newDirs: number }
 export const BATCH_SIZE = 5;
 
 export const batchProgress = (b: Batch, writing?: string): FeedItem =>
-  status(`⏩ 连写中 ${Math.min(b.done.length + (writing ? 1 : 0), b.target)}/${b.target}${writing ? `：《${clip(writing, 18)}》` : ''}`, {
+  status(`⏩ 连着做 ${Math.min(b.done.length + (writing ? 1 : 0), b.target)}/${b.target}${writing ? `：「${clip(writing, 18)}」` : ''}`, {
     key: `batch:${b.id}`,
-    detail: b.done.length ? `已写：${b.done.map(d => `《${d.title}》`).join('、')}` : undefined,
+    detail: b.done.length ? `已做：${b.done.map(d => `「${d.title}」`).join('、')}` : undefined,
   });
 
 export const batchAsk = (b: Batch, reason: 'done' | 'empty' | 'stopped' | 'halted', remaining: number): FeedItem => {
-  const head = b.done.length === 0 ? '⏹ 这一轮还没写完任何一篇' : `📦 这一轮写了 ${b.done.length} 篇`;
-  const why = reason === 'empty' ? '，能写的都写完了' : reason === 'stopped' ? '（你叫停了）' : reason === 'halted' ? '（中途暂停了）' : '';
+  const head = b.done.length === 0 ? '⏹ 这一轮还没做完任何一步' : `📦 这一轮做了 ${b.done.length} 步`;
+  const why = reason === 'empty' ? '，能推进的都推进了' : reason === 'stopped' ? '（你叫停了）' : reason === 'halted' ? '（中途暂停了）' : '';
   const options: FeedOption[] = [];
-  if (remaining > 0) options.push({ id: 'more', label: `再写一轮（${Math.min(BATCH_SIZE, remaining)} 篇）`, primary: true });
-  if (remaining > 0) options.push({ id: 'step', label: '改成一篇一停' });
+  if (remaining > 0) options.push({ id: 'more', label: `再做一轮（${Math.min(BATCH_SIZE, remaining)} 步）`, primary: true });
+  if (remaining > 0) options.push({ id: 'step', label: '改成一步一停' });
   options.push({ id: 'done', label: remaining > 0 ? '先这样' : '好的', primary: remaining === 0 });
   return ask('batch', head + why, options, {
     key: `batch:${b.id}`,
     list: b.done.map(d => ({ title: `${d.flag || '✅'} ${d.title}` })),
-    detail: [b.newDirs ? `途中新长出 ${b.newDirs} 个方向` : '', remaining ? `还有 ${remaining} 篇没写` : '没有待写的了'].filter(Boolean).join('；'),
+    detail: [b.newDirs ? `途中新长出 ${b.newDirs} 个方向` : '', remaining ? `还有 ${remaining} 步没做` : '没有待做的了'].filter(Boolean).join('；'),
   });
 };

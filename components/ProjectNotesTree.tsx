@@ -155,7 +155,7 @@ const ProjectNotesTree: React.FC<{
                     <span className="text-[12px]">{isOpen ? '📂' : '📁'}</span>
                     <span className={`text-[11px] font-bold truncate ${p.id === currentProjectId ? 'text-purple-300' : 'text-slate-200'}`}>{p.name}</span>
                     <span className="text-[9px] text-slate-600">{level2.length}</span>
-                    {activeProjectIds.includes(p.id) && <span className="relative flex w-2.5 h-2.5 flex-shrink-0 ml-0.5" title={ui("正在写 / AI 团队正在跑")} aria-label={ui("探索中")}><span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" /><span className="relative inline-flex w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,1)]" /></span>}
+                    {activeProjectIds.includes(p.id) && <span className="relative flex w-2.5 h-2.5 flex-shrink-0 ml-0.5" title={ui("正在做 / AI 团队正在跑")} aria-label={ui("探索中")}><span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" /><span className="relative inline-flex w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,1)]" /></span>}
                     {!activeProjectIds.includes(p.id) && aliveProjectIds.includes(p.id) && <span className="inline-flex w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0 ml-0.5 shadow-[0_0_6px_rgba(16,185,129,0.8)]" title={ui("长期关注中：会按节奏醒来看一眼")} aria-label={ui("长期关注中")} />}
                   </button>
                   <button onClick={() => onCleanup(p.id)} className="opacity-0 group-hover:opacity-100 px-1 text-slate-500 hover:text-amber-400 text-[11px]" title={`清理「${p.name}」里待探索且无内容的子问题`}>🧹</button>

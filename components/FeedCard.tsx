@@ -78,9 +78,9 @@ const FeedCard: React.FC<{
           {item.sections.map((sec, i) => (
             <div key={i}>
               <div className="text-[12px] font-semibold text-slate-400">{sec.label}</div>
-              {sec.items.length === 1 && !/^怎么拆/.test(sec.label)
+              {sec.items.length === 1 && !/^分几步做/.test(sec.label)
                 ? <div className="text-slate-200">{sec.items[0]}</div>
-                : <ul className="space-y-0.5">{sec.items.map((x, j) => <li key={j} className="flex gap-1.5 text-slate-200"><span className="text-slate-500 flex-shrink-0">{/^怎么拆/.test(sec.label) ? `${j + 1}.` : '·'}</span><span className="min-w-0">{x}</span></li>)}</ul>}
+                : <ul className="space-y-0.5">{sec.items.map((x, j) => <li key={j} className="flex gap-1.5 text-slate-200"><span className="text-slate-500 flex-shrink-0">{/^分几步做/.test(sec.label) ? `${j + 1}.` : '·'}</span><span className="min-w-0">{x}</span></li>)}</ul>}
             </div>
           ))}
         </div>

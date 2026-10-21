@@ -46,7 +46,7 @@ const KeyInfoPanel: React.FC<{ items: KeyInfo[] | undefined; onChange: (fn: (l: 
     <section className="rounded-xl border border-violet-700/40 bg-violet-950/20 p-3 space-y-2">
       <div className="flex items-baseline gap-2 flex-wrap">
         <span className="text-[13px] font-semibold text-slate-200">🧠 AI 记忆 · 你交代过的</span>
-        <span className="text-[11px] text-slate-500">AI 项目经理会主动问；写笔记、团队讨论都按这里来，不会再问一遍</span>
+        <span className="text-[11px] text-slate-500">AI 项目经理会主动问；做事、团队讨论都按这里来，不会再问一遍</span>
       </div>
       {known.length === 0 && pending.length === 0 && <p className="text-[12px] text-slate-500">还没有。开工时 AI 会先问你几件只有你知道的事（手上有什么、目标是谁、能花多少），答案会记在这里。</p>}
       {known.length > 0 && <ul className="space-y-1.5">{known.map(k => <Row key={k.id} k={k} onChange={onChange} />)}</ul>}

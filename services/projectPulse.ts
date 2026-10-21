@@ -102,7 +102,7 @@ export const buildPulseMessages = (p: Project, now = Date.now(), opts: { web?: b
   const since = life?.lastWakeAt ? `上次醒来：${Math.max(1, Math.round((now - life.lastWakeAt) / HOUR))} 小时前` : '这是第一次醒来';
   const system = [
     '你是这个项目的 AI 项目经理，在长期关注它。现在是一次例行的「醒来看一眼」，不是写报告。',
-    '任务：想想有没有值得记下的新灵感、新线索、可以找来的证据，或者一个该问用户的关键问题。',
+    '任务：想想有没有能帮这件事往前推的新东西——新机会、新线索、可以拿来的数据或证据、可以找的人或服务，或者一个该问用户的关键问题。重点是能推动把事做成的，不是知识点。',
     '规则：',
     '1. 没有真正新的东西就返回空的 observations——这很正常，不要硬凑。',
     '2. 最多 3 条，每条标题 ≤ 20 字、说明 ≤ 80 字。不要重复「已经记过的」。',

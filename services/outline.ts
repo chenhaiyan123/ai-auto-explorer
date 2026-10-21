@@ -68,7 +68,7 @@ export function parseOutline(raw: any, goal: string, now = Date.now()): OutlineP
   const items: OutlineItem[] = [];
   const seen = new Set<string>();
   for (const r of list) {
-    if (items.length >= MAX_ITEMS) { problems.push(`只保留了前 ${MAX_ITEMS} 篇，多出来的先不管`); break; }
+    if (items.length >= MAX_ITEMS) { problems.push(`只保留了前 ${MAX_ITEMS} 步，多出来的先不管`); break; }
     const title = str(r?.title, MAX_TITLE);
     const question = str(r?.question, MAX_QUESTION);
     if (!title) { problems.push('有一条没有标题，已跳过'); continue; }
@@ -167,19 +167,22 @@ const firstKeptId = (o: Outline): string | undefined => keptItems(o)[0]?.id;
 
 // ---------- 确认 → 落成节点 ----------
 
-/** 一篇还没写正文时的占位正文。要能一眼看出"这是待写的"，不能像已经写完了。 */
+/** 一步还没做时的占位。要能一眼看出"这一步还没做"，不能像已经做完了。 */
 export const stubNote = (i: OutlineItem): string =>
-  `# ${i.title}\n\n> 这一篇要回答：${i.question}\n\n_还没开始写。点上面的「▶ 写这一篇」让 AI 填充，或者直接自己写。_\n`;
+  `# ${i.title}\n\n> 做成什么算完成：${i.question}\n\n_还没开始做。点上面的「▶ 做这一步」让 AI 去推进，或者你自己做完把结果记在这里。_\n`;
 
-const STUB_MARK = '_还没开始写。';
+const STUB_MARK = '_还没开始做。';
+/** 老版本的占位（「还没开始写」），旧项目里还有 */
+const OLD_STUB_MARK = '_还没开始写。';
+const hasStub = (l: string) => l.includes(STUB_MARK) || l.includes(OLD_STUB_MARK);
 /** 正文还是框架占位（没被用户改过） */
-export const isStubNote = (text?: string): boolean => !!text && text.includes(STUB_MARK);
+export const isStubNote = (text?: string): boolean => !!text && hasStub(text);
 /**
  * 一篇写完：把占位那一行换成写出来的内容，保留标题和「这一篇要回答」。
  * 之前的 bug：探索结果只写进 notes，笔记页优先显示 fullNote，于是写完了还显示「还没开始写」。
  */
 export const fillStubNote = (fullNote: string, written: string): string =>
-  fullNote.split('\n').filter(l => !l.includes(STUB_MARK)).join('\n').trimEnd() + '\n\n' + (written || '').trim() + '\n';
+  fullNote.split('\n').filter(l => !hasStub(l)).join('\n').trimEnd() + '\n\n' + (written || '').trim() + '\n';
 
 /**
  * 确认框架 → 生成待写的节点（只有标题和问题，没有正文）。
@@ -282,7 +285,7 @@ export function plainProgress(nodes: ProblemNode[]): OutlineProgress {
 /** 框架写进项目总览：让"我们商量好要写哪几篇"这件事有个固定的地方可查 */
 export function outlineToMarkdown(o: Outline, nodes: ProblemNode[] = []): string {
   const byItem = new Map(nodes.map(n => [n.outlineItemId, n] as const));
-  const L: string[] = ['## 🗺️ 这个项目打算写哪几篇', ''];
+  const L: string[] = ['## 🗺️ 这个项目分几步做', ''];
   if (o.userNote) { L.push(`> 你的补充：${o.userNote}`, ''); }
   keptItems(o).forEach((i, idx) => {
     const n = byItem.get(i.id);
@@ -291,8 +294,8 @@ export function outlineToMarkdown(o: Outline, nodes: ProblemNode[] = []): string
   });
   const dropped = droppedItems(o);
   if (dropped.length) {
-    L.push('', '商量下来先不写的：' + dropped.map(i => `~~${i.title}~~`).join('、'));
+    L.push('', '商量下来先不做的：' + dropped.map(i => `~~${i.title}~~`).join('、'));
   }
-  L.push('', '> ● 已写 · ○ 待写。一篇一篇来，写完一篇再决定下一篇。');
+  L.push('', '> ● 已做 · ○ 待做。一步一步来，做完一步看了结果再定下一步。');
   return L.join('\n');
 }

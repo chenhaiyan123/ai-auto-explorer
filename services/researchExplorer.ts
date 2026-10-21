@@ -54,29 +54,31 @@ export async function exploreResearchNode(
     .map(n => `- ${n.title}: ${n.notes?.slice(0, 200) || '未探索'}`)
     .join('\n');
 
-  const prompt = `作为研究助手，深入研究以下问题：
+  const prompt = `你是这个项目的执行负责人。现在推进下面这一步——目标是把事做成、拿到结果，不是写一篇文章。
 
-**研究主题**: ${node.title}
-${node.notes ? `\n**已有背景 / 用户要求**:\n${node.notes.slice(0, 400)}\n` : ''}
-**相关背景**:
+**这一步**: ${node.title}
+${node.notes ? `\n**已有背景 / 用户要求 / 用户交代过的**:\n${node.notes.slice(0, 1600)}\n` : ''}
+**前面几步的结果**:
 ${context || '无'}
 
-请进行系统性研究，返回JSON格式：
+能直接做的就直接做出来（查到的信息、算出来的数、对比表、清单、方案、话术、可以马上拿去试的东西），
+做不了的（要真实数据、要见真人、要做实验、要花钱买服务）就说清楚具体要谁去做什么。
+推进这一步，返回JSON格式：
 {
-  "notes": "详细的研究笔记（300-500字）",
+  "notes": "这一步的执行结果（Markdown，300-500字），分这几段：\n## 这一步要做成什么\n## 做了什么 / 产出\n## 结果与判断\n## 卡在哪、需要什么\n## 下一步行动",
   "confidence": 0.8,
   "keyInsights": ["关键发现1", "关键发现2"],
   "knowledgeCards": [
     {"title": "知识点标题", "content": "知识点内容", "importance": "high/medium/low", "tags": ["标签1"]}
   ],
-  "subProblems": [{"title": "需要进一步研究的子问题"}],
+  "subProblems": [{"title": "接下来要做的子任务"}],
   "needsDecision": false,
   "decisionContext": "如果需要决策，说明原因"
 }`;
 
   try {
     const response = await callGemini([
-      { role: 'system', content: '你是专业的研究助手，擅长系统性分析和知识整理。返回纯JSON，不要markdown代码块。' },
+      { role: 'system', content: '你是务实的项目执行负责人：先把能做的做出来，再说清楚做不了的要谁去做。返回纯JSON，不要markdown代码块。' },
       ...factMessages(facts),
       { role: 'user', content: prompt }
     ], undefined);

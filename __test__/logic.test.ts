@@ -1899,8 +1899,8 @@ t('每条都记住自己落成了哪个节点（后面按框架顺序写要用�
 });
 t('空壳正文一眼能看出是「待写」，不像已经写完了', () => {
   const { nodes } = confirmOutline(mkOutline(), 'root', NOW);
-  ok(nodes[0].fullNote!.includes('还没开始写'));
-  ok(nodes[0].fullNote!.includes('这一篇要回答'));
+  ok(nodes[0].fullNote!.includes('还没开始做'));
+  ok(nodes[0].fullNote!.includes('做成什么算完成'));
 });
 
 console.log('\n== 一篇一篇：下一篇该写谁 ==');
@@ -1983,7 +1983,7 @@ t('划掉的那几条也写在总览里——商量过什么，半年后要查�
   const base = mkOutline();
   const o = dropItem(base, base.items[1].id);
   const { outline, nodes } = confirmOutline(o, 'root', NOW);
-  ok(outlineToMarkdown(outline, nodes).includes('先不写'));
+  ok(outlineToMarkdown(outline, nodes).includes('先不做'));
 });
 
 

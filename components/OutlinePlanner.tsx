@@ -43,13 +43,13 @@ const Row: React.FC<{
           value={title}
           onChange={e => onEdit({ title: e.target.value })}
           className="w-full bg-transparent text-[14px] font-bold text-slate-100 outline-none focus:bg-slate-800/60 rounded px-1 -ml-1"
-          placeholder="这一篇叫什么"
+          placeholder="这一步要做什么（动词开头）"
         />
         <input
           value={question}
           onChange={e => onEdit({ question: e.target.value })}
           className="w-full bg-transparent text-[11px] text-slate-400 outline-none focus:bg-slate-800/60 rounded px-1 -ml-1 mt-0.5"
-          placeholder="这一篇要回答的那一个问题"
+          placeholder="做成什么算完成"
         />
         {why && <div className="text-[10px] text-slate-600 mt-1 px-1">{why}</div>}
       </div>
@@ -65,10 +65,10 @@ const Row: React.FC<{
     </div>
     <div className="flex items-center gap-2 mt-1.5 pl-6">
       {isStart ? (
-        <span className="text-[10px] text-blue-300 font-bold">▶ 从这篇开始写</span>
+        <span className="text-[10px] text-blue-300 font-bold">▶ 从这步开始做</span>
       ) : (
         <button onClick={onStart} className="text-[10px] text-slate-500 hover:text-blue-300 transition-colors">
-          从这篇开始
+          从这步开始
         </button>
       )}
     </div>
@@ -93,11 +93,11 @@ const OutlinePlanner: React.FC<{
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       <div>
-        <h2 className="text-lg font-bold text-white">先把要写哪几篇定下来</h2>
+        <h2 className="text-lg font-bold text-white">先把要做的几步定下来</h2>
         <p className="text-[12px] text-slate-400 mt-1.5 leading-6">
           这一步<b className="text-slate-200">一个字正文都还没写</b>。
-          先看看这几篇对不对——标题直接点进去就能改，不关心的按 ✕ 划掉，
-          缺的自己加。定好之后<b className="text-slate-200">一篇一篇写</b>，写完一篇停一下再决定下一篇。
+          先看看这几步对不对——点进去就能改，不想做的按 ✕ 划掉，
+          缺的自己加。定好之后<b className="text-slate-200">一步一步做</b>，做完一步看了结果再定下一步。
         </p>
         <p className="text-[11px] text-slate-500 mt-2">目标：{outline.goal}</p>
       </div>
@@ -135,7 +135,7 @@ const OutlinePlanner: React.FC<{
           onKeyDown={e => {
             if (e.key === 'Enter' && newTitle.trim()) { onChange(addItem(outline, newTitle)); setNewTitle(''); }
           }}
-          placeholder={kept.length >= MAX_ITEMS ? `最多 ${MAX_ITEMS} 篇，先划掉一条` : '还缺一篇？写个标题按回车'}
+          placeholder={kept.length >= MAX_ITEMS ? `最多 ${MAX_ITEMS} 步，先划掉一条` : '还缺一步？写下要做的事按回车'}
           disabled={kept.length >= MAX_ITEMS}
           className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-[12px] text-slate-200 outline-none focus:border-blue-500/50 disabled:opacity-40"
         />
@@ -143,7 +143,7 @@ const OutlinePlanner: React.FC<{
           onClick={() => { if (newTitle.trim()) { onChange(addItem(outline, newTitle)); setNewTitle(''); } }}
           disabled={!newTitle.trim() || kept.length >= MAX_ITEMS}
           className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-[12px] font-bold disabled:opacity-40"
-        >＋ 加一篇</button>
+        >＋ 加一步</button>
       </div>
 
       {/* 划掉的：留着可撤销，用户才敢下手 */}
@@ -165,7 +165,7 @@ const OutlinePlanner: React.FC<{
         后面每一篇都能用上，不用每篇都重新解释一遍。
       */}
       <div>
-        <label className="text-[11px] text-slate-400">还有什么是我该知道的？（会带进后面每一篇）</label>
+        <label className="text-[11px] text-slate-400">还有什么是我该知道的？（会带进后面每一步）</label>
         <textarea
           value={outline.userNote || ''}
           onChange={e => onChange(setUserNote(outline, e.target.value))}
@@ -195,7 +195,7 @@ const OutlinePlanner: React.FC<{
             不用框架，直接开始
           </button>
         )}
-        <span className="text-[11px] text-slate-600 ml-auto">{ui("共")}{kept.length} 篇</span>
+        <span className="text-[11px] text-slate-600 ml-auto">{ui("共")}{kept.length} 步</span>
       </div>
     </div>
   );

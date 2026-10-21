@@ -126,12 +126,12 @@ export default function ServiceMarket({ projects = [], currentProjectId, onClose
       {seek && tab === 'browse' && !edit && !selected && (() => {
         const matched = ready ? matchServices(state.services, seek) : [];
         return <section className="sm-notice" aria-label={t('为待验证的事实找服务', 'Find help for an unverified fact')}>
-          <strong>{t('为这条判断找人验证', 'Find someone to verify this claim')}</strong>
+          <strong>{seek.task ? t('找人把这件事做成', 'Find someone to get this done') : t('为这条判断找人验证', 'Find someone to verify this claim')}</strong>
           <p>「{seek.claim.length > 120 ? seek.claim.slice(0, 120) + '…' : seek.claim}」</p>
           {ready && matched.length > 0 && <><p>{t('这些服务可能做得了：', 'These services may help:')}</p><div className="sm-actions">{matched.map(s => <button key={s.id} onClick={() => setSelected(s)}>{s.title} · {s.providerName}</button>)}</div></>}
           {ready && !matched.length && <p>{t('服务广场里还没有能做这件事的服务。', 'No published service matches this yet.')}</p>}
           {!ready && <p>{t('在线服务暂时读不到，可以先把它发布成需求。', 'Live services are unavailable right now; you can post it as a need.')}</p>}
-          <div className="sm-actions"><button className="sm-primary" onClick={() => setTab('demands')}>{t('发布验证需求（已帮你填好）', 'Post a verification need (pre-filled)')}</button></div>
+          <div className="sm-actions"><button className="sm-primary" onClick={() => setTab('demands')}>{seek.task ? t('发布需求（已帮你填好）', 'Post a need (pre-filled)') : t('发布验证需求（已帮你填好）', 'Post a verification need (pre-filled)')}</button></div>
         </section>;
       })()}
       {tab === 'browse' && !edit && !selected && <ServiceCapabilities canOffer={ready && !blocked} onOffer={value => { setTemplate(value); setEdit('new'); root.current?.querySelector('.sm-scroll')?.scrollTo({ top: 0 }); }} />}
