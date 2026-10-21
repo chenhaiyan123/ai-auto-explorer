@@ -171,3 +171,28 @@ export const outlineAsk = (outline: Outline): FeedItem => {
     input: { placeholder: '补充要求，比如「加一篇讲定价」，会按这个重拟…', optionId: 'redo' },
   });
 };
+
+// ===== 连写一轮（原来的「持续探索」）=====
+// 连写时对话流里只占一行（原地更新进度），写完一轮给一张汇总卡；不再每篇刷一行、也不再无限写下去。
+export interface Batch { id: string; target: number; done: { id: string; title: string; flag?: string }[]; newDirs: number }
+export const BATCH_SIZE = 5;
+
+export const batchProgress = (b: Batch, writing?: string): FeedItem =>
+  status(`⏩ 连写中 ${Math.min(b.done.length + (writing ? 1 : 0), b.target)}/${b.target}${writing ? `：《${clip(writing, 18)}》` : ''}`, {
+    key: `batch:${b.id}`,
+    detail: b.done.length ? `已写：${b.done.map(d => `《${d.title}》`).join('、')}` : undefined,
+  });
+
+export const batchAsk = (b: Batch, reason: 'done' | 'empty' | 'stopped' | 'halted', remaining: number): FeedItem => {
+  const head = b.done.length === 0 ? '⏹ 这一轮还没写完任何一篇' : `📦 这一轮写了 ${b.done.length} 篇`;
+  const why = reason === 'empty' ? '，能写的都写完了' : reason === 'stopped' ? '（你叫停了）' : reason === 'halted' ? '（中途暂停了）' : '';
+  const options: FeedOption[] = [];
+  if (remaining > 0) options.push({ id: 'more', label: `再写一轮（${Math.min(BATCH_SIZE, remaining)} 篇）`, primary: true });
+  if (remaining > 0) options.push({ id: 'step', label: '改成一篇一停' });
+  options.push({ id: 'done', label: remaining > 0 ? '先这样' : '好的', primary: remaining === 0 });
+  return ask('batch', head + why, options, {
+    key: `batch:${b.id}`,
+    list: b.done.map(d => ({ title: `${d.flag || '✅'} ${d.title}` })),
+    detail: [b.newDirs ? `途中新长出 ${b.newDirs} 个方向` : '', remaining ? `还有 ${remaining} 篇没写` : '没有待写的了'].filter(Boolean).join('；'),
+  });
+};

@@ -16,6 +16,7 @@ import MessageBoard from './components/MessageBoard';
 import { v4 as uuidv4 } from 'uuid';
 import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage, DecisionOption, DecisionTrigger, Probe, FeedItem } from './types';
 import { type HelpSeek, seekFromFact } from './services/factHelp';
+import { batchProgress, batchAsk, BATCH_SIZE, type Batch } from './services/agentFeed';
 import { pushFeed, answerFeed, closeAsks, openAsks, status as feedStatus, stepAsk, branchAsk, contradictedAsk, realityAsk, anchorAsk, unattendedAsk, haltedAsk, outlineAsk } from './services/agentFeed';
 import { DecisionRecordModal, DecisionTimelineModal, DecisionDraft } from './components/DecisionCenter';
 import { captureSubtree, createDecision, forkFromDecision } from './services/decisionService';
@@ -981,12 +982,15 @@ const App: React.FC = () => {
   const isLoopingRef = useRef(false);
   const isProcessingRef = useRef(false);
   useEffect(() => { isLoopingRef.current = isLooping; }, [isLooping]);
-  // 持续探索模式：探索完现有节点后自动提出新方向，永不停（7×24）
+  // 连写一轮：连着写一批（默认 5 篇）再停下来给汇总；不再 7×24 无限写
   const [continuousMode, setContinuousMode] = useState(false);
   const continuousModeRef = useRef(false);
   const isProposingRef = useRef(false);
   const runExplorationCycleRef = useRef<(() => void) | null>(null);
   useEffect(() => { continuousModeRef.current = continuousMode; }, [continuousMode]);
+  // 「连写一轮」：continuousMode 现在表示「正在连写一轮」，batchRef 记这一轮写了什么
+  const batchRef = useRef<Batch | null>(null);
+  const endBatchRef = useRef<((reason: 'done' | 'empty' | 'stopped' | 'halted') => void) | null>(null);
   const MAX_AUTO_NODES = 50;
   // 「总览优先」：探索一开始先写总览，之后每解决若干节点自动刷新一次
   const overviewRefreshingRef = useRef(false);
@@ -1158,7 +1162,7 @@ const App: React.FC = () => {
       setSelectedNodeId(pendingSelectRef.current); pendingSelectRef.current = null;
       setFocusedNodeId(null); setDecision(null); setDecisionDraft(null);
       setNodes(loaded.nodes); setKnowledgeCards(loaded.cards); setResearchFindings(loaded.findings);
-      setIsLooping(false); setContinuousMode(false); setResearchReport(null);
+      batchRef.current = null; setIsLooping(false); setContinuousMode(false); setResearchReport(null);
       recentTitlesRef.current = loaded.nodes.map(n => n.title).slice(-60);
       emptyRoundsRef.current = 0; realityPromptedRef.current = false;
     } else if (projects.length > 0 && !currentProjectId) setCurrentProjectId(projects[0].id);
@@ -1356,12 +1360,11 @@ const App: React.FC = () => {
           trackEvent('explore_halted', { reason: 'awaiting_reality' });
           return;
         }
-        // 持续模式：现有节点都探索完了 → 自主提一个新方向，循环继续（7×24）
-        if (continuousModeRef.current && nodes.filter(n => n.noteType === 'direction' || !n.noteType).length < MAX_AUTO_NODES) {
-          if (!isProposingRef.current) proposeNewDirection();
-          // 不论提方向成功与否，过几秒再来一轮，避免卡死
-          if (isLoopingRef.current) setTimeout(() => { if (isLoopingRef.current) runExplorationCycleRef.current?.(); }, 8000);
-        } else if (!continuousModeRef.current) {
+        // 连写一轮时没得写了：这一轮到此为止，给一张汇总卡。
+        // （以前的 7×24 会在这里自己提新方向无限写下去——产出远超人能看的速度，已去掉；长期关注交给「醒来看一眼」）
+        if (continuousModeRef.current) {
+          endBatchRef.current?.('empty');
+        } else {
           setIsLooping(false);
           pushFeedItem(feedStatus('🎉 全部写完了，可以生成研究报告', { tone: 'good' }));
         }
@@ -1385,7 +1388,8 @@ const App: React.FC = () => {
     // 开始写了 = 之前挂着的「下一篇？/ 还在看吗？/ 已暂停」都过时了，顺手收掉
     patchFeed(f => pushFeed(
       closeAsks(closeAsks(closeAsks(f, 'step', '已继续'), 'unattended', '已继续'), 'halted', '已恢复'),
-      feedStatus(`✍️ 正在写《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid }),
+      // 连写时对话流里只有一行进度（原地更新），不每篇刷一行
+      batchRef.current ? batchProgress(batchRef.current, nodeTitle) : feedStatus(`✍️ 正在写《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid }),
     ));
     // 用户在对话流里补过一句要求 → 这一次带进提示词（走「已有背景」那一栏），写完清空
     const target: ProblemNode = unexplored.userAsk
@@ -1479,7 +1483,8 @@ const App: React.FC = () => {
           
           return [...updatedPrev, ...newNodes];
         });
-        pushFeedItem(feedStatus(`🌿《${nodeTitle}》拆出 ${result.subProblems.length} 个新方向`, { detail: result.subProblems.map((sp: any) => sp.title).filter(Boolean).join('、') }));
+        if (batchRef.current) batchRef.current.newDirs += result.subProblems.length;
+        else pushFeedItem(feedStatus(`🌿《${nodeTitle}》拆出 ${result.subProblems.length} 个新方向`, { detail: result.subProblems.map((sp: any) => sp.title).filter(Boolean).join('、') }));
       }
       
       if (result.triggerDecision) { 
@@ -1544,7 +1549,7 @@ const App: React.FC = () => {
             noteUpdatedAt: Date.now(),
           }));
           finalStatus = NodeStatus.VALIDATING;
-          pushFeedItem(feedStatus(`🟡《${nodeTitle}》要问现实：${hits[0].label}`, { key: `write:${cid}`, nodeId: cid, detail: hits[0].detail, tone: 'warn' }));
+          if (!batchRef.current) pushFeedItem(feedStatus(`🟡《${nodeTitle}》要问现实：${hits[0].label}`, { key: `write:${cid}`, nodeId: cid, detail: hits[0].detail, tone: 'warn' }));
           trackEvent('validation_triggered', { reason: hits[0].reason });
         } else {
           updateNode(cid, withHyp({
@@ -1557,9 +1562,9 @@ const App: React.FC = () => {
           写完一篇就把方向盘交回给人。
           用户跟不上，不是因为笔记写得不好，是因为**没有一个地方让他说「我看完了」**；
           没有这个动作，AI 只能按自己的节奏往下跑，两边的认知就此分叉。
-          「持续探索」是用户明确要求不打扰的模式，那时不停。
+          「连写一轮」是用户明确要求这一批不打扰，那时不停，写完一轮再汇总。
         */
-        const stepping = paceRef.current === 'step' && !continuousModeRef.current;
+        const stepping = !continuousModeRef.current;
         if (stepping) {
           setIsLooping(false);
           setJustWroteId(cid);
@@ -1576,8 +1581,11 @@ const App: React.FC = () => {
             }
             pushFeedItem(stepAsk(written, prog));
           }
-        } else if (finalStatus === NodeStatus.SOLVED) {
-          pushFeedItem(feedStatus(`✅ 写完《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid }));
+        } else if (batchRef.current) {
+          const b = batchRef.current;
+          b.done.push({ id: cid, title: nodeTitle, flag: finalStatus === NodeStatus.CONTRADICTED ? '🔴' : finalStatus === NodeStatus.VALIDATING ? '🟡' : '✅' });
+          if (b.done.length >= b.target) setTimeout(() => endBatchRef.current?.('done'), 0);
+          else pushFeedItem(batchProgress(b));
         }
 
         // 「总览优先」：每解决若干节点，自动刷新一次项目总览，让用户随时看到最新进展
@@ -1603,6 +1611,7 @@ const App: React.FC = () => {
         isProcessingRef.current = false;
         const isQuota = (e as any)?.name === 'TrialQuotaError';
         pushFeedItem(feedStatus(`✍️ 没写成《${nodeTitle}》`, { key: `write:${cid}`, nodeId: cid, tone: 'warn' }));
+        if (batchRef.current) endBatchRef.current?.('halted');
         pushFeedItem(haltedAsk(
           isQuota ? '⚠️ 体验额度用完了，已暂停' : '⚠️ 模型连不上，已暂停',
           isQuota
@@ -1619,6 +1628,7 @@ const App: React.FC = () => {
         updateNode(cid, { status: NodeStatus.UNEXPLORED });
         setIsLooping(false);
         isProcessingRef.current = false;
+        if (batchRef.current) endBatchRef.current?.('halted');
         pushFeedItem(haltedAsk(`⚠️ 连续 ${MAX_CONSECUTIVE_FAILS} 篇都没写成，已暂停`, `最后一个错误：${(e as Error).message}`));
         trackEvent('explore_halted', { reason: 'consecutive' });
         return;
@@ -1713,6 +1723,12 @@ const App: React.FC = () => {
     pendingSelectRef.current = null; // 新项目默认打开项目总览
     setCurrentProjectId(projId);
     setNotesSearch('');
+  }, [notesSearch]);
+  // 「新建项目」= 打开新探索任务输入框（搜索框里已经打的字带进去），而不是直接建一个空项目
+  const openNewTask = useCallback(() => {
+    const q = (notesSearch || '').trim();
+    if (q) { setMetaInput(q); setNotesSearch(''); }
+    setShowMetaModal(true);
   }, [notesSearch]);
 
   // 在某个项目里新增一个关键方向（子节点，带模板）
@@ -2064,13 +2080,33 @@ ${plan.lead.duty}
   }, [closeFeedAsks]);
 
   /** 「剩下的一次写完」：用户明确说不用再停了 */
-  const handleSwitchToAuto = useCallback(() => {
-    if (currentProjectId) patchProject(currentProjectId, { pace: 'auto' });
+  // ===== 连写一轮 =====
+  const remainingCount = (list: ProblemNode[]) => list.filter(n => n.status === NodeStatus.UNEXPLORED && n.noteType !== 'overview' && n.noteType !== 'readme' && n.noteType !== 'simulation').length;
+  const startBatch = useCallback((target = BATCH_SIZE) => {
+    batchRef.current = { id: uuidv4().slice(0, 8), target: Math.max(1, target), done: [], newDirs: 0 };
     setJustWroteId(null);
+    setContinuousMode(true);
     setIsLooping(true);
-    closeFeedAsks('step', '剩下的一次写完');
-    trackEvent('pace_auto');
-  }, [currentProjectId, patchProject, closeFeedAsks]);
+    closeFeedAsks('step', '改成连写一轮');
+    pushFeedItem(batchProgress(batchRef.current));
+    trackEvent('batch_start', { target });
+  }, [closeFeedAsks, pushFeedItem]);
+  const endBatch = useCallback((reason: 'done' | 'empty' | 'stopped' | 'halted') => {
+    const b = batchRef.current;
+    batchRef.current = null;
+    setContinuousMode(false);
+    setIsLooping(false);
+    if (!b) return;
+    pushFeedItem(batchAsk(b, reason, remainingCount(nodes)));
+    trackEvent('batch_end', { reason, done: b.done.length });
+  }, [nodes, pushFeedItem]);
+  useEffect(() => { endBatchRef.current = endBatch; }, [endBatch]);
+
+  const handleSwitchToAuto = useCallback(() => {
+    setJustWroteId(null);
+    closeFeedAsks('step', '剩下的连写一轮');
+    startBatch(Math.min(BATCH_SIZE, Math.max(1, remainingCount(nodes))));
+  }, [closeFeedAsks, startBatch, nodes]);
 
   // ===== 仿真笔记 =====
   // 「先仿真、再探针」：仿真只回答「这个判断对哪个数最敏感」，
@@ -2512,10 +2548,14 @@ ${plan.lead.duty}
         } else if (optionId === 'stop') {
           setJustWroteId(null); setIsLooping(false);
         } else if (optionId === 'auto') {
-          if (currentProjectId) patchProject(currentProjectId, { pace: 'auto' });
-          setJustWroteId(null); setIsLooping(true);
-          trackEvent('pace_auto');
+          setJustWroteId(null);
+          startBatch(Math.min(BATCH_SIZE, Math.max(1, remainingCount(nodes))));
         }
+        break;
+      }
+      case 'batch': {
+        if (optionId === 'more') startBatch(Math.min(BATCH_SIZE, Math.max(1, remainingCount(nodes))));
+        else if (optionId === 'step' && currentProjectId) patchProject(currentProjectId, { pace: 'step' });
         break;
       }
       case 'branch': {
@@ -2779,7 +2819,7 @@ ${plan.lead.duty}
 
   const stopProjectWork = () => {
     isLoopingRef.current = false;
-    setIsLooping(false); setContinuousMode(false);
+    batchRef.current = null; setIsLooping(false); setContinuousMode(false);
     if (currentProjectId) inquiryTeams.stopProject(currentProjectId);
   };
   const restoreProjectStage = (next: Project) => {
@@ -3115,7 +3155,7 @@ ${plan.lead.duty}
             </div>
           </div>
           <div className="flex-1 overflow-hidden">
-            <NotesPanel activeProjectIds={activeProjectIds} aliveProjectIds={aliveProjectIds} projects={projectsView} currentProjectId={currentProjectId} selectedNodeId={selectedNodeId} search={notesSearch} onSearch={setNotesSearch} onOpenNode={openNode} onCreateProject={handleCreateProject} onCreateDirection={handleCreateDirection} onAddChild={handleCreateChild} onBuildTeam={handleBuildTeam} onCleanup={handleCleanupProject} onImport={handleImportMd} onExportVault={handleExportVault} onSaveToFolder={handleSaveToFolder} onOpenPage={openProjectPage} selectedPage={activeProjectPage} />
+            <NotesPanel activeProjectIds={activeProjectIds} aliveProjectIds={aliveProjectIds} projects={projectsView} currentProjectId={currentProjectId} selectedNodeId={selectedNodeId} search={notesSearch} onSearch={setNotesSearch} onOpenNode={openNode} onCreateProject={openNewTask} onCreateDirection={handleCreateDirection} onAddChild={handleCreateChild} onBuildTeam={handleBuildTeam} onCleanup={handleCleanupProject} onImport={handleImportMd} onExportVault={handleExportVault} onSaveToFolder={handleSaveToFolder} onOpenPage={openProjectPage} selectedPage={activeProjectPage} />
           </div>
           </>}
         </aside>
@@ -3136,18 +3176,10 @@ ${plan.lead.duty}
             <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5 flex-shrink-0"><span>💬</span>{ui("对话")}{isLooping && <span className="text-[10px] font-normal text-slate-500 animate-pulse">{ui("· AI 正在写")}</span>}</h3>
             <div className="flex items-center gap-1.5 flex-shrink-0 overflow-x-auto scroll-hide">
               <button
-                onClick={() => {
-                  const next = !continuousMode;
-                  setContinuousMode(next);
-                  setIsLooping(next);
-                  // 开持续探索 = 用户明确说「别停下来问我」，那就把节奏也一起改掉，
-                  // 不然两个设置互相打架：一个说不停跑，一个说每篇都停。
-                  if (next && currentProjectId) patchProject(currentProjectId, { pace: 'auto' });
-                  if (next) { setJustWroteId(null); addNotification('info', '♾️ 持续探索已开启', '不再一篇一停。AI 会连着写下去并自主提出新方向，保持本应用打开即可。'); }
-                }}
+                onClick={() => { if (continuousMode) endBatch('stopped'); else startBatch(); }}
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white animate-pulse' : 'bg-slate-700/70 text-slate-200 hover:bg-emerald-600 hover:text-white'}`}
-                title={ui("7×24 持续探索：探索完会自主提出新方向，永不停（保持应用打开即可）")}
-              >♾️ {continuousMode ? ui("探索中") : ui("持续探索")}</button>
+                title={ui("不用每篇都停下来问你：连着写 5 篇，写完给你一张汇总；再点一次可以随时叫停")}
+              >⏩ {continuousMode ? ui(`连写中 · 点击停止`) : ui("连写一轮")}</button>
               {/*
                 「先理框架」：没有框架的项目（含所有老项目）也能随时补一个。
                 放在「持续探索」旁边是有意的——这两个按钮代表两种相反的节奏，
@@ -3214,7 +3246,7 @@ ${plan.lead.duty}
                 <div className="text-5xl opacity-40">📂</div>
                 <div className="text-slate-400 text-sm font-bold">{ui("从左侧选择一个项目里的笔记，或新建项目")}</div>
                 <div className="text-slate-600 text-[11px] max-w-sm leading-relaxed">{ui("一个项目有统一的项目总览，里面放 5–10 个关键方向，每个方向是一篇子笔记、可由一个专门的 Agent 负责。用")}<span className="text-purple-400">{ui("[[标题]]")}</span>{ui("互相关联，点上方")}<span className="text-purple-400">{ui("🕸️ 图谱")}</span>{ui("看关系网络。")}</div>
-                <button onClick={() => handleCreateProject()} className="mt-2 px-4 py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">{ui("＋ 新建项目")}</button>
+                <button onClick={openNewTask} className="mt-2 px-4 py-2 bg-purple-600/80 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">{ui("＋ 新建项目")}</button>
               </div>
             )}
             </div>

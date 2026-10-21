@@ -33,7 +33,7 @@ const DownloadModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">✕</button>
         </div>
         <p className="text-xs text-slate-400 leading-relaxed mb-6">
-          桌面客户端可直接调用<b className="text-slate-200">本地模型(Ollama)</b>与局域网 IoT 设备(免跨域)，离线本地优先，并支持 <b className="text-slate-200">7×24 持续探索</b>。
+          桌面客户端可直接调用<b className="text-slate-200">本地模型(Ollama)</b>与局域网 IoT 设备(免跨域)，离线本地优先，并支持 <b className="text-slate-200">长期关注（定时醒来看一眼）</b>。
         </p>
 
         <div className="grid grid-cols-3 gap-3">

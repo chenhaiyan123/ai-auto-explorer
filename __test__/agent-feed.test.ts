@@ -1,4 +1,4 @@
-import { pushFeed, answerFeed, closeAsks, openAsks, status, stepAsk, branchAsk, outlineAsk, FEED_LIMIT } from '../services/agentFeed';
+import { pushFeed, answerFeed, closeAsks, openAsks, status, stepAsk, branchAsk, outlineAsk, FEED_LIMIT, batchProgress, batchAsk, BATCH_SIZE, type Batch } from '../services/agentFeed';
 import { NodeStatus, ProblemNode, Outline, FeedItem } from '../types';
 
 let pass = 0, fail = 0;
@@ -52,6 +52,21 @@ ok(oa.list!.length === 2 && oa.ref === 'o1' && oa.text.includes('2 篇'), 'outli
 let big: FeedItem[] | undefined;
 for (let i = 0; i < FEED_LIMIT + 30; i++) big = pushFeed(big, status('s' + i));
 ok(big!.length === FEED_LIMIT && big![big!.length - 1].text === 's' + (FEED_LIMIT + 29), 'capped');
+
+// 连写一轮：一行进度原地更新，结束一张汇总卡
+const b: Batch = { id: 'b1', target: 5, done: [], newDirs: 0 };
+let bf = pushFeed(undefined, batchProgress(b, '甲'));
+b.done.push({ id: 'n1', title: '甲' });
+bf = pushFeed(bf, batchProgress(b));
+b.done.push({ id: 'n2', title: '乙', flag: '🟡' });
+bf = pushFeed(bf, batchProgress(b, '丙'));
+ok(bf.length === 1 && bf[0].text.includes('3/5') && bf[0].text.includes('丙'), 'batch progress stays one line');
+bf = pushFeed(bf, batchAsk(b, 'stopped', 7));
+ok(bf.length === 1 && bf[0].ask?.type === 'batch' && bf[0].list?.length === 2, 'batch summary replaces progress');
+ok(bf[0].ask!.options[0].id === 'more' && bf[0].ask!.options[0].label.includes('5'), 'offers another round');
+const empty = batchAsk({ ...b, done: [] }, 'empty', 0);
+ok(empty.ask!.options.length === 1 && empty.ask!.options[0].id === 'done', 'nothing left: only ok');
+ok(BATCH_SIZE === 5, 'batch size');
 
 console.log(`agent-feed: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

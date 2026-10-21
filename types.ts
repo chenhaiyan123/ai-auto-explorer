@@ -327,7 +327,7 @@ export interface ChatMessage {
 
 // ========== 对话流（Agent Feed）==========
 // 像 Codex 一样：AI 在干什么、需要人拍板的地方，都以一行字 / 一张问题卡出现在右侧聊天记录里。
-export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline';
+export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline' | 'batch';
 export interface FeedOption { id: string; label: string; primary?: boolean }
 export interface FeedItem {
   id: string;
