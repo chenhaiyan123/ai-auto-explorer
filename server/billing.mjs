@@ -14,7 +14,20 @@ export function addCalendarMonth(at) {
   const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
   d.setUTCDate(Math.min(day, end)); return d.getTime();
 }
-const account = (s, owner) => s.accounts[digest(owner)] ||= { proUntil: 0, unlocked: [] };
+const account = (s, owner) => { const a = s.accounts[digest(owner)] ||= { proUntil: 0, unlocked: [] }; a.walletCents ||= 0; return a; };
+const TOPUP_AMOUNTS = PLANS.topup?.amounts || [];
+const titleOf = (sku, amount) => sku === 'pro_month' ? 'HiExplore Pro 月度会员' : sku === 'topup' ? `AI 钱包充值 ¥${amount / 100}` : 'HiExplore 研究成果包';
+const amountOf = (sku, amount) => sku === 'pro_month' ? PLANS.pro.amount : sku === 'topup' ? amount : PLANS.export.amount;
+/** AI 钱包流水：充值 / 兑换模型额度（支出）/ 兑换失败退回 */
+const walletTxView = t => ({ id: t.id, type: t.type, cents: t.cents, balanceAfter: t.balanceAfter, note: t.note, at: t.at });
+const pushWalletTx = (s, owner, type, cents, ref, note, now) => {
+  const a = account(s, owner);
+  a.walletCents += type === 'spend' ? -cents : cents;
+  const tx = { id: `${type}:${ref}`, owner, type, cents, ref, note, balanceAfter: a.walletCents, at: now };
+  (s.walletTx ||= []).push(tx);
+  if (s.walletTx.length > 50000) s.walletTx = s.walletTx.slice(-50000);
+  return tx;
+};
 const entitlement = (s, owner, now) => {
   const a = account(s, owner); const plan = a.proUntil > now ? 'pro' : 'free';
   return { plan, proUntil: a.proUntil, limits: PLANS[plan], unlocked: [...a.unlocked] };
@@ -41,16 +54,45 @@ export class Billing {
     return { ...PLANS, salesEnabled: this.env.BILLING_SALES_ENABLED === 'true', proSalesEnabled: this.env.BILLING_PRO_ENABLED === 'true',
       salesRestricted: this.allowedIdentities().size > 0,
       providers: [{ id: 'alipay', ready: !!this.providers.alipay }, { id: 'wechat', ready: !!this.providers.wechat }],
+      topupEnabled: this.env.BILLING_TOPUP_ENABLED === 'true', topupAmounts: TOPUP_AMOUNTS,
       // Do not sell these draft benefits before the scheduler/export integrations are accepted.
       researchBenefitsReady: false };
   }
   async view(owner) {
     return this.transaction(s => ({ ...entitlement(s, owner, this.now()), purchaseAllowed: this.canPurchase(owner), orders: s.orders.filter(o => o.owner === owner).slice(-30).reverse().map(orderView),
+      wallet: { balanceCents: account(s, owner).walletCents, tx: (s.walletTx || []).filter(t => t.owner === owner).slice(-50).reverse().map(walletTxView) },
       artifacts: s.artifacts.filter(a => a.owner === owner).map(a => ({ id: a.id, title: a.report.title, createdAt: a.createdAt, unlocked: account(s, owner).unlocked.includes(a.id) })) }));
   }
   async adminView() {
     return this.transaction(s => ({ catalog: this.catalog(), orders: s.orders.slice(-100).reverse().map(o => ({ ...orderView(o), owner: o.owner, transactionId: o.transactionId })),
-      totals: { orders: s.orders.length, paid: s.orders.filter(o => o.status === 'paid').length, paidAmount: s.orders.filter(o => o.status === 'paid').reduce((n, o) => n + o.amount, 0) } }));
+      totals: { orders: s.orders.length, paid: s.orders.filter(o => o.status === 'paid').length, paidAmount: s.orders.filter(o => o.status === 'paid').reduce((n, o) => n + o.amount, 0),
+        walletBalance: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0), 0), walletSpent: (s.walletTx || []).filter(t => t.type === 'spend').reduce((n, t) => n + t.cents, 0) - (s.walletTx || []).filter(t => t.type === 'refund').reduce((n, t) => n + t.cents, 0) } }));
+  }
+  /** 当前 AI 钱包余额（分） */
+  async walletBalance(owner) {
+    return this.transaction(s => account(s, owner).walletCents);
+  }
+  /**
+   * 从 AI 钱包扣钱（兑换模型额度时用）。ref 幂等：同一个 ref 只扣一次。
+   * 余额不够直接拒绝，绝不透支。
+   */
+  async spendWallet(owner, cents, ref, note) {
+    if (!Number.isSafeInteger(cents) || cents <= 0 || cents > 1e8 || !/^[a-zA-Z0-9:_-]{8,120}$/.test(ref || '')) throw fail('钱包扣款参数无效');
+    return this.transaction(s => {
+      const done = (s.walletTx || []).find(t => t.id === `spend:${ref}`);
+      if (done) { if (done.owner !== owner || done.cents !== cents) throw fail('扣款标识已用于其他扣款', 409); return walletTxView(done); }
+      const a = account(s, owner);
+      if (a.walletCents < cents) throw Object.assign(fail(`AI 钱包余额不足：还剩 ¥${(a.walletCents / 100).toFixed(2)}，这次需要 ¥${(cents / 100).toFixed(2)}。请先充值`, 402), { code: 'WALLET_EMPTY' });
+      return walletTxView(pushWalletTx(s, owner, 'spend', cents, ref, String(note || '').slice(0, 200), this.now()));
+    });
+  }
+  /** 兑换没成功：把这笔扣款退回钱包（幂等，没扣过就什么都不做） */
+  async refundWallet(owner, ref, note = '兑换失败，退回钱包') {
+    return this.transaction(s => {
+      const spent = (s.walletTx || []).find(t => t.id === `spend:${ref}` && t.owner === owner);
+      if (!spent || (s.walletTx || []).some(t => t.id === `refund:${ref}`)) return null;
+      return walletTxView(pushWalletTx(s, owner, 'refund', spent.cents, ref, note, this.now()));
+    });
   }
   async saveArtifact(owner, body) {
     const text = (v, max) => { if (typeof v !== 'string' || v.length > max) throw fail('成果内容格式错误或超过大小限制'); return v; };
@@ -84,12 +126,18 @@ export class Billing {
   async createOrder(owner, body) {
     if (this.env.BILLING_SALES_ENABLED !== 'true') throw fail('支付尚未开放，当前不会扣款', 503);
     if (!this.canPurchase(owner)) throw fail('支付正在进行小额验收，当前账号暂不能购买', 403);
-    if (!['pro_month', 'export'].includes(body.sku) || !/^[a-zA-Z0-9_-]{16,100}$/.test(body.requestId || '')) throw fail('订单参数无效');
+    if (!['pro_month', 'export', 'topup'].includes(body.sku) || !/^[a-zA-Z0-9_-]{16,100}$/.test(body.requestId || '')) throw fail('订单参数无效');
+    if (body.sku === 'topup') {
+      if (this.env.BILLING_TOPUP_ENABLED !== 'true') throw fail('AI 钱包充值暂未开放，当前不会扣款', 503);
+      if (!TOPUP_AMOUNTS.includes(body.amount)) throw fail('充值金额无效，请选择页面上的档位');
+      if (body.artifactId) throw fail('充值订单不能绑定成果');
+    }
+    const amount = body.sku === 'topup' ? body.amount : undefined;
     const provider = ['alipay', 'wechat'].includes(body.provider) ? this.providers[body.provider] : null; if (!provider) throw fail('该支付方式尚未开放', 503);
     const order = await this.transaction(async s => {
       const previous = s.orders.find(o => o.owner === owner && o.requestId === body.requestId);
       if (previous) {
-        if (previous.sku !== body.sku || previous.provider !== body.provider || previous.artifactId !== (body.artifactId || null)) throw fail('订单请求标识已用于其他商品', 409);
+        if (previous.sku !== body.sku || previous.provider !== body.provider || previous.artifactId !== (body.artifactId || null) || (body.sku === 'topup' && previous.amount !== amount)) throw fail('订单请求标识已用于其他商品', 409);
         return orderView(previous);
       }
       if (body.sku === 'pro_month' && this.env.BILLING_PRO_ENABLED !== 'true') throw fail('Pro 权益仍在接入，暂不收取会员费用', 503);
@@ -97,13 +145,13 @@ export class Billing {
         if (!s.artifacts.some(a => a.id === body.artifactId && a.owner === owner)) throw fail('成果不存在', 404);
         const a = account(s, owner);
         if (a.proUntil > this.now() || a.unlocked.includes(body.artifactId)) throw fail('此成果已可直接下载，无需重复付款', 409);
-      } else if (body.artifactId) throw fail('会员订单不能绑定成果');
+      } else if (body.sku === 'pro_month' && body.artifactId) throw fail('会员订单不能绑定成果');
       // Repeated clicks/tabs reuse one payable order for the same product.
-      const pending = s.orders.find(o => o.owner === owner && o.sku === body.sku && o.artifactId === (body.artifactId || null) && o.status === 'pending' && o.expiresAt > this.now());
+      const pending = s.orders.find(o => o.owner === owner && o.sku === body.sku && o.artifactId === (body.artifactId || null) && (body.sku !== 'topup' || o.amount === amount) && o.status === 'pending' && o.expiresAt > this.now());
       if (pending) return orderView(pending);
       if (s.orders.length >= 10000 || s.orders.filter(o => o.owner === owner && o.createdAt > this.now() - 86400000).length >= 20) throw fail('订单数量达到上限，请稍后再试', 429);
       const o = { id: `HE${randomBytes(15).toString('hex')}`, owner, requestId: body.requestId, sku: body.sku, artifactId: body.artifactId || null,
-        title: body.sku === 'pro_month' ? 'HiExplore Pro 月度会员' : 'HiExplore 研究成果包', amount: body.sku === 'pro_month' ? PLANS.pro.amount : PLANS.export.amount,
+        title: titleOf(body.sku, amount), amount: amountOf(body.sku, amount),
         currency: 'CNY', provider: body.provider, status: 'pending', createdAt: this.now(), expiresAt: this.now() + 15 * 60000 };
       // Persist the immutable order ID before a remote provider can accept it.
       s.orders.push(o); return orderView(o);
@@ -135,6 +183,7 @@ export class Billing {
       if (o.status === 'paid') { if (o.transactionId !== result.transactionId) throw fail('交易号不匹配'); return; }
       const a = account(s, o.owner);
       if (o.sku === 'pro_month') a.proUntil = addCalendarMonth(Math.max(a.proUntil, this.now()));
+      else if (o.sku === 'topup') pushWalletTx(s, o.owner, 'topup', o.amount, o.id, `充值 ¥${o.amount / 100}（${o.provider === 'wechat' ? '微信支付' : '支付宝'}）`, this.now());
       else if (!a.unlocked.includes(o.artifactId)) a.unlocked.push(o.artifactId);
       o.status = 'paid'; o.transactionId = result.transactionId; o.paidAt = this.now(); delete o.checkoutUrl; delete o.codeUrl;
     });

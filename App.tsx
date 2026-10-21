@@ -2887,7 +2887,7 @@ ${plan.lead.duty}
     try { if (!localStorage.getItem('aae-auth-token')) return null; } catch { return null; }
     try {
       const c = await sharedRequest<SharedCatalog>('/shared/catalog');
-      const m = c.models.find(x => x.enabled && x.hasKey && /dashscope(-intl)?\.aliyuncs\.com/.test(x.baseUrl) && (c.balances[x.id]?.available || 0) >= 20000);
+      const m = c.models.find(x => x.enabled && x.hasKey && /dashscope(-intl)?\.aliyuncs\.com/.test(x.baseUrl) && ((c.balances[x.id]?.available || 0) >= 20000 || (!!x.priceCentsPerM && (c.walletCents || 0) >= 100)));
       return m?.id || null;
     } catch { return null; }
   };

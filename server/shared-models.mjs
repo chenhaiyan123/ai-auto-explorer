@@ -25,14 +25,18 @@ export const SEARCH_INPUT_ALLOWANCE = 12000;
 /** 搜索本身按次收费（百炼约 $10/千次），折成 token 计入该模型的额度，防止平台 Key 被白用 */
 export const SEARCH_FEE_TOKENS = 1500;
 // Shared by preflight and dispatch; keep the conservative reservation unchanged.
-function checkFunding(s, owner, body, messages) {
+function reservationOf(s, body, messages) {
   const settings = s.models[body.modelId]; if (!settings?.enabled || !settings.apiKey) throw fail('共享模型尚未启用或已暂停');
   if (body.webSearch === true && !isDashScopeURL(settings.baseUrl)) throw fail('联网搜索目前只支持通义千问（百炼）模型');
+  const maxTokens = Math.min(int(body.maxTokens ?? 2048, 1, 16384, '请求输出上限'), settings.maxOutputTokens);
+  const reserved = Buffer.byteLength(JSON.stringify(messages)) * 2 + 2048 + maxTokens + (body.webSearch === true ? SEARCH_INPUT_ALLOWANCE + SEARCH_FEE_TOKENS : 0);
+  return { settings, maxTokens, reserved };
+}
+function checkFunding(s, owner, body, messages) {
+  const { settings, maxTokens, reserved } = reservationOf(s, body, messages);
   if (s.calls.length >= 10000) throw fail('用量记录已达首版上限，请由运维归档');
   // Uncertain calls keep their reservation in held; only the remaining available balance can fund new work.
   // Never retry the original request or freeze the entire account because a response was lost.
-  const maxTokens = Math.min(int(body.maxTokens ?? 2048, 1, 16384, '请求输出上限'), settings.maxOutputTokens);
-  const reserved = Buffer.byteLength(JSON.stringify(messages)) * 2 + 2048 + maxTokens + (body.webSearch === true ? SEARCH_INPUT_ALLOWANCE + SEARCH_FEE_TOKENS : 0);
   const available = wallet(s, owner, body.modelId)?.available || 0;
   if (available < reserved) throw fail(`此模型额度不足：当前可用 ${available} Token，本次需预留 ${reserved} Token，还差 ${reserved - available} Token。预留是保守上限，不是实际费用；可缩小材料范围、换用有额度的模型或接入自有 API`, 402);
   if (usedToday(s, body.modelId) + reserved > settings.dailyTokens) throw fail(`此共享模型今日额度不足：剩余 ${Math.max(0, settings.dailyTokens - usedToday(s, body.modelId))} Token，本次需预留 ${reserved} Token；等待 UTC 次日重置或选择其他模型`, 429);
@@ -116,7 +120,9 @@ export class SharedModels {
       const apiKey = typeof body.apiKey === 'string' && body.apiKey.trim() ? body.apiKey.trim() : sameTarget ? old.apiKey : '';
       if ((body.enabled && !apiKey) || apiKey.length > 4096) throw fail('开放模型前请填写 API Key；更改接口地址或协议后必须重新填写');
       const model = { id: body.id, label: body.label.trim(), provider: body.provider, baseUrl, model: body.model.trim(), apiKey, enabled: body.enabled,
-        dailyTokens: int(body.dailyTokens, 0, 1e9, '模型每日 Token 上限'), maxOutputTokens: int(body.maxOutputTokens, 64, 16384, '单次输出 Token 上限'), updatedAt: Date.now() };
+        dailyTokens: int(body.dailyTokens, 0, 1e9, '模型每日 Token 上限'), maxOutputTokens: int(body.maxOutputTokens, 64, 16384, '单次输出 Token 上限'),
+        // AI 钱包兑换价：每百万 Token 多少分钱。0 = 不能用钱包余额兑换（只能用分配的额度）
+        priceCentsPerM: int(body.priceCentsPerM ?? old?.priceCentsPerM ?? 0, 0, 1e7, '钱包兑换价'), updatedAt: Date.now() };
       s.models[body.id] = model; return { model: publicModel(model) };
     });
   }
@@ -150,6 +156,37 @@ export class SharedModels {
       int(balance.granted + tokens, 0, 1e12, '累计分配额度');
       balance.granted += tokens; balance.available += tokens;
       const grant = { id: body.requestId, owner, modelId: body.modelId, tokens, note: body.note.trim(), admin, at: Date.now(), type: 'manual-token-grant' };
+      s.grants.push(grant); return { grant };
+    });
+  }
+  /**
+   * 这次请求还差多少 Token（给 AI 钱包自动兑换用）。不预留、不扣任何东西。
+   * 模型没定钱包价（priceCentsPerM=0）就返回 null：这个模型不能用钱包余额。
+   */
+  async fundingGap(owner, body) {
+    if (!idOK(body.modelId)) return null;
+    let messages; try { messages = prepareMessages(body.messages); } catch { return null; }
+    return this.transaction(s => {
+      let r; try { r = reservationOf(s, body, messages); } catch { return null; }
+      const price = s.models[body.modelId].priceCentsPerM || 0;
+      if (!price) return null;
+      const available = wallet(s, owner, body.modelId)?.available || 0;
+      return { modelId: body.modelId, label: s.models[body.modelId].label, need: Math.max(0, r.reserved - available), priceCentsPerM: price };
+    });
+  }
+  /** 钱包里扣了钱之后，把对应的 Token 记到这个模型的额度上。ref 幂等。 */
+  async creditFromWallet(owner, modelId, tokens, ref, cents) {
+    int(tokens, 1, 1e10, '兑换的 Token');
+    return this.transaction(s => {
+      const id = `wallet:${ref}`;
+      const previous = s.grants.find(g => g.id === id);
+      if (previous) return { grant: previous, duplicate: true };
+      if (!s.models[modelId]) throw fail('共享模型不存在');
+      if (s.grants.length >= 10000) throw fail('额度记录已达首版上限，请先由运维归档');
+      const account = s.accounts[accountKey(owner)] ||= { owner, balances: {} };
+      const balance = account.balances[modelId] ||= { granted: 0, available: 0, spent: 0, held: 0 };
+      balance.granted += tokens; balance.available += tokens;
+      const grant = { id, owner, modelId, tokens, cents, note: `AI 钱包兑换 ¥${(cents / 100).toFixed(2)}`, at: Date.now(), type: 'wallet-conversion' };
       s.grants.push(grant); return { grant };
     });
   }

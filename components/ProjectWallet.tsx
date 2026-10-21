@@ -3,6 +3,7 @@ import type { Project } from '../types';
 import { marketRequest, money, orderLabel, type MarketRequest, type MarketState } from '../services/serviceMarket';
 import { walletSummary, serviceSpentThisMonth, fmtCNY, fmtTokens, charterRoom } from '../services/projectWallet';
 import { charterLabel } from '../services/projectBrief';
+import WalletTopup from './WalletTopup';
 
 /**
  * 项目钱包：这个项目花了多少、花在哪、还能花多少。
@@ -55,6 +56,8 @@ const ProjectWallet: React.FC<{
         <span className="text-[11px] text-slate-500">这个项目花了多少、花在哪、还能花多少</span>
       </div>
 
+      <WalletTopup compact />
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div className={cell}>
           <div className="text-[11px] text-slate-400">本月 AI 干活（模型）</div>
@@ -98,7 +101,7 @@ const ProjectWallet: React.FC<{
         {txs.length > limit && <button onClick={() => setLimit(n => n + 20)} className="w-full py-2 text-[11px] text-slate-400 hover:text-slate-200 border-t border-slate-800">查看更早的 {txs.length - limit} 笔</button>}
         {marketError && <p className="px-3 py-2 text-[11px] text-slate-500 border-t border-slate-800" title={marketError}>服务订单暂时读不到（登录正式网站后可见），先只显示模型花费。</p>}
       </div>
-      <p className="text-[11px] text-slate-500 leading-5">模型花费按各家公开价估算，用平台额度的只记 token；服务款目前由双方自行结算，这里只记账，不会自动扣款。</p>
+      <p className="text-[11px] text-slate-500 leading-5">模型花费按各家公开价估算，用平台额度的只记 token；AI 钱包的充值和兑换以服务器记录为准（见上面的钱包流水）。服务款目前由双方自行结算，这里只记账。</p>
     </section>
   );
 };

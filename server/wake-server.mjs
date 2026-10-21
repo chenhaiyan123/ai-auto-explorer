@@ -8,7 +8,8 @@ import { ProjectSync, readWorkspaceBody } from './project-sync.mjs';
 import { mandateError } from './project-mandates.mjs';
 import { ServiceMarket } from './service-market.mjs';
 import { SharedModels } from './shared-models.mjs';
-import { createBilling } from './billing.mjs';
+import { createBilling, PLANS } from './billing.mjs';
+const PLANS_TOPUP_MIN = PLANS.topup?.minConvertCents || 100;
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
 import { createAwakening, enqueueWake, heartbeatAction, configureAwakening, recoverAwakening, runWake, previewWakeRequest, buildModelRequest, parseModelResponse } from './.wake-build/runner.mjs';
 const ROLES = ['manager', 'thinker', 'executor', 'verifier', 'auditor'];
@@ -129,6 +130,25 @@ export async function createWakeServer(options = {}) {
   };
   const shared = new SharedModels(storage, allowedModels, externalFetch, reserveGlobal);
   await shared.initialize();
+  /**
+   * AI 钱包自动兑换：用户的模型额度不够这次请求时，按模型定价从 ¥ 余额里扣一笔（至少 ¥1），
+   * 换成这个模型的 Token 再调用。没定价的模型、余额不够的情况都不扣，交给原来的额度检查报错。
+   * 先扣钱、再加额度；加额度失败就把钱退回去。
+   */
+  const autoFund = async (owner, body) => {
+    const gap = await shared.fundingGap(owner, body);
+    if (!gap || gap.need <= 0) return;
+    const minCents = PLANS_TOPUP_MIN;
+    const cents = Math.max(minCents, Math.ceil(gap.need * gap.priceCentsPerM / 1e6));
+    const tokens = Math.floor(cents * 1e6 / gap.priceCentsPerM);
+    const ref = `conv-${randomUUID()}`;
+    let balance;
+    try { await billing.spendWallet(owner, cents, ref, `兑换「${gap.label}」${tokens.toLocaleString()} Token`); }
+    catch (e) { if (e.code === 'WALLET_EMPTY') { balance = await billing.walletBalance(owner); if (balance > 0) throw e; } return; }
+    try { await shared.creditFromWallet(owner, gap.modelId, tokens, ref, cents); }
+    catch (e) { await billing.refundWallet(owner, ref); throw e; }
+  };
+  const invokeShared = async (owner, body, scope) => { await autoFund(owner, body); return shared.invoke(owner, body, scope); };
   const market = new ServiceMarket(storage);
   const flushMarket = () => market.flushDeliveries(async order => {
     const c = order.context, key = scopeKey(order.buyer, c.projectId, c.branchId, c.scopeId);
@@ -160,6 +180,7 @@ export async function createWakeServer(options = {}) {
     const preview = await previewWakeRequest(previewState);
     if (preview.blockedReason) throw new Error(preview.blockedReason);
     const nextModel = credentials[preview.request?.role || 'manager'] || credentials.default;
+    if (preview.request && nextModel?.provider === 'platform') await autoFund(nextModel.owner, { modelId: nextModel.model, messages: preview.request.messages, maxTokens: preview.request.maxTokens });
     if (preview.request && nextModel?.provider === 'platform') await shared.preflight(nextModel.owner, { modelId: nextModel.model, messages: preview.request.messages, maxTokens: preview.request.maxTokens }, { projectId: state.context.projectId, mandateRevision: m?.revision });
   };
   const admins = new Set((env.WAKE_ADMIN_IDENTITIES || '').split(',').map(x => x.trim()).filter(Boolean));
@@ -180,7 +201,7 @@ export async function createWakeServer(options = {}) {
     const mandate = await shared.projectForScope(key, state.context);
     if (mandate && (settings.provider !== 'platform' || settings.owner !== mandate.owner)) throw mandateError('预算模式仅支持平台共享模型，不能切换自有 API 绕过预算', 'PROJECT_PERMISSION');
     if (settings.provider === 'platform') {
-      const result = await shared.invoke(settings.owner, { requestId: state.runs.find(r => r.id === state.activeRunId)?.steps.at(-1)?.attemptId || randomUUID(), modelId: settings.model, messages, jsonMode: true, maxTokens: state.policy.maxOutputTokens }, { projectId: state.context.projectId, branchId: state.context.branchId, scopeId: state.context.scopeId, role, runId: state.activeRunId, mandateRevision: state.mandate?.revision });
+      const result = await invokeShared(settings.owner, { requestId: state.runs.find(r => r.id === state.activeRunId)?.steps.at(-1)?.attemptId || randomUUID(), modelId: settings.model, messages, jsonMode: true, maxTokens: state.policy.maxOutputTokens }, { projectId: state.context.projectId, branchId: state.context.branchId, scopeId: state.context.scopeId, role, runId: state.activeRunId, mandateRevision: state.mandate?.revision });
       return result.content;
     }
     await reserveGlobal();
@@ -206,10 +227,11 @@ export async function createWakeServer(options = {}) {
     const catalog = await shared.view(owner);
     const preferred = creds.default?.provider === 'platform' ? creds.default.model : '';
     const candidates = catalog.models.filter(m => m.enabled && m.hasKey && /(^|\.)dashscope(-intl)?\.aliyuncs\.com$/.test(new URL(m.baseUrl).hostname));
-    const pick = candidates.find(m => m.id === preferred) || candidates.find(m => (catalog.balances[m.id]?.available || 0) >= 20000);
+    const walletCents = await billing.walletBalance(owner);
+    const pick = candidates.find(m => m.id === preferred) || candidates.find(m => (catalog.balances[m.id]?.available || 0) >= 20000 || (m.priceCentsPerM > 0 && walletCents >= PLANS_TOPUP_MIN));
     if (!pick) return [];
     return collectWeb({ question: state.context.question, query, id: randomUUID,
-      invoke: body => shared.invoke(owner, { ...body, modelId: pick.id }, { projectId: state.context.projectId, branchId: state.context.branchId, scopeId: state.context.scopeId, role: 'manager', tool: 'web_search' }) });
+      invoke: body => invokeShared(owner, { ...body, modelId: pick.id }, { projectId: state.context.projectId, branchId: state.context.branchId, scopeId: state.context.scopeId, role: 'manager', tool: 'web_search' }) });
   };
   const tickKey = async key => {
     if (active.has(key)) return; let state = await storage.read(key); if (!state?.policy.enabled) return;
@@ -337,14 +359,14 @@ export async function createWakeServer(options = {}) {
       if (url.pathname.startsWith('/shared/') || url.pathname.startsWith('/admin/shared')) {
         const isAdmin = admins.has(owner);
         if (url.pathname.startsWith('/admin/') && !isAdmin) { send(403, { error: '需要后台授权的管理员身份' }); return; }
-        if (req.method === 'GET' && url.pathname === '/shared/catalog') { send(200, await shared.view(owner)); return; }
+        if (req.method === 'GET' && url.pathname === '/shared/catalog') { send(200, { ...await shared.view(owner), walletCents: await billing.walletBalance(owner) }); return; }
         if (req.method === 'GET' && url.pathname === '/admin/shared') { send(200, await shared.view(owner, true)); return; }
         if (req.method === 'GET' && url.pathname === '/shared/session') { send(200, { isAdmin, owner }); return; }
         const body = await readBody(req);
         if (req.method === 'PUT' && url.pathname === '/admin/shared/models') { send(200, await shared.saveModel(body)); return; }
         if (req.method === 'POST' && url.pathname === '/admin/shared/grants') { send(200, await shared.grant(owner, body)); return; }
         if (req.method === 'POST' && url.pathname === '/admin/shared/reconcile') { send(200, await shared.reconcile(owner, body)); return; }
-        if (req.method === 'POST' && url.pathname === '/shared/chat') { send(200, await shared.invoke(owner, body)); return; }
+        if (req.method === 'POST' && url.pathname === '/shared/chat') { send(200, await invokeShared(owner, body)); return; }
         send(404, { error: '接口不存在' }); return;
       }
       const projectId = url.searchParams.get('projectId'); const branchId = url.searchParams.get('branchId'); const scopeId = url.searchParams.get('scopeId') || 'root';

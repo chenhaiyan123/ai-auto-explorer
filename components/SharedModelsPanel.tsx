@@ -5,7 +5,7 @@ import { sharedRequest, type SharedCatalog, type SharedModel } from '../services
 
 const field = 'w-full rounded-lg border border-slate-600 bg-slate-950 p-2 text-sm text-slate-100';
 const button = 'rounded-lg bg-slate-700 px-3 py-2 text-sm disabled:opacity-40 hover:bg-slate-600';
-const blankModel = { id: '', label: '', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: '', apiKey: '', enabled: false, dailyTokens: 100000, maxOutputTokens: 4096 };
+const blankModel = { id: '', label: '', provider: 'openai-compatible', baseUrl: 'https://api.deepseek.com', model: '', apiKey: '', enabled: false, dailyTokens: 100000, maxOutputTokens: 4096, priceCentsPerM: 0 };
 function ModelStatus({ model }: { model: SharedModel }) {
   const s = sharedModelStatus(model);
   return <p className={`flex items-center gap-2 text-xs ${s.available ? 'text-emerald-300' : 'text-slate-400'}`}><span aria-hidden="true" className={`h-2 w-2 rounded-full ${s.available ? 'bg-emerald-400' : 'bg-slate-500'}`} />{s.label}</p>;
@@ -25,17 +25,18 @@ export default function SharedModelsPanel({ onClose, embedded = false, personalO
   const refresh = async () => { const s = await sharedRequest<{ owner: string; isAdmin: boolean }>('/shared/session'); setSession({ ...s, isAdmin: s.isAdmin && !personalOnly }); setData(await sharedRequest(s.isAdmin && !personalOnly ? '/admin/shared' : '/shared/catalog')); };
   useEffect(() => { void refresh().catch(e => setError(e.message)); }, []);
   const act = async (fn: () => Promise<void>) => { setBusy(true); setError(''); setMessage(''); try { await fn(); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : '操作失败'); } finally { setBusy(false); } };
-  const edit = (m: SharedModel) => { setModel({ ...m, apiKey: '' }); setEditing(true); setMessage(''); revealForm(); };
+  const edit = (m: SharedModel) => { setModel({ ...m, apiKey: '', priceCentsPerM: m.priceCentsPerM || 0 }); setEditing(true); setMessage(''); revealForm(); };
   return <div className={embedded ? '' : 'fixed inset-0 z-[70] bg-black/70 p-3 sm:p-8 flex items-center justify-center'} role={embedded ? undefined : 'dialog'} aria-modal={embedded ? undefined : true} aria-label={ui("模型与额度")}>
     <div className={embedded ? 'space-y-5 text-slate-200' : 'w-full max-w-5xl max-h-[92vh] overflow-auto rounded-2xl bg-slate-900 border border-slate-700 p-4 sm:p-6 text-slate-200 space-y-5'}>
       <div className="flex justify-between items-center gap-3"><h2 className="text-xl font-semibold">{session?.isAdmin ? ui("模型管理与额度分配") : ui("模型与额度")}</h2>{!embedded && <button className={button} onClick={onClose}>{ui("关闭")}</button>}</div>
       <p className="text-sm text-slate-400">共享模型按供应商返回的输入、输出 Token 合计使用额度，各模型分别记账。自己的 API Key 由供应商直接计费。</p>
-      <p className="text-xs text-amber-200">当前支持管理员手动分配 Token，尚未开通在线充值或人民币余额。请求先预留额度、返回后结算；用量不明时仅保留该笔预留额度，待管理员核对；剩余可用额度仍可使用，不影响其他账号。</p>
+      <p className="text-xs text-amber-200">额度来源：管理员手动分配，或用户 AI 钱包余额自动兑换（只对设了钱包价的模型，每次至少兑换 ¥1）。请求先预留额度、返回后结算；用量不明时仅保留该笔预留额度，待管理员核对；剩余可用额度仍可使用，不影响其他账号。</p>
       {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}{message && <p role="status" className="text-sm text-emerald-300">{message}</p>}
       <button className={button} disabled={busy} onClick={() => act(async () => {})}>{ui("刷新额度与记录")}</button>
       <div className="grid sm:grid-cols-2 gap-3">{data?.models.map(m => <article key={m.id} className="rounded-xl border border-slate-700 p-3 space-y-2">
         <h3 className="font-semibold">{m.label}</h3><ModelStatus model={m} /><p className="text-xs text-slate-400 break-all">{m.model} · {m.provider}</p>
         <p className="text-sm">可用 {(data.balances[m.id]?.available || 0).toLocaleString()} · 已用 {(data.balances[m.id]?.spent || 0).toLocaleString()} · 预留 {(data.balances[m.id]?.held || 0).toLocaleString()} Token</p>
+        <p className="text-xs text-slate-400">{m.priceCentsPerM ? `钱包价 ¥${(m.priceCentsPerM / 100).toFixed(2)} / 百万 Token，额度不够时自动从 AI 钱包兑换` : '未设钱包价：不能用 AI 钱包余额'}</p>
         {session?.isAdmin && <><p className="text-xs text-slate-400">全站今日 {m.usedToday.toLocaleString()} / {m.dailyTokens.toLocaleString()} Token（含预留）</p><button className={button} disabled={busy} onClick={() => edit(m)}>{ui("编辑模型")}</button></>}
       </article>)}</div>
       <p className="text-xs text-slate-400">绿点：已配置 Key 且已开放；灰点：未配置、已暂停或日额度受限。状态不代表实时连接检测，个人余额另行计算。</p>
@@ -55,6 +56,7 @@ export default function SharedModelsPanel({ onClose, embedded = false, personalO
             <label className="block">{ui("供应商模型 ID")}<input className={field} required maxLength={160} value={model.model} onChange={e => setModel({ ...model, model: e.target.value })} placeholder="填写当前账户支持的模型 ID" /></label>
             <label className="block">API Key<input className={field} type="password" autoComplete="new-password" value={model.apiKey} onChange={e => setModel({ ...model, apiKey: e.target.value })} placeholder={editing ? '留空保留原 Key；更改接口后需重新填写' : '仅发送到平台后台，加密保存'} /></label>
             <div className="grid sm:grid-cols-2 gap-3"><label>{ui("全站每日 Token 上限")}<input className={field} type="number" required min={0} max={1000000000} value={model.dailyTokens} onChange={e => setModel({ ...model, dailyTokens: Number(e.target.value) })} /></label><label>{ui("单次最大输出 Token")}<input className={field} type="number" required min={64} max={16384} value={model.maxOutputTokens} onChange={e => setModel({ ...model, maxOutputTokens: Number(e.target.value) })} /></label></div>
+            <label className="block">{ui("AI 钱包兑换价（元 / 百万 Token，0 = 不允许用钱包余额）")}<input className={field} type="number" min={0} max={100000} step={0.01} value={(model.priceCentsPerM || 0) / 100} onChange={e => setModel({ ...model, priceCentsPerM: Math.round(Number(e.target.value) * 100) })} /><span className="text-xs text-slate-500">按供应商成价 + 你的毛利定；按输入输出合计 Token 扣。</span></label>
             <label className="flex items-center gap-2"><input type="checkbox" checked={model.enabled} onChange={e => setModel({ ...model, enabled: e.target.checked })} />{ui("向用户开放此模型")}</label>
             <p className="text-xs text-slate-400">模型日上限按 UTC 日期重置。Token 额度不是金额，不同模型的单位成本不同。保存不会自动发起付费测试。</p>
             <div className="flex gap-2"><button className={button} type="submit">{ui("保存共享模型")}</button>{editing && <button className={button} type="button" onClick={() => { setEditing(false); setModel(blankModel); }}>{ui("取消编辑")}</button>}</div>

@@ -5,9 +5,10 @@ const env = (import.meta as ImportMeta & { env?: Record<string, string | boolean
 export const BILLING_API = String(env?.VITE_BILLING_API || env?.VITE_WAKE_API || '').replace(/\/+$/, '');
 export const BILLING_CHANGED = 'hiexplore-billing-changed';
 export { plans };
-export interface BillingOrder { id: string; sku: 'pro_month' | 'export'; artifactId: string | null; title: string; amount: number; currency: string; provider: string; status: 'pending' | 'paid'; createdAt: number; expiresAt: number; paidAt?: number; checkoutUrl?: string; codeUrl?: string; queryWarning?: string }
-export interface BillingAccount { plan: 'free' | 'pro'; proUntil: number; purchaseAllowed: boolean; unlocked: string[]; orders: BillingOrder[]; artifacts: { id: string; title: string; createdAt: number; unlocked: boolean }[] }
-export interface BillingCatalog { salesEnabled: boolean; proSalesEnabled: boolean; salesRestricted: boolean; providers: { id: string; ready: boolean }[]; researchBenefitsReady: boolean }
+export interface BillingOrder { id: string; sku: 'pro_month' | 'export' | 'topup'; artifactId: string | null; title: string; amount: number; currency: string; provider: string; status: 'pending' | 'paid'; createdAt: number; expiresAt: number; paidAt?: number; checkoutUrl?: string; codeUrl?: string; queryWarning?: string }
+export interface WalletTx { id: string; type: 'topup' | 'spend' | 'refund'; cents: number; balanceAfter: number; note: string; at: number }
+export interface BillingAccount { wallet?: { balanceCents: number; tx: WalletTx[] }; plan: 'free' | 'pro'; proUntil: number; purchaseAllowed: boolean; unlocked: string[]; orders: BillingOrder[]; artifacts: { id: string; title: string; createdAt: number; unlocked: boolean }[] }
+export interface BillingCatalog { topupEnabled?: boolean; topupAmounts?: number[]; salesEnabled: boolean; proSalesEnabled: boolean; salesRestricted: boolean; providers: { id: string; ready: boolean }[]; researchBenefitsReady: boolean }
 export interface ReportSnapshot { title: string; abstract: string; sections: { title: string; content: string }[]; conclusions: string[]; openQuestions: string[]; references: string[] }
 export async function billingRequest<T>(path: string, method = 'GET', body?: unknown, publicRequest = false): Promise<T> {
   if (platform() === 'ios' && path === '/billing/orders' && method === 'POST') throw new Error(t('iOS 版暂未开放应用内购买', 'In-app purchases are not available in this iOS version'));
