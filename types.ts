@@ -371,6 +371,8 @@ export interface ProjectCharter {
   /** 用户的原话 */
   note?: string;
   confirmedAt: number;
+  /** 允许 AI 项目经理在服务广场接单（用 AI 能完成的调研 / 写作类需求赚钱，收入进 AI 钱包） */
+  allowJobs?: boolean;
 }
 
 /**

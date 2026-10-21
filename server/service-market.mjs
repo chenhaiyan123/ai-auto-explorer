@@ -19,6 +19,8 @@ const publicOrder = (o, actor) => {
 };
 const receipt = input => {
   const summary = text(input.summary, 5000), source = text(input.source, 1200);
+  // 纯文字交付（比如 AI 写的调研报告）：内容就在摘要里，没有外部链接
+  if (source === 'inline') return { summary, source: '', limitation: text(input.limitation, 1200), at: Date.now() };
   if (!/^https:\/\//.test(source)) throw fail('交付依据需要 HTTPS 链接');
   const url = new URL(source);
   if (url.username || url.password) throw fail('交付链接不能包含登录凭据');
@@ -54,7 +56,7 @@ export class ServiceMarket {
     return this.tx(s => {
       this.checkActor(s, actor);
       const token = actor.agent ? s.tokens.find(t => t.id === actor.tokenId) : null;
-      return { settlement: 'external', deviceControl: false,
+      return { settlement: 'external', walletSettlement: true, deviceControl: false,
         agentAuthorization: token ? { permissions: token.permissions || [], maxOrderCents: token.maxOrderCents || 0, remainingQuoteCents: Math.max(0, (token.totalBudgetCents || 0) - (token.committedCents || 0)), expiresAt: token.expiresAt } : null,
         demands: s.demands.filter(d => d.status === 'open' || d.owner === actor.owner || d.bids.some(b => b.owner === actor.owner)).map(d => demandView(d, actor)),
         services: s.services.filter(x => x.published || (!actor.agent && x.owner === actor.owner)).map(x => publicService(x, actor.agent ? null : actor.owner)),
@@ -124,7 +126,44 @@ export class ServiceMarket {
       s.orders.push(o); return publicOrder(o, actor);
     }, true);
   }
-  async action(actor, id, input) {
+  /** 下单确认前看一眼订单金额（给钱包担保用）。只有买方能看。 */
+  peekOrder(actor, id) {
+    return this.tx(s => {
+      const o = s.orders.find(o => o.id === id && o.buyer === actor.owner);
+      return o ? { id: o.id, totalCents: o.totalCents, status: o.status, title: o.quote.title } : null;
+    });
+  }
+  peekBid(actor, demandId, bidId) {
+    return this.tx(s => {
+      const d = s.demands.find(d => d.id === demandId && d.owner === actor.owner);
+      const b = d?.bids.find(b => b.id === bidId);
+      return d && b ? { priceCents: b.priceCents, title: d.title, status: d.status } : null;
+    });
+  }
+  /**
+   * 钱包担保订单的结算待办：已完成的要放款给卖方、取消/拒绝的要退款给买方。
+   * 交付后买方 7 天不验收，自动算验收完成（卖方的钱不会被一直卡住）。
+   */
+  escrowDue(now = Date.now()) {
+    return this.tx(s => {
+      let changed = false;
+      for (const o of s.orders) {
+        if (o.settlement?.method !== 'wallet' || o.settlement.escrowSettled) continue;
+        if (o.status === 'delivered' && now - o.updatedAt > 7 * 86400000) {
+          o.status = 'completed'; o.revision++; o.updatedAt = now; changed = true;
+          o.history.push({ action: 'complete', by: 'system', at: now, note: '交付后 7 天买方未验收，自动完成' });
+        }
+      }
+      return { changed, due: s.orders.filter(o => o.settlement?.method === 'wallet' && !o.settlement.escrowSettled && ['completed', 'cancelled', 'rejected'].includes(o.status))
+        .map(o => ({ id: o.id, ref: o.settlement.escrowRef, outcome: o.status === 'completed' ? 'release' : 'refund', seller: o.seller })) };
+    }, true);
+  }
+  /** 这笔担保款有没有挂到某个订单上（下单失败要退款前先确认，防止并发重试把成功订单的钱退掉） */
+  hasEscrow(ref) { return this.tx(s => s.orders.some(o => o.settlement?.escrowRef === ref)); }
+  markEscrowSettled(id) {
+    return this.tx(s => { const o = s.orders.find(o => o.id === id); if (o?.settlement) { o.settlement.escrowSettled = true; o.settlement.settledAt = Date.now(); } }, true);
+  }
+  async action(actor, id, input, opts = {}) {
     return this.tx(s => {
       this.checkActor(s, actor);
       const o = s.orders.find(o => o.id === id && (o.buyer === actor.owner || (o.seller === actor.owner && !!o.sharedAt)));
@@ -146,16 +185,21 @@ export class ServiceMarket {
         const service = s.services.find(x => x.id === o.serviceId && x.published);
         if (!service || service.revision !== o.quote.revision) throw fail('服务或报价已变化，请取消后重新申请', 409);
         commitBudget(s, actor, o.totalCents);
+        // 用 AI 钱包付款：钱已经由后端从买方钱包扣出并冻结（opts.escrowRef），客户端不能自己声称已付
+        if (opts.escrowRef) o.settlement = { method: 'wallet', escrowRef: opts.escrowRef, escrowSettled: false };
         o.sellerTokenId = service.tokenId || null;
         o.buyerContact = text(input.contact || '', 300, !actor.agent); o.sharedAt = Date.now(); o.sellerContact = service.contact; o.status = 'requested';
       } else if (a === 'accept') { requireState('seller', ['requested']); o.status = 'accepted'; }
       else if (a === 'reject') { requireState('seller', ['requested']); note = text(input.note, 1200); o.status = 'rejected'; }
       else if (a === 'cancel') {
         if (!['proposed', 'requested', 'accepted', 'delivered'].includes(o.status)) throw fail('订单不能取消', 409);
+        // 钱包担保的订单：卖方接单后，买方不能单方面取消把钱拿回去；有争议走验收 / 返工或联系平台
+        if (o.settlement?.method === 'wallet' && buyer && !['proposed', 'requested'].includes(o.status)) throw fail('服务方已接单，钱包担保订单不能由买方取消；请验收或要求返工，有争议联系平台', 409);
         note = text(input.note, 1200); o.status = 'cancelled'; // Cancellation is never a refund claim.
       } else if (a === 'deliver') { requireState('seller', ['accepted']); o.delivery = receipt(input); o.deliveryVersion++; o.eventSynced = false; o.status = 'delivered'; }
       else if (a === 'rework') { requireState('buyer', ['delivered']); note = text(input.note, 1200); o.status = 'accepted'; }
       else if (a === 'complete') { requireState('buyer', ['delivered']); note = text(input.note, 1200); o.status = 'completed'; }
+      else if ((a === 'report_paid' || a === 'confirm_received') && o.settlement?.method === 'wallet') throw fail('这单用 AI 钱包担保付款，验收后自动结算，不需要线下确认', 409);
       else if (a === 'report_paid') { requireState('buyer', ['accepted', 'delivered', 'completed']); o.settlement.buyerReportedPaid = true; }
       else if (a === 'confirm_received') { requireState('seller', ['accepted', 'delivered', 'completed']); o.settlement.sellerReportedReceived = true; }
       else throw fail('未知订单操作');
@@ -167,7 +211,7 @@ export class ServiceMarket {
   }
   publishDemand(actor, input) { return this.tx(s => { this.checkActor(s, actor); return publishDemand(s, actor, input); }, true); }
   respondDemand(actor, id, input) { return this.tx(s => { this.checkActor(s, actor); return respondDemand(s, actor, id, input); }, true); }
-  demandAction(actor, id, input) { return this.tx(s => { this.checkActor(s, actor); return demandAction(s, actor, id, input); }, true); }
+  demandAction(actor, id, input, opts = {}) { return this.tx(s => { this.checkActor(s, actor); return demandAction(s, actor, id, input, opts); }, true); }
   async flushDeliveries(enqueue) {
     const pending = await this.tx(s => s.orders.filter(o => ['delivered', 'completed'].includes(o.status) && o.context && !o.eventSynced).map(o => ({ ...o })));
     for (const o of pending) {

@@ -19,10 +19,11 @@ const TOPUP_AMOUNTS = PLANS.topup?.amounts || [];
 const titleOf = (sku, amount) => sku === 'pro_month' ? 'HiExplore Pro 月度会员' : sku === 'topup' ? `AI 钱包充值 ¥${amount / 100}` : 'HiExplore 研究成果包';
 const amountOf = (sku, amount) => sku === 'pro_month' ? PLANS.pro.amount : sku === 'topup' ? amount : PLANS.export.amount;
 /** AI 钱包流水：充值 / 兑换模型额度（支出）/ 兑换失败退回 */
+const sumTx = (s, f) => (s.walletTx || []).filter(f).reduce((n, t) => n + t.cents, 0);
 const walletTxView = t => ({ id: t.id, type: t.type, cents: t.cents, balanceAfter: t.balanceAfter, note: t.note, at: t.at });
 const pushWalletTx = (s, owner, type, cents, ref, note, now) => {
   const a = account(s, owner);
-  a.walletCents += type === 'spend' ? -cents : cents;
+  a.walletCents += type === 'spend' || type === 'escrow' ? -cents : cents;
   const tx = { id: `${type}:${ref}`, owner, type, cents, ref, note, balanceAfter: a.walletCents, at: now };
   (s.walletTx ||= []).push(tx);
   if (s.walletTx.length > 50000) s.walletTx = s.walletTx.slice(-50000);
@@ -66,7 +67,8 @@ export class Billing {
   async adminView() {
     return this.transaction(s => ({ catalog: this.catalog(), orders: s.orders.slice(-100).reverse().map(o => ({ ...orderView(o), owner: o.owner, transactionId: o.transactionId })),
       totals: { orders: s.orders.length, paid: s.orders.filter(o => o.status === 'paid').length, paidAmount: s.orders.filter(o => o.status === 'paid').reduce((n, o) => n + o.amount, 0),
-        walletBalance: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0), 0), walletSpent: (s.walletTx || []).filter(t => t.type === 'spend').reduce((n, t) => n + t.cents, 0) - (s.walletTx || []).filter(t => t.type === 'refund').reduce((n, t) => n + t.cents, 0) } }));
+        walletBalance: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0), 0), walletSpent: sumTx(s, t => t.type === 'spend') - sumTx(s, t => t.id.startsWith('refund:')),
+        walletEscrow: sumTx(s, t => t.type === 'escrow') - sumTx(s, t => t.id.startsWith('escrowback:')) - (s.walletTx || []).filter(t => t.id.startsWith('income:')).reduce((n, t) => n + ((s.walletTx || []).find(e => e.id === `escrow:${t.ref}`)?.cents || 0), 0) } }));
   }
   /** 当前 AI 钱包余额（分） */
   async walletBalance(owner) {
@@ -84,6 +86,42 @@ export class Billing {
       const a = account(s, owner);
       if (a.walletCents < cents) throw Object.assign(fail(`AI 钱包余额不足：还剩 ¥${(a.walletCents / 100).toFixed(2)}，这次需要 ¥${(cents / 100).toFixed(2)}。请先充值`, 402), { code: 'WALLET_EMPTY' });
       return walletTxView(pushWalletTx(s, owner, 'spend', cents, ref, String(note || '').slice(0, 200), this.now()));
+    });
+  }
+  /**
+   * 服务广场用钱包付款：下单时先从买方钱包扣出、冻结在平台（escrow）。ref = 订单号，幂等。
+   * 余额不够直接拒绝。
+   */
+  async holdEscrow(owner, cents, ref, note) {
+    if (!Number.isSafeInteger(cents) || cents <= 0 || cents > 1e8 || !/^[a-zA-Z0-9:_-]{8,120}$/.test(ref || '')) throw fail('担保付款参数无效');
+    return this.transaction(s => {
+      const done = (s.walletTx || []).find(t => t.id === `escrow:${ref}`);
+      if (done) { if (done.owner !== owner || done.cents !== cents) throw fail('订单担保金额不一致', 409); return walletTxView(done); }
+      const a = account(s, owner);
+      if (a.walletCents < cents) throw Object.assign(fail(`AI 钱包余额不足：还剩 ¥${(a.walletCents / 100).toFixed(2)}，这单需要 ¥${(cents / 100).toFixed(2)}。请先充值`, 402), { code: 'WALLET_EMPTY' });
+      return walletTxView(pushWalletTx(s, owner, 'escrow', cents, ref, String(note || '').slice(0, 200), this.now()));
+    });
+  }
+  /**
+   * 担保款结算（幂等）：验收完成 → 打给卖方钱包（收入只能在平台内花，不能提现）；取消 / 拒绝 → 退回买方。
+   * 没有担保过的订单什么都不做。平台抽成 MARKET_FEE_BPS（万分比，默认 0）。
+   */
+  async settleEscrow(ref, outcome, seller) {
+    return this.transaction(s => {
+      const held = (s.walletTx || []).find(t => t.id === `escrow:${ref}`);
+      if (!held) return null;
+      if ((s.walletTx || []).some(t => t.id === `income:${ref}` || t.id === `escrowback:${ref}`)) return null;
+      if (outcome === 'release') {
+        if (!seller) throw fail('缺少收款方');
+        const bps = Math.min(5000, Math.max(0, Number(this.env.MARKET_FEE_BPS || 0) | 0));
+        const fee = Math.floor(held.cents * bps / 10000);
+        const tx = pushWalletTx(s, seller, 'income', held.cents - fee, ref, `接单收入${fee ? `（平台服务费 ¥${(fee / 100).toFixed(2)}）` : ''}`, this.now());
+        tx.id = `income:${ref}`;
+        return walletTxView(tx);
+      }
+      const tx = pushWalletTx(s, held.owner, 'refund', held.cents, ref, '订单取消 / 被拒，担保款退回', this.now());
+      tx.id = `escrowback:${ref}`;
+      return walletTxView(tx);
     });
   }
   /** 兑换没成功：把这笔扣款退回钱包（幂等，没扣过就什么都不做） */

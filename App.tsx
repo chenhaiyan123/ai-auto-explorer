@@ -20,6 +20,8 @@ import { batchProgress, batchAsk, BATCH_SIZE, charterAsk, infoAsk, type Batch } 
 import { keyInfoContext, questionsFromBrief, addPending, nextPending, pendingCount, markAsked, answerInfo, skipInfo, remember } from './services/keyInfo';
 import KeyInfoPanel from './components/KeyInfoPanel';
 import ProjectWallet from './components/ProjectWallet';
+import { ensurePmToken, pmBuyOrPost, pmWorkJobs } from './services/pmAgent';
+import { money } from './services/serviceMarket';
 import { onModelUsage, meterFor, addModelSpend, reportModelUsage } from './services/projectWallet';
 import { briefMarkdown, charterFromText, charterLabel } from './services/projectBrief';
 import { pushFeed, answerFeed, closeAsks, openAsks, status as feedStatus, stepAsk, branchAsk, contradictedAsk, realityAsk, anchorAsk, unattendedAsk, haltedAsk, outlineAsk } from './services/agentFeed';
@@ -1049,6 +1051,7 @@ const App: React.FC = () => {
   // ===== 对话流（像 Codex 一样）=====
   // 进度和需要人拍板的地方，都以一行字 / 一张问题卡进右侧聊天记录，不再走铃铛和弹窗。
   const feedProjectRef = useRef<string | null>(null);
+  const pmActRef = useRef<((node: ProblemNode) => void) | null>(null);
   useEffect(() => { feedProjectRef.current = currentProjectId; }, [currentProjectId]);
   // 项目钱包：每次模型调用都记到对应项目的账上（后台醒来看一眼的记到被叫醒的那个项目）
   useEffect(() => onModelUsage((u, pid) => {
@@ -1565,6 +1568,8 @@ const App: React.FC = () => {
             noteUpdatedAt: Date.now(),
           }));
           finalStatus = NodeStatus.VALIDATING;
+          // 花钱权限内：AI 项目经理自己去服务广场找人 / 发需求（不等人点）
+          pmActRef.current?.({ ...unexplored, status: NodeStatus.VALIDATING, notes: result.notes, hypothesis: withHyp({}).hypothesis ?? unexplored.hypothesis } as ProblemNode);
           if (!batchRef.current) pushFeedItem(feedStatus(`🟡「${nodeTitle}」要到现实里做：${hits[0].label}`, { key: `write:${cid}`, nodeId: cid, detail: hits[0].detail, tone: 'warn' }));
           trackEvent('validation_triggered', { reason: hits[0].reason });
         } else {
@@ -2068,6 +2073,56 @@ ${plan.lead.duty}
     forceNodeRef.current = nodeId!; setJustWroteId(null);
     setTimeout(() => setIsLooping(true), 50);
   }, []);
+
+  // ===== AI 项目经理在服务广场：买服务 / 发需求 / 接单 =====
+  const pmBusyRef = useRef<Set<string>>(new Set());
+  const loggedIn = () => { try { return !!WAKE_API && !!localStorage.getItem('aae-auth-token'); } catch { return false; } };
+  /** 花钱权限 / 允许接单变了 → 换一个对应额度的 AI 授权（后端按授权卡额度） */
+  const syncPm = useCallback(async (pid: string) => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!proj || !loggedIn()) return null;
+    try { return await ensurePmToken(proj); } catch (e) { console.warn('[pm] 授权没建成', e); return null; }
+  }, []);
+  /** 卡在 AI 做不了的那一步：权限内就自己下单 / 发需求 */
+  const pmAct = useCallback(async (node: ProblemNode) => {
+    const pid = feedProjectRef.current;
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!pid || !proj?.charter?.autoBuyCNY || !loggedIn() || pmBusyRef.current.has(node.id)) return;
+    pmBusyRef.current.add(node.id);
+    try {
+      const pm = await syncPm(pid); if (!pm) return;
+      const r = await pmBuyOrPost(proj, node, pm);
+      if (r.kind === 'order') pushFeedItem(feedStatus(`🤝 AI 项目经理为「${node.title}」下单了「${r.title}」${money(r.priceCents)}（${r.provider}）· 钱包担保，你验收后才付给对方`, { tone: 'good', nodeId: node.id }), pid);
+      else if (r.kind === 'demand') pushFeedItem(feedStatus(`📢 没找到现成的服务，AI 项目经理发布了需求「${r.title}」，预算 ${money(r.budgetCents)}，等人接单`, { tone: 'good', nodeId: node.id }), pid);
+      trackEvent('pm_market', { kind: r.kind });
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      pushFeedItem(feedStatus(/余额不足/.test(msg) ? `💳 AI 想找人去做「${node.title}」，但 AI 钱包余额不够——去项目的「钱包」充值，再点「🤝 找人 / 服务去做」` : `⚠️ AI 项目经理没能下单：${msg}`, { tone: 'warn', nodeId: node.id }), pid);
+      pmBusyRef.current.delete(node.id);
+    }
+  }, [syncPm, pushFeedItem]);
+  useEffect(() => { pmActRef.current = pmAct; }, [pmAct]);
+  /** 接一轮单：交付已中标的，再挑新的投标 */
+  const workJobs = useCallback(async (pid: string): Promise<string> => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!proj?.charter?.allowJobs) return '还没允许 AI 接单';
+    const pm = await syncPm(pid);
+    if (!pm) return '需要先登录正式网站，AI 才能进服务广场';
+    const llm = async (messages: { role: string; content: string }[], json?: boolean) => (await meterFor(pid, () => callLLM(messages, { jsonMode: !!json, maxTokens: 3000, timeoutMs: 120000 }))).content;
+    const r = await pmWorkJobs(pm, llm, `${proj.name}：${(proj.metaProblem || '').slice(0, 200)}`);
+    for (const d of r.delivered) pushFeedItem(feedStatus(`📦 AI 项目经理交付了接的单「${d.title}」（${money(d.priceCents)}），等对方验收后钱进 AI 钱包`, { tone: 'good' }), pid);
+    for (const b of r.bids) pushFeedItem(feedStatus(`🙋 AI 项目经理在服务广场投了一个单，报价 ${money(b.priceCents)}，${b.deliveryDays} 天交付`, { detail: b.proposal }), pid);
+    try { localStorage.setItem(`hx-pm-jobs:${pid}`, String(Date.now())); } catch { /* ignore */ }
+    return r.delivered.length || r.bids.length ? `交付 ${r.delivered.length} 单，新投 ${r.bids.length} 单` : '这次没有合适的单（AI 只接自己能独立做完的调研 / 写作类需求）';
+  }, [syncPm, pushFeedItem]);
+  const toggleJobs = useCallback((pid: string, on: boolean) => {
+    const proj = projectsRef.current.find(p => p.id === pid); if (!proj) return;
+    const charter = { ...(proj.charter || { autoBuyCNY: 0, confirmedAt: Date.now() }), allowJobs: on };
+    projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, charter } : p));
+    patchProject(pid, { charter });
+    void syncPm(pid);
+    pushFeedItem(feedStatus(on ? '🙋 允许 AI 项目经理接单了：它会挑自己能做完的调研 / 写作类需求报价，交付后对方验收，钱进 AI 钱包' : '不再让 AI 项目经理接新单（已经接了的会继续做完）'), pid);
+  }, [patchProject, syncPm, pushFeedItem]);
 
   const startAfterOutline = useCallback((firstId?: string) => {
     const pid = currentProjectId;
@@ -2690,7 +2745,8 @@ ${plan.lead.duty}
           : charterFromText(typed);
         const kiAfterCharter = remember(projectsRef.current.find(p => p.id === currentProjectId)?.keyInfo, 'budget', '花钱权限', charterLabel(charter), 'charter');
         projectsRef.current = projectsRef.current.map(p => (p.id === currentProjectId ? { ...p, charter, keyInfo: kiAfterCharter } : p));
-        patchProject(currentProjectId, { charter, keyInfo: kiAfterCharter });
+        patchProject(currentProjectId, { charter: { ...charter, allowJobs: projectsRef.current.find(p => p.id === currentProjectId)?.charter?.allowJobs }, keyInfo: kiAfterCharter });
+        void syncPm(currentProjectId);
         // 记进项目总览，以后能查「当初说好的」
         setProjects(prev => prev.map(p => p.id === currentProjectId ? {
           ...p,
@@ -2739,7 +2795,7 @@ ${plan.lead.duty}
         break;
       }
     }
-  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline, askNextInfo, kickoffWriting, inquiryTeams]);
+  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline, askNextInfo, kickoffWriting, inquiryTeams, syncPm]);
 
   /** 打开决策记录弹窗（打开时就对节点子树做快照，保证删除/失效前的状态被留存） */
   const openDecisionRecorder = useCallback((nodeId: string, trigger: DecisionTrigger, opts?: { pendingAction?: 'delete' | 'invalidate'; presetQuestion?: string; presetOptions?: { label: string; chosen: boolean }[]; skippable?: boolean }) => {
@@ -2932,6 +2988,10 @@ ${plan.lead.duty}
         patchProject(projectId, { keyInfo: ki });
       }
       askNextInfo(projectId);
+      // 允许接单的项目：醒来时顺便去服务广场看看有没有能接的单（每 6 小时最多一次）
+      const pj = projectsRef.current.find(p => p.id === projectId);
+      let lastJobs = 0; try { lastJobs = Number(localStorage.getItem(`hx-pm-jobs:${projectId}`) || 0); } catch { /* ignore */ }
+      if (pj?.charter?.allowJobs && Date.now() - lastJobs > 6 * 3600_000) void workJobs(projectId).catch(e => console.warn('[pm] 接单失败', e));
       trackEvent('pulse_wake', { added: added.length, manual: manual ? 1 : 0 });
     } catch (e) {
       patchLife(projectId, l => failPulse(l, Date.now(), e instanceof Error ? e.message : String(e)));
@@ -2939,7 +2999,7 @@ ${plan.lead.duty}
       pulseBusyRef.current = false;
       setWakingId(null);
     }
-  }, [patchLife, pushFeedItem, patchProject, askNextInfo]);
+  }, [patchLife, pushFeedItem, patchProject, askNextInfo, workJobs]);
 
   // 调度：每 5 分钟看一次有没有该醒的项目；一次只醒一个；全局每天最多 6 次、两次之间至少隔 20 分钟
   useEffect(() => {
@@ -2977,7 +3037,9 @@ ${plan.lead.duty}
   const walletPanel = currentProject ? (
     <ProjectWallet project={currentProject}
       onEditCharter={() => { patchFeed(f => pushFeed(closeAsks(f, 'charter', '已重新问'), charterAsk(currentProject.id)), currentProject.id); setRightChatOpen(true); }}
-      onOpenMarket={() => { setMarketSeek(null); setShowServiceMarket(true); }} />
+      onOpenMarket={() => { setMarketSeek(null); setShowServiceMarket(true); }}
+      onToggleJobs={on => toggleJobs(currentProject.id, on)}
+      onWorkJobs={() => workJobs(currentProject.id)} />
   ) : null;
 
   const pulsePanel = currentProject ? (<div className="space-y-3">

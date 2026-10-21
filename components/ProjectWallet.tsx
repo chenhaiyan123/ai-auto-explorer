@@ -4,6 +4,9 @@ import { marketRequest, money, orderLabel, type MarketRequest, type MarketState 
 import { walletSummary, serviceSpentThisMonth, fmtCNY, fmtTokens, charterRoom } from '../services/projectWallet';
 import { charterLabel } from '../services/projectBrief';
 import WalletTopup from './WalletTopup';
+import WalletModels from './WalletModels';
+import { readPmToken } from '../services/pmAgent';
+import { sharedRequest, SHARED_API, type SharedCatalog } from '../services/sharedModelsClient';
 
 /**
  * 项目钱包：这个项目花了多少、花在哪、还能花多少。
@@ -18,8 +21,15 @@ const ProjectWallet: React.FC<{
   project: Project;
   onEditCharter: () => void;
   onOpenMarket: () => void;
+  /** 允许 / 不允许 AI 项目经理接单 */
+  onToggleJobs?: (on: boolean) => void;
+  /** 现在让 AI 项目经理去服务广场接一轮单 */
+  onWorkJobs?: () => Promise<string>;
   request?: MarketRequest;
-}> = ({ project, onEditCharter, onOpenMarket, request = marketRequest }) => {
+}> = ({ project, onEditCharter, onOpenMarket, onToggleJobs, onWorkJobs, request = marketRequest }) => {
+  const [jobMsg, setJobMsg] = useState('');
+  const [jobBusy, setJobBusy] = useState(false);
+  const pm = readPmToken(project.id);
   const [market, setMarket] = useState<MarketState | null>(null);
   const [marketError, setMarketError] = useState('');
   const [limit, setLimit] = useState(20);
@@ -34,7 +44,16 @@ const ProjectWallet: React.FC<{
 
   const orders = useMemo(() => (market?.orders || []).filter(o => o.side === 'buyer' && o.context?.projectId === project.id), [market, project.id]);
   const demands = useMemo(() => (market?.demands || []).filter(d => d.mine && d.context?.projectId === project.id), [market, project.id]);
-  const sum = walletSummary(project.wallet);
+  // 平台共享模型按「钱包价」从 AI 钱包扣钱：用模型价把这部分也折成钱
+  const [prices, setPrices] = useState<Record<string, number>>({});
+  useEffect(() => { if (SHARED_API) sharedRequest<SharedCatalog>('/shared/catalog').then(c => setPrices(Object.fromEntries(c.models.map(m => [m.id, m.priceCentsPerM || 0])))).catch(() => {}); }, [project.id]);
+  const platformCNY = (r: { model: string; input: number; output: number }) => (r.input + r.output) * (prices[r.model] || 0) / 1e6 / 100;
+  const base = walletSummary(project.wallet);
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const rows = project.wallet?.model || [];
+  const sum = { ...base,
+    monthCNY: base.monthCNY + rows.filter(r => r.quota && r.day.startsWith(thisMonth)).reduce((n, r) => n + platformCNY(r), 0),
+    totalCNY: base.totalCNY + rows.filter(r => r.quota).reduce((n, r) => n + platformCNY(r), 0) };
   const serviceMonth = serviceSpentThisMonth(orders);
   const room = charterRoom(project.charter, serviceMonth);
 
@@ -43,7 +62,7 @@ const ProjectWallet: React.FC<{
     for (const o of orders) list.push({ at: o.createdAt, icon: '🤝', title: `服务：${o.quote.title}`, sub: `${o.quote.providerName || ''}${o.quote.providerName ? ' · ' : ''}${orderLabel(o.status)}`, amount: `-${money(o.totalCents)}`, tone: ['proposed', 'requested'].includes(o.status) ? 'pending' : 'out' });
     for (const d of demands) list.push({ at: d.deadline - 1, icon: '📢', title: `发布需求：${d.title}`, sub: `${d.bidCount} 个方案 · ${d.status === 'open' ? '征集中' : d.status}`, amount: `预算 ${money(d.budgetCents)}`, tone: 'pending' });
     for (const r of project.wallet?.model || []) {
-      list.push({ at: r.lastAt, icon: '🧠', title: `模型调用 · ${r.model}`, sub: `${day(r.lastAt)} · ${r.calls} 次 · ${fmtTokens(r.input + r.output)} tokens`, amount: r.quota ? `额度 ${fmtTokens(r.input + r.output)}` : `-${fmtCNY(r.cny)}`, tone: r.quota ? 'quota' : 'out' });
+      list.push({ at: r.lastAt, icon: '🧠', title: `模型调用 · ${r.model}`, sub: `${day(r.lastAt)} · ${r.calls} 次 · ${fmtTokens(r.input + r.output)} tokens`, amount: r.quota ? (prices[r.model] ? `-${fmtCNY(platformCNY(r))}` : `额度 ${fmtTokens(r.input + r.output)}`) : `-${fmtCNY(r.cny)}`, tone: r.quota && !prices[r.model] ? 'quota' : 'out' });
     }
     return list.sort((a, b) => b.at - a.at);
   }, [orders, demands, project.wallet]);
@@ -58,11 +77,30 @@ const ProjectWallet: React.FC<{
 
       <WalletTopup compact />
 
+      <section className="rounded-xl border border-violet-700/40 bg-violet-950/20 p-3 space-y-2" aria-label="AI 项目经理在服务广场">
+        <div className="text-[13px] font-semibold text-slate-200">🤖 AI 项目经理在服务广场</div>
+        <ul className="text-[12px] text-slate-300 space-y-1 leading-5">
+          <li>· <b>买服务 / 发需求</b>：卡在 AI 做不了的事时，单笔不超过「花钱权限」就自己用钱包担保下单；没有现成服务就发布需求。超过的先问你。
+            <span className="text-slate-500"> 现在：{project.charter?.autoBuyCNY ? `单笔 ≤ ¥${project.charter.autoBuyCNY}${project.charter.monthlyCNY ? `，每月 ≤ ¥${project.charter.monthlyCNY}` : ''}` : '花钱都先问你'}</span>
+            <button onClick={onEditCharter} className="ml-1 text-blue-300 hover:underline">改</button></li>
+          <li>· <b>接单赚钱</b>：挑 AI 自己能做完的需求（调研、整理、写作），报价、交付，买方验收后钱进 AI 钱包（只能在平台内花，暂不能提现）。
+            <div className="flex items-center gap-2 flex-wrap mt-1 pl-3">
+            {onToggleJobs && <label className="inline-flex items-center gap-1.5 text-slate-200"><input type="checkbox" checked={!!project.charter?.allowJobs} onChange={e => onToggleJobs(e.target.checked)} />允许 AI 接单</label>}
+            {project.charter?.allowJobs && onWorkJobs && <button disabled={jobBusy} onClick={async () => { setJobBusy(true); setJobMsg(''); try { setJobMsg(await onWorkJobs()); } catch (e) { setJobMsg(e instanceof Error ? e.message : String(e)); } finally { setJobBusy(false); } }} className="px-2 py-0.5 rounded-lg bg-violet-700 hover:bg-violet-600 text-white disabled:opacity-40">{jobBusy ? '正在看…' : '现在去接单看看'}</button>}
+            </div>
+          </li>
+        </ul>
+        <p className="text-[11px] text-slate-500">{pm ? `AI 的服务广场授权：${pm.permissions.includes('order_commit') ? `单笔 ≤ ¥${pm.maxOrderCents / 100}，总额 ≤ ¥${pm.totalBudgetCents / 100}` : '不能花钱'}${pm.permissions.includes('demand_respond') ? '，可以接单' : ''}（后端按授权卡死，改花钱权限会自动换授权）` : 'AI 还没有服务广场授权：设了花钱权限或允许接单后自动生成。'}</p>
+        {jobMsg && <p role="status" className="text-[12px] text-emerald-300">{jobMsg}</p>}
+      </section>
+
+      <WalletModels />
+
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div className={cell}>
           <div className="text-[11px] text-slate-400">本月 AI 干活（模型）</div>
           <div className="text-xl font-bold text-slate-100 mt-1">{fmtCNY(sum.monthCNY)}<span className="text-[11px] font-normal text-slate-500 ml-1">估算</span></div>
-          <div className="text-[11px] text-slate-500 mt-0.5">{sum.monthCalls} 次调用 · {fmtTokens(sum.monthTokens)} tokens{sum.quotaTokens ? ` · 其中 ${fmtTokens(sum.quotaTokens)} 用的是平台额度` : ''}</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">{sum.monthCalls} 次调用 · {fmtTokens(sum.monthTokens)} tokens{sum.quotaTokens ? ` · 其中 ${fmtTokens(sum.quotaTokens)} 走平台模型（实际扣费见钱包流水）` : ''}</div>
         </div>
         <div className={cell}>
           <div className="text-[11px] text-slate-400">本月找人做事（服务）</div>

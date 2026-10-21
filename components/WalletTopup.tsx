@@ -9,7 +9,9 @@ import { Checkout } from './BillingPanel';
  * 用自己 API Key 的调用不碰钱包。金额、到账都以服务器为准，前端只负责选档位、拉起支付、刷新状态。
  */
 const yuan = (cents: number) => `¥${(cents / 100).toFixed(2)}`;
-const TX_LABEL: Record<string, string> = { topup: '充值', spend: '兑换模型额度', refund: '兑换失败退回' };
+const TX_LABEL: Record<string, string> = { topup: '充值', spend: '兑换模型额度', refund: '退回', escrow: '服务广场下单（担保冻结）', income: '接单收入' };
+const TX_ICON: Record<string, string> = { topup: '💳', spend: '🧠', refund: '↩️', escrow: '🔒', income: '💰' };
+const isOut = (type: string) => type === 'spend' || type === 'escrow';
 
 export function useAIWallet() {
   const [catalog, setCatalog] = useState<BillingCatalog | null>(null);
@@ -84,7 +86,7 @@ const WalletTopup: React.FC<{ compact?: boolean }> = ({ compact }) => {
           {blocked && <p className="text-[12px] text-amber-300">{blocked}</p>}
           {msg && <p role="alert" className="text-[12px] text-amber-300">{msg}</p>}
           {order && <Checkout key={order.id} order={order} onPaid={() => { void reload(); requestId.current = crypto.randomUUID(); }} onClose={() => { setOrder(null); requestId.current = crypto.randomUUID(); void reload(); }} />}
-          <p className="text-[11px] text-slate-500 leading-5">钱怎么花：AI 在平台模型上干活，额度不够时按该模型的价格自动从余额兑换（每次至少 ¥1，兑换的额度用不完会留着下次用）。用自己 API Key 的调用不扣钱包。到账以服务器核验为准；需要退款请联系客服。</p>
+          <p className="text-[11px] text-slate-500 leading-5">钱怎么花：AI 在平台模型上干活，额度不够时按该模型的价格自动从余额兑换（每次至少 ¥1，用不完留着下次用）；在服务广场下单时，钱先由平台暂存，你验收后才付给对方。AI 接单赚的钱也进这里，只能在平台内花，暂不能提现。用自己 API Key 的调用不扣钱包。到账以服务器核验为准；需要退款请联系客服。</p>
         </div>
       )}
       {!!account?.wallet?.tx.length && (
@@ -93,9 +95,9 @@ const WalletTopup: React.FC<{ compact?: boolean }> = ({ compact }) => {
           <ul className="mt-2 divide-y divide-slate-800">
             {account.wallet.tx.map(t => (
               <li key={t.id} className="flex items-center gap-2 py-1.5">
-                <span>{t.type === 'topup' ? '💳' : t.type === 'refund' ? '↩️' : '🧠'}</span>
-                <div className="min-w-0 flex-1"><div className="text-slate-200 truncate">{TX_LABEL[t.type] || t.type}{t.note ? ` · ${t.note}` : ''}</div><div className="text-[11px] text-slate-500">{new Date(t.at).toLocaleString()} · 余额 {yuan(t.balanceAfter)}</div></div>
-                <span className={`font-mono ${t.type === 'spend' ? 'text-slate-100' : 'text-emerald-300'}`}>{t.type === 'spend' ? '-' : '+'}{yuan(t.cents)}</span>
+                <span>{TX_ICON[t.type] || '·'}</span>
+                <div className="min-w-0 flex-1"><div className="text-slate-200 truncate">{t.note || TX_LABEL[t.type] || t.type}</div><div className="text-[11px] text-slate-500">{new Date(t.at).toLocaleString()} · 余额 {yuan(t.balanceAfter)}</div></div>
+                <span className={`font-mono ${isOut(t.type) ? 'text-slate-100' : 'text-emerald-300'}`}>{isOut(t.type) ? '-' : '+'}{yuan(t.cents)}</span>
               </li>
             ))}
           </ul>

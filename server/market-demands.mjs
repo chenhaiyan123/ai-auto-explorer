@@ -49,7 +49,7 @@ export function respondDemand(s, actor, id, input) {
   d.bids.push({ id: randomUUID(), owner: actor.owner, tokenId: actor.tokenId || null, providerName: actor.agent ? actor.name : text(input.providerName, 80), contact, proposal, priceCents, deliveryDays, createdAt: Date.now() });
   d.revision++; return demandView(d, actor);
 }
-export function demandAction(s, actor, id, input) {
+export function demandAction(s, actor, id, input, opts = {}) {
   const d = s.demands.find(d => d.id === id && d.owner === actor.owner && (!actor.agent || d.tokenId === actor.tokenId));
   if (!d) throw fail('需求不存在', 404);
   if (input.revision !== d.revision || d.status !== 'open') throw fail('需求已变化，请刷新', 409);
@@ -65,7 +65,7 @@ export function demandAction(s, actor, id, input) {
   const o = { id: randomUUID(), revision: 1, buyer: d.owner, seller: b.owner, tokenId: d.tokenId, sellerTokenId: b.tokenId, requestedBy: d.requestedBy, demandId: d.id, serviceId: null,
     quote: { title: d.title, providerName: b.providerName, description: b.proposal, deliverables: d.acceptance, limits: '以接单方案及验收标准为准', deliveryDays: b.deliveryDays, priceCents: b.priceCents, unit: '任务', currency: 'CNY' },
     buyerContact, sellerContact: b.contact || '', quantity: 1, totalCents: b.priceCents, requirements: d.requirements, acceptance: d.acceptance, context: d.context, status: 'accepted', sharedAt: at,
-    delivery: null, deliveryVersion: 0, eventSynced: false, settlement: { method: 'external', buyerReportedPaid: false, sellerReportedReceived: false },
+    delivery: null, deliveryVersion: 0, eventSynced: false, settlement: opts.escrowRef ? { method: 'wallet', escrowRef: opts.escrowRef, escrowSettled: false } : { method: 'external', buyerReportedPaid: false, sellerReportedReceived: false },
     history: [{ action: 'award', by: actor.agent ? 'agent' : 'buyer', at }], createdAt: at, updatedAt: at };
   s.orders.push(o); d.status = 'awarded'; d.orderId = o.id; d.revision++; return demandView(d, actor);
 }

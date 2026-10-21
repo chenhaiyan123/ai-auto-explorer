@@ -160,6 +160,14 @@ export async function createWakeServer(options = {}) {
     }));
     return true;
   });
+  /** 钱包担保订单：完成的放款给卖方，取消 / 拒绝的退回买方（幂等，失败下次 tick 再来） */
+  const syncEscrow = async () => {
+    const { due } = await market.escrowDue();
+    for (const d of due) {
+      try { await billing.settleEscrow(d.ref, d.outcome, d.seller); await market.markEscrowSettled(d.id); }
+      catch (e) { console.error('escrow settle deferred', d.id, e.message); }
+    }
+  };
   const notifications = new WakeNotifications(storage, env, externalFetch);
   const activationQueues = new Map();
   const guard = async (key, state, tool = 'model_analysis') => {
@@ -250,7 +258,7 @@ export async function createWakeServer(options = {}) {
     finally { clearInterval(heartbeat); active.delete(key); }
   };
   let ticking = false; let closing = false;
-  const tick = async () => { if (ticking || closing) return; ticking = true; try { await flushMarket().catch(() => console.error('Service delivery sync deferred')); for (const key of await storage.keys()) { if (closing) break; await tickKey(key); } await notifications.process(); } finally { ticking = false; } };
+  const tick = async () => { if (ticking || closing) return; ticking = true; try { await flushMarket().catch(() => console.error('Service delivery sync deferred')); await syncEscrow().catch(() => console.error('Escrow sync deferred')); for (const key of await storage.keys()) { if (closing) break; await tickKey(key); } await notifications.process(); } finally { ticking = false; } };
   const interval = setInterval(() => tick().catch(e => console.error('wake tick:', e.message)), 10000);
   interval.unref();
   const authenticate = async req => {
@@ -325,11 +333,38 @@ export async function createWakeServer(options = {}) {
         if (req.method === 'POST' && url.pathname === '/market/tokens') { send(200, await market.createToken(actor, body)); return; }
         if (req.method === 'POST' && url.pathname === '/market/demands') { send(200, await market.publishDemand(actor, body)); return; }
         const demand = url.pathname.match(/^\/market\/demands\/([a-f0-9-]{36})\/(respond|action)$/);
-        if (req.method === 'POST' && demand) { send(200, await (demand[2] === 'respond' ? market.respondDemand(actor, demand[1], body) : market.demandAction(actor, demand[1], body))); return; }
+        if (req.method === 'POST' && demand && demand[2] === 'respond') { send(200, await market.respondDemand(actor, demand[1], body)); return; }
+        if (req.method === 'POST' && demand) {
+          // 选中接单方案时可以用 AI 钱包担保付款：先冻结买方的钱，下单失败就退回
+          if (body.action === 'award' && body.pay === 'wallet' && body.confirmed === true) {
+            const bid = await market.peekBid(actor, demand[1], body.bidId);
+            if (!bid) throw Object.assign(new Error('方案不存在'), { status: 404 });
+            if (bid.status !== 'open') throw Object.assign(new Error('需求已变化，请刷新'), { status: 409 });
+            const ref = `award-${demand[1]}`;
+            if (bid.priceCents > 0) await billing.holdEscrow(actor.owner, bid.priceCents, ref, `担保付款：${bid.title}`);
+            try { send(200, await market.demandAction(actor, demand[1], body, bid.priceCents > 0 ? { escrowRef: ref } : {})); }
+            catch (e) { if (bid.priceCents > 0 && !await market.hasEscrow(ref)) await billing.settleEscrow(ref, 'refund'); throw e; }
+            return;
+          }
+          send(200, await market.demandAction(actor, demand[1], body)); return;
+        }
         const revoke = url.pathname.match(/^\/market\/tokens\/([a-f0-9-]{36})\/revoke$/);
         if (req.method === 'POST' && revoke) { send(200, await market.revokeToken(actor, revoke[1])); return; }
         const action = url.pathname.match(/^\/market\/orders\/([a-f0-9-]{36})\/action$/);
-        if (req.method === 'POST' && action) { const order = await market.action(actor, action[1], body); send(200, order); return; }
+        if (req.method === 'POST' && action) {
+          if (body.action === 'confirm' && body.pay === 'wallet' && body.confirmed === true) {
+            const peek = await market.peekOrder(actor, action[1]);
+            if (!peek) throw Object.assign(new Error('订单不存在'), { status: 404 });
+            if (peek.status !== 'proposed') throw Object.assign(new Error('当前订单状态不能付款'), { status: 409 });
+            if (peek.totalCents > 0) await billing.holdEscrow(actor.owner, peek.totalCents, peek.id, `担保付款：${peek.title}`);
+            try { send(200, await market.action(actor, action[1], body, peek.totalCents > 0 ? { escrowRef: peek.id } : {})); }
+            catch (e) { if (peek.totalCents > 0 && !await market.hasEscrow(peek.id)) await billing.settleEscrow(peek.id, 'refund'); throw e; }
+            return;
+          }
+          const order = await market.action(actor, action[1], body);
+          await syncEscrow().catch(e => console.error('escrow sync deferred', e.message));
+          send(200, order); return;
+        }
         send(404, { error: '服务接口不存在' });
       } catch (e) { send(e.status || 400, { error: e.message }); }
       return;
@@ -367,6 +402,18 @@ export async function createWakeServer(options = {}) {
         if (req.method === 'POST' && url.pathname === '/admin/shared/grants') { send(200, await shared.grant(owner, body)); return; }
         if (req.method === 'POST' && url.pathname === '/admin/shared/reconcile') { send(200, await shared.reconcile(owner, body)); return; }
         if (req.method === 'POST' && url.pathname === '/shared/chat') { send(200, await invokeShared(owner, body)); return; }
+        // AI 项目经理 / 用户主动把钱包余额充成某个模型的 API 额度（不等用完再自动兑换）
+        if (req.method === 'POST' && url.pathname === '/shared/wallet-convert') {
+          if (!Number.isSafeInteger(body.cents) || body.cents < PLANS_TOPUP_MIN || body.cents > 1e7 || !/^[a-zA-Z0-9_-]{16,100}$/.test(body.requestId || '')) throw Object.assign(new Error('兑换金额至少 ¥1，且需要请求编号'), { status: 400 });
+          const target = (await shared.view(owner)).models.find(m => m.id === body.modelId);
+          const price = target?.priceCentsPerM || 0;
+          if (!price) throw Object.assign(new Error('这个模型没有开放钱包兑换'), { status: 400 });
+          const tokens = Math.floor(body.cents * 1e6 / price), ref = `manual-${body.requestId}`;
+          await billing.spendWallet(owner, body.cents, ref, `充值「${target.label}」API 额度 ${tokens.toLocaleString()} Token`);
+          try { send(200, await shared.creditFromWallet(owner, body.modelId, tokens, ref, body.cents)); }
+          catch (e) { await billing.refundWallet(owner, ref); throw e; }
+          return;
+        }
         send(404, { error: '接口不存在' }); return;
       }
       const projectId = url.searchParams.get('projectId'); const branchId = url.searchParams.get('branchId'); const scopeId = url.searchParams.get('scopeId') || 'root';

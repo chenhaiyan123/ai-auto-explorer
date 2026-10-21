@@ -12,15 +12,24 @@ export interface ServiceOrder {
   id: string; revision: number; serviceId: string | null; quote: ServiceListing; side: 'buyer' | 'seller'; requestedBy: string;
   requirements: string; acceptance: string; quantity: number; totalCents: number; status: string;
   buyerContact: string; sellerContact: string; context: ServiceContext | null;
-  settlement: { method: 'external'; buyerReportedPaid: boolean; sellerReportedReceived: boolean };
+  /** external = 双方线下结算；wallet = AI 钱包担保（平台暂存，验收后放款） */
+  settlement: { method: 'external' | 'wallet'; buyerReportedPaid?: boolean; sellerReportedReceived?: boolean; escrowRef?: string; escrowSettled?: boolean; settledAt?: number };
   delivery: null | { summary: string; source: string; limitation: string; at: number }; deliveryVersion: number; eventSynced: boolean;
   history: { action: string; by: string; at: number; note?: string }[]; createdAt: number; updatedAt: number;
 }
 export interface ServiceDemand { id: string; revision: number; title: string; requirements: string; acceptance: string; budgetCents: number; deadline: number; status: string; mine: boolean; requestedBy: string; bidCount: number; context: ServiceContext | null; orderId?: string; bids: { id: string; providerName: string; proposal: string; priceCents: number; deliveryDays: number; mine: boolean }[] }
 export interface ServiceToken { id: string; name: string; expiresAt: number; revoked: boolean; context: ServiceContext | null; permissions?: string[]; maxOrderCents?: number; totalBudgetCents?: number; committedCents?: number }
-export interface MarketState { settlement: 'external'; deviceControl: boolean; services: ServiceListing[]; orders: ServiceOrder[]; tokens: ServiceToken[]; demands?: ServiceDemand[] }
+export interface MarketState { walletSettlement?: boolean; settlement: 'external'; deviceControl: boolean; services: ServiceListing[]; orders: ServiceOrder[]; tokens: ServiceToken[]; demands?: ServiceDemand[] }
 export type MarketRequest = <T>(path: string, method?: string, body?: unknown) => Promise<T>;
 const env = (import.meta as ImportMeta & { env?: Record<string, string | boolean> }).env;
+/** 用某个令牌访问服务广场（AI 项目经理用自己的 Agent 令牌，权限和额度由后端按令牌卡死） */
+export const marketRequestAs = (bearer: string): MarketRequest => async (path, method = 'GET', body) => {
+  if (!WAKE_API) throw new Error(t('暂时无法读取在线服务', 'Live listings are temporarily unavailable'));
+  const response = await fetch(`${WAKE_API}/market${path}`, { method, headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: 'error', signal: AbortSignal.timeout(20000) });
+  const data = await response.json();
+  if (!response.ok) throw Object.assign(new Error(data.error || t('服务暂不可用', 'Service unavailable')), { status: response.status });
+  return data;
+};
 export const marketRequest: MarketRequest = async (path, method = 'GET', body) => {
   if (!WAKE_API) throw new Error(t('暂时无法读取在线服务，仍可浏览服务场景。', 'Live listings are temporarily unavailable. You can still browse service examples.'));
   const url = new URL(WAKE_API), local = !!env?.DEV && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
