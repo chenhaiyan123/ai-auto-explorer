@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { GLOW_LABEL, type Glow } from '../services/projectPulse';
 import type { Project, ProblemNode } from '../types';
-import { PROJECT_PAGES, type ProjectPage } from '../services/projectWorktree';
+import { PROJECT_PAGES, ROOT_ONLY_PAGES, type ProjectPage } from '../services/projectWorktree';
 
 // 项目只有一个总览入口；旧说明笔记保留 ID，统一导向总览。
 const ProjectNotesTree: React.FC<{
@@ -84,7 +84,7 @@ const ProjectNotesTree: React.FC<{
 
   const PageRows = (projectId: string, scopeId: string, depth: number) => (
     <div style={{ paddingLeft: 28 + depth * 16 }} className="space-y-0.5 my-1">
-      {(Object.keys(PROJECT_PAGES) as ProjectPage[]).filter(page => scopeId === 'root' || page !== 'worktree').map(page => (
+      {(Object.keys(PROJECT_PAGES) as ProjectPage[]).filter(page => scopeId === 'root' || !ROOT_ONLY_PAGES.includes(page)).map(page => (
         <button key={page} onClick={() => onOpenPage(projectId, scopeId, page)} className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] ${currentProjectId === projectId && !selectedNodeId && selectedPage?.scopeId === scopeId && selectedPage.page === page ? 'bg-violet-600/20 text-violet-200' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
           <span>{PROJECT_PAGES[page].icon}</span>{page === 'research' && scopeId !== 'root' ? ui("想法总览") : ui(PROJECT_PAGES[page].label)}
         </button>

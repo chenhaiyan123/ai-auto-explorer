@@ -341,6 +341,10 @@ export interface ProjectBrief {
  * 关键信息（AI 记忆里「你交代过的」）：AI 项目经理主动问、用户亲口答的。
  * 和已核验事实分开放：这是用户关于自己的约束和意愿，他说了就算。
  */
+/** 一天 × 一个模型的用量（钱包记账用） */
+export interface ModelSpendDay { day: string; model: string; quota: boolean; calls: number; input: number; output: number; cny: number; lastAt: number }
+export interface ProjectWalletLedger { model?: ModelSpendDay[] }
+
 export type KeyInfoTopic = 'goal' | 'support' | 'resources' | 'permissions' | 'budget' | 'other';
 export interface KeyInfo {
   id: string;
@@ -605,6 +609,8 @@ export interface Project {
   charter?: ProjectCharter;
   /** AI 记忆：用户交代过的关键信息 + 还要问的问题 */
   keyInfo?: KeyInfo[];
+  /** 项目钱包：模型调用按天汇总的账（服务订单在服务端，按需读取） */
+  wallet?: ProjectWalletLedger;
   /** 用户维护的项目目标与范围，AI 摘要不得覆盖。 */
   overviewBrief?: string;
   /** User-owned acceptance criteria, never inferred from AI completion. */

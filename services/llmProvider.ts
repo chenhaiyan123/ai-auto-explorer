@@ -1,3 +1,4 @@
+import { reportModelUsage } from './projectWallet';
 /**
  * LLM Provider — 统一模型接入层
  *
@@ -132,6 +133,18 @@ export class TrialQuotaError extends Error {
  * 调用当前配置的 LLM（OpenAI Chat Completions 格式）
  */
 export async function callLLM(
+  messages: { role: string; content: string }[],
+  options: LLMCallOptions = {},
+  settings?: LLMSettings,
+): Promise<LLMResult> {
+  const s = settings || loadLLMSettings();
+  const r = await callLLMRaw(messages, options, settings);
+  // 记进项目钱包（按项目归集；失败不影响干活）
+  if (r.usage) reportModelUsage({ model: s.model || s.provider, provider: s.provider, input: r.usage.prompt_tokens || 0, output: r.usage.completion_tokens || 0 });
+  return r;
+}
+
+async function callLLMRaw(
   messages: { role: string; content: string }[],
   options: LLMCallOptions = {},
   settings?: LLMSettings,

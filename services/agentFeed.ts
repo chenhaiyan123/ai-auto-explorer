@@ -97,7 +97,7 @@ export const stepAsk = (node: ProblemNode, progress: OutlineProgress): FeedItem 
     if (progress.next) options.push({ id: 'next', label: `做下一步「${clip(progress.next.title, 14)}」`, primary: true });
     options.push({ id: 'rewrite', label: '这步重做' });
     options.push({ id: 'stop', label: '先停一下' });
-    if (progress.next) options.push({ id: 'auto', label: '剩下的连着做' });
+    if (progress.next) options.push({ id: 'auto', label: '剩下的交给 AI 自主运行' });
   }
   const need = node.hypothesis?.unknown;
   return ask('step', `${flag}「${node.title}」 · 第 ${progress.written}/${progress.total} 步`, options, {
@@ -248,16 +248,16 @@ export interface Batch { id: string; target: number; done: { id: string; title: 
 export const BATCH_SIZE = 5;
 
 export const batchProgress = (b: Batch, writing?: string): FeedItem =>
-  status(`⏩ 连着做 ${Math.min(b.done.length + (writing ? 1 : 0), b.target)}/${b.target}${writing ? `：「${clip(writing, 18)}」` : ''}`, {
+  status(`⚡ 自主运行中 ${Math.min(b.done.length + (writing ? 1 : 0), b.target)}/${b.target}${writing ? `：「${clip(writing, 18)}」` : ''}`, {
     key: `batch:${b.id}`,
     detail: b.done.length ? `已做：${b.done.map(d => `「${d.title}」`).join('、')}` : undefined,
   });
 
 export const batchAsk = (b: Batch, reason: 'done' | 'empty' | 'stopped' | 'halted', remaining: number): FeedItem => {
-  const head = b.done.length === 0 ? '⏹ 这一轮还没做完任何一步' : `📦 这一轮做了 ${b.done.length} 步`;
-  const why = reason === 'empty' ? '，能推进的都推进了' : reason === 'stopped' ? '（你叫停了）' : reason === 'halted' ? '（中途暂停了）' : '';
+  const head = b.done.length === 0 ? '⏹ 自主运行这一轮还没做完任何一步' : `⚡ 自主运行了一轮，做了 ${b.done.length} 步`;
+  const why = reason === 'empty' ? '，能推进的都推进了' : reason === 'stopped' ? '（你收回了）' : reason === 'halted' ? '（中途暂停了）' : '';
   const options: FeedOption[] = [];
-  if (remaining > 0) options.push({ id: 'more', label: `再做一轮（${Math.min(BATCH_SIZE, remaining)} 步）`, primary: true });
+  if (remaining > 0) options.push({ id: 'more', label: `继续自主运行（${Math.min(BATCH_SIZE, remaining)} 步）`, primary: true });
   if (remaining > 0) options.push({ id: 'step', label: '改成一步一停' });
   options.push({ id: 'done', label: remaining > 0 ? '先这样' : '好的', primary: remaining === 0 });
   return ask('batch', head + why, options, {

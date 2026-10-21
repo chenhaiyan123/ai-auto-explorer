@@ -19,6 +19,8 @@ import { type HelpSeek, seekFromFact } from './services/factHelp';
 import { batchProgress, batchAsk, BATCH_SIZE, charterAsk, infoAsk, type Batch } from './services/agentFeed';
 import { keyInfoContext, questionsFromBrief, addPending, nextPending, pendingCount, markAsked, answerInfo, skipInfo, remember } from './services/keyInfo';
 import KeyInfoPanel from './components/KeyInfoPanel';
+import ProjectWallet from './components/ProjectWallet';
+import { onModelUsage, meterFor, addModelSpend, reportModelUsage } from './services/projectWallet';
 import { briefMarkdown, charterFromText, charterLabel } from './services/projectBrief';
 import { pushFeed, answerFeed, closeAsks, openAsks, status as feedStatus, stepAsk, branchAsk, contradictedAsk, realityAsk, anchorAsk, unattendedAsk, haltedAsk, outlineAsk } from './services/agentFeed';
 import { DecisionRecordModal, DecisionTimelineModal, DecisionDraft } from './components/DecisionCenter';
@@ -1048,6 +1050,12 @@ const App: React.FC = () => {
   // 进度和需要人拍板的地方，都以一行字 / 一张问题卡进右侧聊天记录，不再走铃铛和弹窗。
   const feedProjectRef = useRef<string | null>(null);
   useEffect(() => { feedProjectRef.current = currentProjectId; }, [currentProjectId]);
+  // 项目钱包：每次模型调用都记到对应项目的账上（后台醒来看一眼的记到被叫醒的那个项目）
+  useEffect(() => onModelUsage((u, pid) => {
+    const id = pid || feedProjectRef.current;
+    if (!id) return;
+    setProjects(prev => prev.map(p => (p.id === id ? { ...p, wallet: addModelSpend(p.wallet, u) } : p)));
+  }), []);
   const patchFeed = useCallback((fn: (feed: FeedItem[] | undefined) => FeedItem[], projectId?: string) => {
     const pid = projectId || feedProjectRef.current;
     if (!pid) return;
@@ -1793,7 +1801,7 @@ const App: React.FC = () => {
 
   const openProjectPage = useCallback((projectId: string, scopeId: string, page: ProjectPage) => {
     if (window.innerWidth < 768) setNotesPanelMode(0);
-    setProjectPage({ projectId, scopeId: page === 'worktree' ? 'root' : scopeId, page });
+    setProjectPage({ projectId, scopeId: page === 'worktree' || page === 'wallet' ? 'root' : scopeId, page });
     pendingSelectRef.current = null;
     setSelectedNodeId(null);
     setFocusedNodeId(null);
@@ -2138,7 +2146,7 @@ ${plan.lead.duty}
     setJustWroteId(null);
     setContinuousMode(true);
     setIsLooping(true);
-    closeFeedAsks('step', '改成连着做一轮');
+    closeFeedAsks('step', '交给 AI 自主运行');
     pushFeedItem(batchProgress(batchRef.current));
     trackEvent('batch_start', { target });
   }, [closeFeedAsks, pushFeedItem]);
@@ -2155,7 +2163,7 @@ ${plan.lead.duty}
 
   const handleSwitchToAuto = useCallback(() => {
     setJustWroteId(null);
-    closeFeedAsks('step', '剩下的连着做一轮');
+    closeFeedAsks('step', '剩下的交给 AI 自主运行');
     startBatch(Math.min(BATCH_SIZE, Math.max(1, remainingCount(nodes))));
   }, [closeFeedAsks, startBatch, nodes]);
 
@@ -2900,14 +2908,15 @@ ${plan.lead.duty}
       const searchModel = await pickSearchModel();
       if (searchModel) {
         try {
-          const r = await sharedRequest<{ content: string; sources?: { index: number; title: string; url: string; site?: string }[] }>('/shared/chat', 'POST', {
+          const r = await sharedRequest<{ content: string; sources?: { index: number; title: string; url: string; site?: string }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } }>('/shared/chat', 'POST', {
             modelId: searchModel, requestId: crypto.randomUUID(), messages: buildPulseMessages(project, now, { web: true }), maxTokens: 700, webSearch: true,
           }, 90000);
+          if (r.usage) await meterFor(projectId, async () => reportModelUsage({ model: searchModel, provider: 'platform', input: r.usage!.prompt_tokens || 0, output: r.usage!.completion_tokens || 0 }));
           parsed = parsePulse(r.content, r.sources || []);
         } catch (e) { console.warn('[pulse] 联网搜索不可用，退回推理', e); }
       }
       if (!parsed) {
-        const res = await callLLM(buildPulseMessages(project, now), { jsonMode: true, maxTokens: 700, timeoutMs: 60000 });
+        const res = await meterFor(projectId, () => callLLM(buildPulseMessages(project, now), { jsonMode: true, maxTokens: 700, timeoutMs: 60000 }));
         parsed = parsePulse(res.content);
       }
       const before = lifeOf(project, now, idx);
@@ -2963,6 +2972,12 @@ ${plan.lead.duty}
         return { ...p, keyInfo, feed };
       }));
     }} />
+  ) : null;
+
+  const walletPanel = currentProject ? (
+    <ProjectWallet project={currentProject}
+      onEditCharter={() => { patchFeed(f => pushFeed(closeAsks(f, 'charter', '已重新问'), charterAsk(currentProject.id)), currentProject.id); setRightChatOpen(true); }}
+      onOpenMarket={() => { setMarketSeek(null); setShowServiceMarket(true); }} />
   ) : null;
 
   const pulsePanel = currentProject ? (<div className="space-y-3">
@@ -3346,26 +3361,15 @@ ${plan.lead.duty}
         {/* ===== 中间：对话（主战场：AI 的进度、需要你拍板的问题、和团队说话都在这里） ===== */}
         <div className="app-team-chat flex-1 min-w-0 h-full flex flex-col bg-slate-900 overflow-hidden">
           <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between gap-3 bg-slate-900/80">
-            <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5 flex-shrink-0"><span>💬</span>{ui("对话")}{isLooping && <span className="text-[10px] font-normal text-slate-500 animate-pulse">{ui("· AI 正在写")}</span>}</h3>
+            <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5 flex-shrink-0"><span>💬</span>{ui("对话")}{isLooping && <span className="text-[10px] font-normal text-slate-500 animate-pulse">{ui("· AI 正在做")}</span>}</h3>
             <div className="flex items-center gap-1.5 flex-shrink-0 overflow-x-auto scroll-hide">
               <button
                 onClick={() => { if (continuousMode) endBatch('stopped'); else startBatch(); }}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white animate-pulse' : 'bg-slate-700/70 text-slate-200 hover:bg-emerald-600 hover:text-white'}`}
-                title={ui("不用每步都停下来问你：连着推进 5 步，做完给你一张汇总；再点一次可以随时叫停")}
-              >⏩ {continuousMode ? ui(`连着做 · 点击停止`) : ui("连做一轮")}</button>
-              {/*
-                「先理框架」：没有框架的项目（含所有老项目）也能随时补一个。
-                放在「持续探索」旁边是有意的——这两个按钮代表两种相反的节奏，
-                摆在一起用户才会意识到自己在选节奏，而不是被默认值推着走。
-              */}
-              {currentProject && projectOutline?.status !== 'draft' && (
-                <button
-                  onClick={() => handleProposeOutline()}
-                  disabled={outlineBusy}
-                  className="px-2.5 py-1 bg-slate-700/70 hover:bg-blue-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                  title={ui("先把事情拆成几步、说清楚怎么做，跟你对齐之后再一步一步推进")}
-                >🗺️ {outlineBusy ? ui("拆解中…") : projectOutline ? '重新拆步骤' : '先拆步骤'}</button>
-              )}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white' : 'bg-gradient-to-r from-emerald-600/80 to-teal-600/80 text-white hover:from-emerald-500 hover:to-teal-500'}`}
+                title={continuousMode ? ui("AI 正在自主推进，点一下把方向盘收回来") : ui("交给 AI 自主运行：它自己一步一步往下做，只在需要你的时候来叫你；一轮最多 5 步，做完给你一张汇总，随时可以收回")}
+              >{continuousMode
+                  ? <><span className="w-1.5 h-1.5 rounded-full bg-white hx-breathe" />{ui("自主运行中 · 收回")}</>
+                  : <>⚡ {ui("自主运行")}</>}</button>
               <button onClick={() => setShowGraphModal(true)} className="px-2.5 py-1 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title={ui("打开关系图谱")}>{ui("🕸️ 图谱")}</button>
             </div>
           </div>
@@ -3410,7 +3414,7 @@ ${plan.lead.duty}
                 onSaveBrief={text => setProjects(prev => prev.map(p => p.id === currentProject.id ? { ...migrateProjectOverview(p), overviewBrief: text } : p))}
                 onSaveSummary={(id, text) => updateNode(id, { fullNote: text, autoNote: false, noteUpdatedAt: Date.now() })}
                 worktree={worktreeActions} busy={worktreeBusy} onStop={stopProjectWork} onGenerateReport={handleGenerateReport} generating={isGeneratingReport}
-                pulsePanel={pulsePanel} memoryPanel={keyInfoPanel}
+                pulsePanel={pulsePanel} memoryPanel={keyInfoPanel} walletPanel={walletPanel}
                 onCloudState={st => setCloudWatch(prev => (JSON.stringify(prev[currentProject.id]) === JSON.stringify(st) ? prev : { ...prev, [currentProject.id]: st }))}
                 openActivation={openActivation}
                 onSeekHelp={(fact, question) => { setMarketSeek(seekFromFact(fact, question, currentProject.id)); setShowServiceMarket(true); trackEvent('fact_seek_help'); addNotification('info', `🤝 去服务广场为「${fact.claim.slice(0, 24)}${fact.claim.length > 24 ? '…' : ''}」找人验证`, ''); }} />

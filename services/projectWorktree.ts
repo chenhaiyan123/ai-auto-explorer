@@ -103,8 +103,10 @@ export function scopeNodes(project: Project, scopeId: string) {
   return project.nodes.filter(n => ids.has(n.id));
 }
 
-export type ProjectPage = 'research' | 'team' | 'facts' | 'worktree';
+export type ProjectPage = 'research' | 'wallet' | 'team' | 'facts' | 'worktree';
+/** 只在项目层级有、不分到单个想法里的页面 */
+export const ROOT_ONLY_PAGES: ProjectPage[] = ['wallet', 'worktree'];
 export const PROJECT_PAGES: Record<ProjectPage, { label: string; icon: string }> = {
-  research: { label: '项目总览', icon: '◈' }, team: { label: 'AI 团队', icon: '🤖' },
+  research: { label: '项目总览', icon: '◈' }, wallet: { label: '钱包', icon: '💰' }, team: { label: 'AI 团队', icon: '🤖' },
   facts: { label: '事实看板', icon: '▦' }, worktree: { label: '决策与探索分支', icon: '⑂' },
 };
