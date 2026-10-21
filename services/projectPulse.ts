@@ -37,6 +37,7 @@ export const cadenceLabel = (h: number) =>
 
 export const defaultLife = (now: number, index = 0): ProjectLife => ({
   state: 'watching',
+  litAt: now,
   cadenceHours: DEFAULT_CADENCE,
   // 第一次醒来错开：第 1 个项目 1 小时后，之后每个再晚 2 小时
   nextWakeAt: now + (1 + index * 2) * HOUR,
@@ -210,7 +211,33 @@ export const setCadence = (life: ProjectLife, hours: number, now: number): Proje
 };
 
 export const setWatching = (life: ProjectLife, on: boolean, now: number): ProjectLife =>
-  on ? { ...life, state: 'watching', quietStreak: 0, nextWakeAt: now + life.cadenceHours * HOUR } : { ...life, state: 'paused' };
+  on ? { ...life, state: 'watching', litAt: life.state === 'watching' ? (life.litAt ?? now) : now, quietStreak: 0, nextWakeAt: now + life.cadenceHours * HOUR } : { ...life, state: 'paused' };
+
+// ===== 点亮 =====
+/**
+ * 一个项目的「灯」：
+ * - active  活跃：此刻正在做事（推进步骤 / AI 团队在跑 / 正在醒来看一眼）——灯在跳；
+ * - dormant 休眠：点亮着、活着，但不可能一直活跃，到点会自己醒——灯常亮、慢慢呼吸；
+ * - standby 待机：用户让它停下，不会自己醒——灯灭了，随时可以再点亮。
+ * 删除不是一种状态，是一个动作。
+ */
+export type Glow = 'active' | 'dormant' | 'standby';
+export const glowOf = (life: ProjectLife, opts: { active?: boolean; cloud?: boolean } = {}): Glow =>
+  opts.active ? 'active' : life.state === 'watching' || opts.cloud ? 'dormant' : 'standby';
+export const GLOW_LABEL: Record<Glow, string> = { active: '活跃', dormant: '休眠', standby: '待机' };
+/** 点亮了多少天（从 1 开始算；老项目没有 litAt 就从创建时间算） */
+export const litDays = (life: ProjectLife, createdAt: number, now: number): number =>
+  Math.max(1, Math.floor((now - (life.litAt ?? createdAt)) / DAY) + 1);
+/** 一句话说清这盏灯现在在干什么 */
+export const glowLine = (g: Glow, life: ProjectLife, createdAt: number, now: number): string =>
+  g === 'standby' ? '待机：不会自己醒来，随时可以再点亮'
+    : g === 'active' ? `活跃：正在做事 · 已点亮 ${litDays(life, createdAt, now)} 天`
+    : `休眠：已点亮 ${litDays(life, createdAt, now)} 天 · 下次醒来 ${relTime(life.nextWakeAt, now)}`;
+const relTime = (at: number, now: number) => {
+  const d = at - now; if (d <= 60_000) return '马上';
+  const h = Math.round(d / HOUR);
+  return d < HOUR ? `${Math.round(d / 60_000)} 分钟后` : h < 48 ? `${h} 小时后` : `${Math.round(h / 24)} 天后`;
+};
 
 export const KIND_LABEL: Record<PulseKind, { icon: string; label: string }> = {
   inspiration: { icon: '💡', label: '灵感' },

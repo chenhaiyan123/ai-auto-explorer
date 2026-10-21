@@ -661,8 +661,10 @@ export interface PulseNote {
   handled?: 'fact' | 'dismissed';
 }
 export interface ProjectLife {
-  /** watching = 活着、会按节奏醒来；paused = 用户叫停了 */
+  /** watching = 点亮了（活着、会按节奏醒来）；paused = 用户让它待机了 */
   state: 'watching' | 'paused';
+  /** 什么时候点亮的（算「已点亮 N 天」用；老项目没有，就从创建时间算） */
+  litAt?: number;
   /** 用户选的基础节奏（小时） */
   cadenceHours: number;
   /** 实际下一次醒来（会因为「最近没新东西」或「用户很久没来看」而拉长） */

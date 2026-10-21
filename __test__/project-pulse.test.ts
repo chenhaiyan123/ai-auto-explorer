@@ -1,4 +1,4 @@
-import { defaultLife, nextInterval, pickDue, budgetAllows, spendBudget, parsePulse, applyPulse, notableToShow, touchViewed, setCadence, setWatching, MAX_WAKES_PER_DAY, failPulse } from '../services/projectPulse';
+import { defaultLife, nextInterval, pickDue, budgetAllows, spendBudget, parsePulse, applyPulse, notableToShow, touchViewed, setCadence, setWatching, MAX_WAKES_PER_DAY, failPulse, glowOf, glowLine, litDays } from '../services/projectPulse';
 let pass = 0, fail = 0; const ok = (c: unknown, m: string) => { if (c) pass++; else { fail++; console.error('✗', m); } };
 const H = 3600_000, D = 24 * H, now = Date.UTC(2026, 9, 20, 8);
 const proj = (id: string, life?: any): any => ({ id, name: id, metaProblem: '目标' + id, nodes: [], createdAt: 0, life });
@@ -49,4 +49,19 @@ ok(setCadence(l0, 72, now).cadenceHours === 72 && setCadence(l0, 5, now).cadence
 ok(setWatching(l0, false, now).state === 'paused' && setWatching({ ...l0, state: 'paused' }, true, now).nextWakeAt === now + D, 'pause/resume');
 const web = parsePulse('{"summary":"s","observations":[{"kind":"evidence","title":"有出处","detail":"d","source":2},{"kind":"clue","title":"没出处","source":7}]}', [{ index: 2, title: 't', url: 'https://www.example.cn/p' }]);
 ok(web.observations[0].url === 'https://www.example.cn/p' && web.observations[0].site === 'example.cn' && !web.observations[1].url, 'web sources mapped by index');
+// ===== 点亮 =====
+{
+  const lit = defaultLife(now);
+  ok(lit.litAt === now && glowOf(lit) === 'dormant', 'new project is lit (dormant)');
+  ok(glowOf(lit, { active: true }) === 'active', 'working → active');
+  const off = setWatching(lit, false, now + D);
+  ok(glowOf(off) === 'standby' && off.litAt === now, 'standby keeps history');
+  ok(glowOf(off, { cloud: true }) === 'dormant', 'cloud watching still alive');
+  const relit = setWatching(off, true, now + 3 * D);
+  ok(relit.litAt === now + 3 * D, 're-lighting restarts the count');
+  ok(setWatching(lit, true, now + 5 * D).litAt === now, 'lighting an already-lit project keeps its day count');
+  ok(litDays(lit, 0, now) === 1 && litDays(lit, 0, now + 9 * D + H) === 10, 'lit days count from 1');
+  ok(litDays({ ...lit, litAt: undefined }, now - 2 * D, now) === 3, 'old projects count from creation');
+  ok(glowLine('standby', off, now, now).startsWith('待机') && glowLine('dormant', lit, now, now).includes('下次醒来'), 'glow lines');
+}
 console.log(`project-pulse: ${pass} passed, ${fail} failed`); if (fail) process.exit(1);

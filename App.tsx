@@ -41,7 +41,7 @@ import NotesPanel from './components/ProjectNotesTree';
 import { ensureWorktree, saveStage, branchFromStage, switchExplorationBranch, PROJECT_PAGES, ProjectPage } from './services/projectWorktree';
 import { useInquiryTeams } from './services/useInquiryTeams';
 import { recoverInquiry, questionFactContext, addFact } from './services/inquiry';
-import { lifeOf, defaultLife, pickDue, budgetAllows, spendBudget, buildPulseMessages, parsePulse, applyPulse, failPulse, notableToShow, touchViewed, setCadence, setWatching, type PulseBudget } from './services/projectPulse';
+import { lifeOf, defaultLife, pickDue, budgetAllows, spendBudget, buildPulseMessages, parsePulse, applyPulse, failPulse, notableToShow, touchViewed, setCadence, setWatching, glowOf, glowLine, litDays, type Glow, type PulseBudget } from './services/projectPulse';
 import ProjectPulse from './components/ProjectPulse';
 import { callLLM } from './services/llmProvider';
 import type { SharedCatalog } from './services/sharedModelsClient';
@@ -893,12 +893,12 @@ const App: React.FC = () => {
   useEffect(() => { if (showAdminDashboard) { (async () => { setCloudStats(await monitor.fetchCloudStats()); try { const { getMessages } = await import('./services/messageService'); setAdminMessages(await getMessages()); } catch { setAdminMessages([]); } })(); } }, [showAdminDashboard]);
 
   // 删除项目
-  const handleDeleteProject = useCallback(async (projectId: string) => {
+  const handleDeleteProject = useCallback(async (projectId: string, confirmed = false) => {
     if (projects.length <= 1) {
       alert('至少保留一个项目');
       return;
     }
-    if (!confirm('确定要删除这个项目吗？此操作不可恢复。')) return;
+    if (!confirmed && !confirm('确定要删除这个项目吗？此操作不可恢复。')) return;
     const deleting = projects.find(p => p.id === projectId);
     try { if (deleting) await pauseCloudProject(deleting); }
     catch { alert('无法确认云端已停止，暂未删除项目。请恢复连接后重试，避免项目删除后后台仍继续调用模型。'); return; }
@@ -2819,10 +2819,18 @@ ${plan.lead.duty}
   const worktreeBusy = !!(isLooping || isProcessingRef.current || isGeneratingReport || teamBusy || outlineBusy || routeBusy || simBusy || overviewRefreshingRef.current || isProposingRef.current || (currentProjectId && inquiryTeams.isProjectRunning(currentProjectId)));
   // ===== 项目「活着」：长期关注、低频醒来看一眼 =====
   // 所有项目默认 watching；醒来看到的东西记进项目自己的关注日志，不刷对话框。
-  const aliveProjectIds = projects.filter((p, i) => lifeOf(p, Date.now(), i).state === 'watching' || cloudWatch[p.id]?.enabled).map(p => p.id);
   const [wakingId, setWakingId] = useState<string | null>(null);
   /** 各项目云端长期关注的状态（来自项目总览里的云端面板）。开着云端的项目，浏览器里就不再自己醒，免得重复花钱 */
   const [cloudWatch, setCloudWatch] = useState<Record<string, { enabled: boolean; nextCheckAt?: number; lastSummary?: string; lastAt?: number }>>({});
+  // （必须在 cloudWatch 声明之后：之前写在前面，碰到待机项目就会读到未初始化的变量）
+  const aliveProjectIds = projects.filter((p, i) => lifeOf(p, Date.now(), i).state === 'watching' || cloudWatch[p.id]?.enabled).map(p => p.id);
+  // 点亮：每个项目的灯（活跃 / 休眠 / 待机）
+  const glowNow = Date.now();
+  const projectGlow: Record<string, { glow: Glow; line: string }> = Object.fromEntries(projects.map((p, i) => {
+    const life = lifeOf(p, glowNow, i);
+    const g = glowOf(life, { active: activeProjectIds.includes(p.id) || wakingId === p.id, cloud: !!cloudWatch[p.id]?.enabled });
+    return [p.id, { glow: g, line: glowLine(g, life, p.createdAt || glowNow, glowNow) }];
+  }));
   const cloudWatchRef = useRef(cloudWatch);
   useEffect(() => { cloudWatchRef.current = cloudWatch; }, [cloudWatch]);
   const [openActivation, setOpenActivation] = useState(0);
@@ -2830,6 +2838,28 @@ ${plan.lead.duty}
   const patchLife = useCallback((projectId: string, fn: (life: NonNullable<Project['life']>) => NonNullable<Project['life']>) => {
     setProjects(prev => prev.map((p, i) => (p.id === projectId ? { ...p, life: fn(lifeOf(p, Date.now(), i)) } : p)));
   }, []);
+  /**
+   * 点亮 / 待机。点亮 = 这个项目一直活着：按节奏醒来找线索、找机会，遇到只有你知道的事会来问你。
+   * 待机 = 用户叫它停：手上的事停下，不再自己醒（云端那份也一起停），随时可以再点亮。
+   */
+  const lightProject = useCallback(async (projectId: string, on: boolean) => {
+    const p = projectsRef.current.find(x => x.id === projectId);
+    if (!p) return;
+    if (!on) {
+      if (cloudWatchRef.current[projectId]?.enabled) {
+        try { await pauseCloudProject(p); setCloudWatch(prev => ({ ...prev, [projectId]: { ...prev[projectId], enabled: false } })); }
+        catch { addNotification('warning', '云端那份没停下来', '网络恢复后再试一次；本机这边已经待机。'); }
+      }
+      if (projectId === currentProjectId) { isLoopingRef.current = false; batchRef.current = null; setIsLooping(false); setContinuousMode(false); }
+      inquiryTeams.stopProject(projectId);
+    }
+    patchLife(projectId, l => setWatching(l, on, Date.now()));
+    pushFeedItem(on
+      ? feedStatus('💡 点亮了。从现在起它一直活着：按节奏醒来找线索、找机会，遇到只有你知道的事会来问你。', { tone: 'good' })
+      : feedStatus('🌙 待机了：手上的事先停下，不会自己醒来。想继续的时候，右键项目再点亮。'), projectId);
+    trackEvent(on ? 'project_light' : 'project_standby');
+  }, [currentProjectId, patchLife, pushFeedItem, addNotification, inquiryTeams]);
+
   // 老项目没有 life 字段：补上默认值（第一次醒来错开，不会一起醒）
   useEffect(() => {
     if (!loadedOwner || !projects.some(p => !p.life)) return;
@@ -2945,7 +2975,8 @@ ${plan.lead.duty}
       cloud={WAKE_API ? { ...(cloudWatch[currentProject.id] || { enabled: false }), onSetup: () => setOpenActivation(n => n + 1) } : undefined}
       onWakeNow={() => void wakeProject(currentProject.id, true)}
       onCadence={h => patchLife(currentProject.id, l => setCadence(l, h, Date.now()))}
-      onToggle={on => patchLife(currentProject.id, l => setWatching(l, on, Date.now()))}
+      onToggle={on => void lightProject(currentProject.id, on)}
+      glow={{ glow: projectGlow[currentProject.id]?.glow || 'dormant', days: litDays(lifeOf(currentProject, Date.now(), projects.indexOf(currentProject)), currentProject.createdAt || Date.now(), Date.now()) }}
       onToFact={note => {
         try {
           inquiryTeams.change(currentProject.id, 'root', currentProject.metaProblem || currentProject.name, w => addFact(w, { claim: note.title + (note.detail ? `：${note.detail}` : ''), source: note.url || 'AI 项目经理的关注日志（待核实）', excerpt: '', scope: '' }));
@@ -3297,7 +3328,7 @@ ${plan.lead.duty}
             </div>
           </div>
           <div className="flex-1 overflow-hidden">
-            <NotesPanel activeProjectIds={activeProjectIds} aliveProjectIds={aliveProjectIds} projects={projectsView} currentProjectId={currentProjectId} selectedNodeId={selectedNodeId} search={notesSearch} onSearch={setNotesSearch} onOpenNode={openNode} onCreateProject={openNewTask} onCreateDirection={handleCreateDirection} onAddChild={handleCreateChild} onBuildTeam={handleBuildTeam} onCleanup={handleCleanupProject} onImport={handleImportMd} onExportVault={handleExportVault} onSaveToFolder={handleSaveToFolder} onOpenPage={openProjectPage} selectedPage={activeProjectPage} />
+            <NotesPanel glow={projectGlow} onLight={(id, on) => void lightProject(id, on)} onWake={id => void wakeProject(id, true)} onDelete={id => void handleDeleteProject(id, true)} activeProjectIds={activeProjectIds} aliveProjectIds={aliveProjectIds} projects={projectsView} currentProjectId={currentProjectId} selectedNodeId={selectedNodeId} search={notesSearch} onSearch={setNotesSearch} onOpenNode={openNode} onCreateProject={openNewTask} onCreateDirection={handleCreateDirection} onAddChild={handleCreateChild} onBuildTeam={handleBuildTeam} onCleanup={handleCleanupProject} onImport={handleImportMd} onExportVault={handleExportVault} onSaveToFolder={handleSaveToFolder} onOpenPage={openProjectPage} selectedPage={activeProjectPage} />
           </div>
           </>}
         </aside>

@@ -584,3 +584,10 @@ html[data-native="ios"] [role="dialog"] { max-height: calc(100dvh - env(safe-are
   .app-note-panel [class*="md:col-span-"],
   .app-note-panel [class*="lg:col-span-"] { grid-column: auto !important; }
 }
+
+/* ===== 点亮：休眠的灯慢慢呼吸，活跃的灯在跳，待机的灯灭着 ===== */
+@keyframes hx-breathe { 0%, 100% { opacity: .55; box-shadow: 0 0 3px rgba(52,211,153,.5); } 50% { opacity: 1; box-shadow: 0 0 9px rgba(52,211,153,.95); } }
+.hx-breathe { animation: hx-breathe 3.6s ease-in-out infinite; }
+@keyframes hx-lit { 0% { transform: scale(.4); box-shadow: 0 0 0 rgba(52,211,153,0); } 60% { transform: scale(1.6); box-shadow: 0 0 18px rgba(52,211,153,1); } 100% { transform: scale(1); } }
+.hx-lit { animation: hx-lit .9s ease-out 1; }
+@media (prefers-reduced-motion: reduce) { .hx-breathe, .hx-lit { animation: none; } }

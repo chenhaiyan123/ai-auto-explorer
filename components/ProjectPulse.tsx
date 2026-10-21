@@ -22,6 +22,8 @@ const ProjectPulse: React.FC<{
   onToFact: (note: PulseNote) => void;
   onDismiss: (note: PulseNote) => void;
   onOpenNote?: (title: string) => void;
+  /** 这盏灯：活跃 / 休眠 / 待机 + 点亮了几天 */
+  glow?: { glow: 'active' | 'dormant' | 'standby'; days: number };
   /** 花钱权限（说人话的一句）；undefined = 还没谈过 */
   charter?: string;
   onEditCharter?: () => void;
@@ -29,7 +31,7 @@ const ProjectPulse: React.FC<{
   autoOff?: boolean;
   /** 云端长期关注（关掉电脑也会醒）。undefined = 这个部署没有云端执行器 */
   cloud?: { enabled: boolean; nextCheckAt?: number; lastSummary?: string; lastAt?: number; onSetup: () => void };
-}> = ({ charter, onEditCharter, cloud, autoOff, life, waking, onWakeNow, onCadence, onToggle, onToFact, onDismiss, onOpenNote }) => {
+}> = ({ glow, charter, onEditCharter, cloud, autoOff, life, waking, onWakeNow, onCadence, onToggle, onToFact, onDismiss, onOpenNote }) => {
   const [all, setAll] = useState(false);
   const notes = life.journal.filter(j => j.handled !== 'dismissed').slice().reverse();
   const shown = all ? notes : notes.slice(0, 4);
@@ -37,10 +39,11 @@ const ProjectPulse: React.FC<{
   return (
     <section className="rounded-xl border border-emerald-700/40 bg-emerald-950/20 p-3 space-y-2.5">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className={`w-2 h-2 rounded-full ${on ? 'bg-emerald-500' : 'bg-slate-500'}`} />
-        <span className="text-[13px] font-semibold text-slate-200">{on ? '长期关注中' : '已暂停关注'}</span>
+        {glow?.glow === 'active' ? <span className="relative flex w-2.5 h-2.5"><span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" /><span className="relative inline-flex w-2.5 h-2.5 rounded-full bg-emerald-400" /></span>
+          : on ? <span className="w-2 h-2 rounded-full bg-emerald-400 hx-breathe" /> : <span className="w-2 h-2 rounded-full border border-slate-500" />}
+        <span className="text-[13px] font-semibold text-slate-200">{!on ? '🌙 待机' : glow?.glow === 'active' ? `💡 已点亮 ${glow.days} 天 · 活跃中` : `💡 已点亮${glow ? ` ${glow.days} 天` : ''} · 休眠中`}</span>
         <span className="text-[12px] text-slate-400">
-          {waking ? '正在醒来看一眼…' : !on ? '不会自动醒来' : autoOff ? '体验额度下不自动醒来（省额度），可以手动「现在看一眼」' : `下次醒来：${when(life.nextWakeAt)}`}
+          {waking ? '正在醒来看一眼…' : !on ? '不会自己醒来——点亮之后，它会一直活着，按节奏醒来找线索和机会' : autoOff ? '体验额度下不自动醒来（省额度），可以手动「现在看一眼」' : `下次醒来：${when(life.nextWakeAt)}`}
           {life.lastWakeAt && !waking ? ` · 上次 ${when(life.lastWakeAt)}：${life.lastSummary || ''}` : ''}
         </span>
       </div>
@@ -51,8 +54,10 @@ const ProjectPulse: React.FC<{
             {CADENCE_OPTIONS.map(h => <option key={h} value={h}>{cadenceLabel(h)}</option>)}
           </select>
         </label>
-        <button onClick={onWakeNow} disabled={waking || !on} className="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40">现在看一眼</button>
-        <button onClick={() => onToggle(!on)} className="px-2 py-0.5 rounded text-slate-500 hover:text-slate-300">{on ? '暂停关注' : '恢复关注'}</button>
+        <button onClick={onWakeNow} disabled={waking} className="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40">现在看一眼</button>
+        {on
+          ? <button onClick={() => onToggle(false)} className="px-2 py-0.5 rounded text-slate-500 hover:text-slate-300">🌙 待机</button>
+          : <button onClick={() => onToggle(true)} className="px-2.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold">💡 点亮</button>}
         <span className="text-[11px] text-slate-500 ml-auto">没新东西会自动放慢；很久没打开也会放慢</span>
       </div>
       {cloud && (cloud.enabled ? (
