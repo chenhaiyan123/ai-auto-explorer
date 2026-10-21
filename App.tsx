@@ -48,6 +48,10 @@ import { recoverInquiry, questionFactContext, addFact } from './services/inquiry
 import { lifeOf, defaultLife, pickDue, budgetAllows, spendBudget, buildPulseMessages, parsePulse, applyPulse, failPulse, notableToShow, touchViewed, setCadence, setWatching, glowOf, glowLine, litDays, type Glow, type PulseBudget } from './services/projectPulse';
 import ProjectPulse from './components/ProjectPulse';
 import { callLLM } from './services/llmProvider';
+import AutonomyModal from './components/AutonomyModal';
+import { grantAutonomy, isAutonomous, isRunningAutonomously, logAuto, autoChoice, budgetLeftCNY, autoSpentCNY, canPlanNextStage, entriesSince, reportDue, fallbackReport, buildReportMessages, parseReport, nextCheckIn } from './services/autonomy';
+import { reportAsk } from './services/agentFeed';
+import type { Autonomy, AutoLogEntry } from './types';
 import type { SharedCatalog } from './services/sharedModelsClient';
 import QuestionEvaluator from './components/QuestionEvaluator';
 import QuestionBoard from './components/QuestionBoard';
@@ -1064,11 +1068,43 @@ const App: React.FC = () => {
     if (!pid) return;
     setProjects(prev => prev.map(p => (p.id === pid ? { ...p, feed: fn(p.feed) } : p)));
   }, []);
+  // ===== 自主运行：AI 当自己是个独立的人 =====
+  /** 把一件事记进自主运行日志（只在项目授权了自主运行时记；用户回来时汇报的原料） */
+  const noteAuto = useCallback((kind: AutoLogEntry['kind'], text: string, nodeId?: string, projectId?: string) => {
+    const pid = projectId || feedProjectRef.current;
+    if (!pid || !isAutonomous(projectsRef.current.find(p => p.id === pid))) return;
+    projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, autolog: logAuto(p.autolog, kind, text, nodeId) } : p));
+    setProjects(prev => prev.map(p => (p.id === pid ? { ...p, autolog: logAuto(p.autolog, kind, text, nodeId) } : p)));
+  }, []);
+  const patchAutonomy = useCallback((pid: string, patch: Partial<Autonomy> | null) => {
+    const apply = (p: Project): Project => (p.id !== pid ? p : { ...p, autonomy: patch === null ? undefined : { ...(p.autonomy as Autonomy), ...patch } });
+    projectsRef.current = projectsRef.current.map(apply);
+    setProjects(prev => prev.map(apply));
+  }, []);
+  /** 自主运行时，不重要的问题卡 AI 自己答（答案标「🤖 我自己决定」），重要的才留给你 */
+  const answerFeedRef = useRef<((item: FeedItem, optionId: string, text?: string, why?: string) => void) | null>(null);
+  /** 平台模型的钱包价（分 / 百万 Token）：算自主运行花了多少 */
+  const modelPricesRef = useRef<Record<string, number>>({});
+  useEffect(() => { if (SHARED_API) sharedRequest<SharedCatalog>('/shared/catalog').then(c => { modelPricesRef.current = Object.fromEntries(c.models.map(m => [m.id, m.priceCentsPerM || 0])); }).catch(() => {}); }, []);
+
   const pushFeedItem = useCallback((item: FeedItem, projectId?: string) => {
+    const pid = projectId || feedProjectRef.current;
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (item.kind === 'ask' && item.ask && item.ask.type !== 'report' && isRunningAutonomously(proj)) {
+      const c = autoChoice(item.ask.type, item.ask.options.map(o => o.id));
+      if (c && pid === feedProjectRef.current) {
+        patchFeed(f => pushFeed(f, item), projectId);
+        setTimeout(() => answerFeedRef.current?.(item, c.option, undefined, c.why), 30);
+        return;
+      }
+      noteAuto(item.ask.type === 'halted' ? 'stuck' : 'need', item.text, item.nodeId, pid || undefined);
+    } else if (item.kind === 'status' && isAutonomous(proj) && (item.tone === 'good' || item.tone === 'warn') && !item.text.startsWith('↻')) {
+      noteAuto(item.tone === 'good' ? 'did' : 'stuck', item.text, item.nodeId, pid || undefined);
+    }
     patchFeed(f => pushFeed(f, item), projectId);
     // 有问题要问你，就把对话栏打开——不然问题卡挂在收起的栏里等于没问
     if (item.kind === 'ask') setRightChatOpen(true);
-  }, [patchFeed]);
+  }, [patchFeed, noteAuto]);
   const closeFeedAsks = useCallback((type: Parameters<typeof closeAsks>[1], label?: string, nodeId?: string) => {
     patchFeed(f => closeAsks(f, type, label, nodeId));
   }, [patchFeed]);
@@ -1605,6 +1641,12 @@ const App: React.FC = () => {
         } else if (batchRef.current) {
           const b = batchRef.current;
           b.done.push({ id: cid, title: nodeTitle, flag: finalStatus === NodeStatus.CONTRADICTED ? '🔴' : finalStatus === NodeStatus.VALIDATING ? '🟡' : '✅' });
+          {
+            const gist = (result.notes || '').replace(/^#{1,6}.*$/gm, '').replace(/\*\*|`/g, '').replace(/\s+/g, ' ').trim().slice(0, 90);
+            if (finalStatus === NodeStatus.VALIDATING) noteAuto('stuck', `「${nodeTitle}」要到现实里做：${hits[0]?.label || '需要真实数据 / 真人'}`, cid);
+            else if (finalStatus === NodeStatus.CONTRADICTED) noteAuto('think', `「${nodeTitle}」原来的判断被现实推翻了，换个假设继续`, cid);
+            noteAuto('did', `做完「${nodeTitle}」${gist ? `：${gist}` : ''}`, cid);
+          }
           if (b.done.length >= b.target) setTimeout(() => endBatchRef.current?.('done'), 0);
           else pushFeedItem(batchProgress(b));
         }
@@ -1997,8 +2039,12 @@ ${plan.lead.duty}
       patchProject(pid, { outline: withNote });
       trackEvent('outline_proposed', { items: outline.items.length });
       // 上一份没答的框架卡作废，换成新的这份
-      patchFeed(f => pushFeed(closeAsks(f, 'outline', '已重拟'), outlineAsk(withNote)), pid);
-      setRightChatOpen(true);
+      const card = outlineAsk(withNote);
+      patchFeed(f => pushFeed(closeAsks(f, 'outline', '已重拟'), card), pid);
+      // 自主运行中自己拆的下一阶段：自己确认、接着做（不来打扰你）
+      const auto = isRunningAutonomously(projectsRef.current.find(p => p.id === pid)) && pid === feedProjectRef.current ? autoChoice('outline', card.ask!.options.map(o => o.id)) : null;
+      if (auto) setTimeout(() => answerFeedRef.current?.(card, auto.option, undefined, auto.why), 300);
+      else setRightChatOpen(true);
       if (problems.length) addNotification('info', '🗺️ 有几条被丢掉了', problems.join('；'));
     } catch (e: any) {
       addNotification('warning', '🗺️ 拆步骤失败', e?.message || String(e));
@@ -2057,6 +2103,8 @@ ${plan.lead.duty}
     const proj = projectsRef.current.find(p => p.id === pid);
     const k = nextPending(proj?.keyInfo);
     if (!proj || !k) return false;
+    // 自主运行中不来打扰：问题留着，回来汇报时一起问
+    if (isRunningAutonomously(proj)) return false;
     if (!kickoffNodeId && openAsks(proj.feed).some(f => f.ask?.type === 'info')) return true; // 已经有一张在等了，不叠
     const list = markAsked(proj.keyInfo, k.id);
     projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, keyInfo: list } : p));
@@ -2073,6 +2121,29 @@ ${plan.lead.duty}
     forceNodeRef.current = nodeId!; setJustWroteId(null);
     setTimeout(() => setIsLooping(true), 50);
   }, []);
+
+  /**
+   * 开工：该谈的都谈完了。
+   * - 还没问过要不要自主运行 → 弹框请你授权（或者先一步一步来）；
+   * - 已经授权 → 直接自主运行；
+   * - 选过一步一步来 → 做第一步，做完停下来给你看。
+   */
+  const [autonomyFor, setAutonomyFor] = useState<{ pid: string; nodeId?: string } | null>(null);
+  const startBatchRef = useRef<((target?: number) => void) | null>(null);
+  const beginWorkRef = useRef<((nodeId?: string) => void) | null>(null);
+  const beginWork = useCallback((nodeId?: string) => {
+    const pid = feedProjectRef.current;
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!pid || !proj) return;
+    if (isRunningAutonomously(proj)) {
+      if (nodeId) forceNodeRef.current = nodeId;
+      setTimeout(() => startBatchRef.current?.(), 50);
+      return;
+    }
+    if (!proj.autonomy) { setAutonomyFor({ pid, nodeId }); return; }
+    kickoffWriting(nodeId);
+  }, [kickoffWriting]);
+  useEffect(() => { beginWorkRef.current = beginWork; }, [beginWork]);
 
   // ===== AI 项目经理在服务广场：买服务 / 发需求 / 接单 =====
   const pmBusyRef = useRef<Set<string>>(new Set());
@@ -2134,7 +2205,7 @@ ${plan.lead.duty}
       return;
     }
     if (askNextInfo(pid, firstId)) return;
-    if (firstId) { forceNodeRef.current = firstId; setTimeout(() => setIsLooping(true), 50); }
+    if (firstId) beginWorkRef.current?.(firstId);
   }, [currentProjectId, patchFeed, askNextInfo]);
 
   const handleDiscardOutline = useCallback(() => {
@@ -2205,16 +2276,126 @@ ${plan.lead.duty}
     pushFeedItem(batchProgress(batchRef.current));
     trackEvent('batch_start', { target });
   }, [closeFeedAsks, pushFeedItem]);
+  useEffect(() => { startBatchRef.current = (t?: number) => startBatch(t ?? Math.min(BATCH_SIZE, Math.max(1, remainingCount(nodesRef.current)))); }, [startBatch]);
+
+  /**
+   * 自主运行时一轮做完了，自己决定接下来干什么（不弹汇总卡）：
+   * 钱花完了 → 停下来等你；还有步骤 → 歇几秒接着做；这一阶段做完了 → 自己拆下一阶段（有节制），拆不了就等你回来。
+   */
+  const resumeAutoRef = useRef<((pid: string) => void) | null>(null);
+  const autoNext = useCallback((pid: string, reason: 'done' | 'empty' | 'halted') => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    const a = proj?.autonomy;
+    if (!proj || !a?.on || a.pausedFor || pid !== feedProjectRef.current) return;
+    if (reason === 'halted') { patchAutonomy(pid, { pausedFor: 'important' }); return; }
+    if (budgetLeftCNY(proj, modelPricesRef.current) <= 0) {
+      patchAutonomy(pid, { pausedFor: 'budget' });
+      noteAuto('need', `启动资金 ¥${a.budgetCNY} 用完了，停下来等你：要继续就再给我一笔`, undefined, pid);
+      pushFeedItem(feedStatus(`⏸ 启动资金 ¥${a.budgetCNY} 用完了，我先停下。你回来时我把这段时间的情况汇报给你`, { tone: 'warn' }), pid);
+      return;
+    }
+    const remaining = remainingCount(nodesRef.current);
+    if (remaining > 0) { setTimeout(() => { const cur = projectsRef.current.find(p => p.id === pid); if (isRunningAutonomously(cur) && feedProjectRef.current === pid && !batchRef.current) startBatchRef.current?.(); }, 3000); return; }
+    if (canPlanNextStage(a)) {
+      patchAutonomy(pid, { stageRounds: (a.stageRounds || 0) + 1, lastStageAt: Date.now() });
+      noteAuto('think', '这一阶段能推进的都推进了，我自己拆了下一阶段接着做', undefined, pid);
+      pushFeedItem(feedStatus('🧭 这一阶段能推进的都推进了，我自己拆下一阶段'), pid);
+      proposeOutlineRef.current?.(pid);
+      return;
+    }
+    patchAutonomy(pid, { pausedFor: 'stage' });
+    noteAuto('need', '这一阶段做完了，下一阶段往哪走，想等你回来看一眼再定', undefined, pid);
+  }, [patchAutonomy, noteAuto, pushFeedItem]);
+
   const endBatch = useCallback((reason: 'done' | 'empty' | 'stopped' | 'halted') => {
     const b = batchRef.current;
     batchRef.current = null;
     setContinuousMode(false);
     setIsLooping(false);
     if (!b) return;
-    pushFeedItem(batchAsk(b, reason, remainingCount(nodes)));
     trackEvent('batch_end', { reason, done: b.done.length });
-  }, [nodes, pushFeedItem]);
+    const pid = feedProjectRef.current;
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (pid && isRunningAutonomously(proj) && reason !== 'stopped') {
+      // 自主运行：一轮做完不打扰你，进度行收个尾，自己决定接下来
+      pushFeedItem(feedStatus(`⚡ 自主运行了一轮，做了 ${b.done.length} 步`, { key: `batch:${b.id}`, detail: b.done.map(d => `${d.flag || '✅'} ${d.title}`).join('、') || undefined }));
+      autoNext(pid, reason);
+      return;
+    }
+    if (pid && reason === 'stopped' && proj?.autonomy?.on) patchAutonomy(pid, { pausedFor: 'user' });
+    pushFeedItem(batchAsk(b, reason, remainingCount(nodes)));
+  }, [nodes, pushFeedItem, autoNext, patchAutonomy]);
   useEffect(() => { endBatchRef.current = endBatch; }, [endBatch]);
+
+  /** 接着自主运行：有步骤就做，没有就拆下一阶段 */
+  const resumeAuto = useCallback((pid: string) => {
+    if (pid !== feedProjectRef.current || batchRef.current) return;
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!isRunningAutonomously(proj)) return;
+    if (budgetLeftCNY(proj!, modelPricesRef.current) <= 0) { autoNext(pid, 'done'); return; }
+    if (remainingCount(nodesRef.current) > 0) startBatchRef.current?.();
+    else autoNext(pid, 'empty');
+  }, [autoNext]);
+  useEffect(() => { resumeAutoRef.current = resumeAuto; }, [resumeAuto]);
+
+  /** 允许自主运行（开工弹框里点的） */
+  const allowAutonomy = useCallback((pid: string, o: { budgetCNY: number; checkInDays: number; allowJobs: boolean }, nodeId?: string) => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!proj) return;
+    const prev = proj.autonomy?.on ? proj.autonomy : undefined;
+    // 再次授权（比如钱花完了再给一笔）：预算在已花的基础上加，日志和阶段计数接着记
+    const spent = prev ? autoSpentCNY(proj, modelPricesRef.current) : 0;
+    const autonomy: Autonomy = prev
+      ? { ...prev, budgetCNY: Math.round(spent + o.budgetCNY), checkInDays: o.checkInDays, pausedFor: undefined, stageRounds: 0 }
+      : grantAutonomy(o.budgetCNY, o.checkInDays);
+    patchAutonomy(pid, autonomy);
+    if (!!proj.charter?.allowJobs !== o.allowJobs) toggleJobs(pid, o.allowJobs);
+    noteAuto('think', `你授权我自主运行：¥${o.budgetCNY} 以内，每 ${o.checkInDays} 天回来看一次`, undefined, pid);
+    pushFeedItem(feedStatus(`⚡ 收到，我开始自主运行：¥${o.budgetCNY} 以内，小事我自己拿主意，不来打扰你。${o.checkInDays === 14 ? '两周' : '一周'}后回来看我，我把做了什么、怎么想的、卡在哪、需要你什么一起汇报给你`, { tone: 'good' }), pid);
+    trackEvent('autonomy_granted', { budget: o.budgetCNY, days: o.checkInDays, jobs: o.allowJobs ? 1 : 0 });
+    if (nodeId) forceNodeRef.current = nodeId;
+    setTimeout(() => resumeAutoRef.current?.(pid), 50);
+  }, [patchAutonomy, toggleJobs, noteAuto, pushFeedItem]);
+
+  // ===== 用户回来了：汇报这段时间 =====
+  const reportBusyRef = useRef(false);
+  const giveReport = useCallback(async (pid: string, force = false) => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    const a = proj?.autonomy;
+    if (!proj || !a?.on || reportBusyRef.current) return;
+    if (!force && !reportDue(proj)) return;
+    reportBusyRef.current = true;
+    try {
+      const entries = entriesSince(proj);
+      const pending = (proj.keyInfo || []).filter(k => k.status === 'pending');
+      const extra = [
+        a.pausedFor === 'budget' ? `启动资金 ¥${a.budgetCNY} 用完了：觉得值得继续，就再给我一笔（点「⚡ 自主运行」）` : '',
+        a.pausedFor === 'stage' ? '这一阶段做完了，下一阶段往哪走需要你看一眼' : '',
+        a.pausedFor === 'important' ? '有件很重要的事要你拍板（见对话里的卡片）' : '',
+      ].filter(Boolean);
+      const spent = autoSpentCNY(proj, modelPricesRef.current);
+      const statusLine = `已花 ¥${spent.toFixed(2)} / 启动资金 ¥${a.budgetCNY}；还有 ${remainingCount(proj.nodes || [])} 步没做${a.pausedFor ? `；现在停着（${a.pausedFor}）` : ''}`;
+      let r = fallbackReport(entries, pending, extra);
+      try {
+        const resp = await meterFor(pid, () => callLLM(buildReportMessages(proj, entries, pending, statusLine) as any, { jsonMode: true, maxTokens: 1500, timeoutMs: 90000 }));
+        const parsed = parseReport(resp.content);
+        if (parsed) r = { ...parsed, needs: [...new Set([...extra, ...parsed.needs])].slice(0, 4) };
+      } catch (e) { console.warn('[autonomy] 汇报没写成，用日志直接汇报', e); }
+      const pausedLabel = a.pausedFor ? ({ budget: '启动资金用完了', stage: '这一阶段做完了，等你看', important: '有很重要的事等你拍板', user: '你让我先停着' } as Record<string, string>)[a.pausedFor] : undefined;
+      const now = Date.now();
+      pushFeedItem(reportAsk(r, { since: a.lastReportAt || a.grantedAt, paused: pausedLabel, nextCheck: nextCheckIn({ ...a, lastReportAt: now }, now), hasQuestions: pending.length > 0 }), pid);
+      patchAutonomy(pid, { lastReportAt: now });
+      trackEvent('autonomy_report', { entries: entries.length });
+    } finally { reportBusyRef.current = false; }
+  }, [pushFeedItem, patchAutonomy]);
+  // 打开项目 / 切回这个页面时：离上次汇报有一阵子、又做了些事，就先汇报
+  useEffect(() => {
+    if (!currentProjectId) return;
+    const t = setTimeout(() => void giveReport(currentProjectId), 1500);
+    const onVis = () => { if (document.visibilityState === 'visible' && feedProjectRef.current) void giveReport(feedProjectRef.current); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearTimeout(t); document.removeEventListener('visibilitychange', onVis); };
+  }, [currentProjectId, giveReport]);
 
   const handleSwitchToAuto = useCallback(() => {
     setJustWroteId(null);
@@ -2632,7 +2813,7 @@ ${plan.lead.duty}
     trackEvent('record_decision', { trigger });
   }, [nodes, currentProjectId]);
 
-  const handleAnswerFeed = useCallback((item: FeedItem, optionId: string, text?: string) => {
+  const handleAnswerFeed = useCallback((item: FeedItem, optionId: string, text?: string, aiWhy?: string) => {
     const ask = item.ask;
     if (!ask || ask.answer) return;
     const opt = ask.options.find(o => o.id === optionId);
@@ -2643,13 +2824,15 @@ ${plan.lead.duty}
       else patchFeed(f => answerFeed(f, item.id, '已过期'));
       return;
     }
-    const label = typed ? (opt && opt.id !== ask.input?.optionId ? `${opt.label}：“${typed}”` : `“${typed}”`) : (opt?.label || optionId);
-    patchFeed(f => answerFeed(f, item.id, label));
+    const label = aiWhy ? `🤖 我自己决定：${aiWhy}` : typed ? (opt && opt.id !== ask.input?.optionId ? `${opt.label}：“${typed}”` : `“${typed}”`) : (opt?.label || optionId);
+    patchFeed(f => answerFeed(f, item.id, label).map(x => (aiWhy && x.id === item.id && x.ask?.answer ? { ...x, ask: { ...x.ask, answer: { ...x.ask.answer, auto: true } } } : x)));
+    if (aiWhy) noteAuto('think', `${item.text.replace(/\s+/g, ' ').slice(0, 60)} → ${aiWhy}`, item.nodeId);
     trackEvent('feed_answer', { type: ask.type, option: optionId, typed: typed ? 1 : 0 });
     const node = item.nodeId ? nodes.find(n => n.id === item.nodeId) : undefined;
 
     switch (ask.type) {
       case 'step': {
+        if (aiWhy && currentProjectId) { setJustWroteId(null); resumeAutoRef.current?.(currentProjectId); break; }
         if (optionId === 'next') {
           const nextId = outlineDone.next?.nodeId;
           if (typed && nextId) updateNode(nextId, { userAsk: typed });
@@ -2735,7 +2918,12 @@ ${plan.lead.duty}
       }
       case 'halted': {
         if (optionId === 'settings') setShowSettingsModal(true);
-        else { consecutiveFailRef.current = 0; setIsLooping(true); }
+        else {
+          consecutiveFailRef.current = 0;
+          const pa = currentProjectId ? projectsRef.current.find(p => p.id === currentProjectId)?.autonomy : undefined;
+          if (currentProjectId && pa?.on && pa.pausedFor === 'important') { patchAutonomy(currentProjectId, { pausedFor: undefined }); resumeAutoRef.current?.(currentProjectId); }
+          else setIsLooping(true);
+        }
         break;
       }
       case 'charter': {
@@ -2756,9 +2944,10 @@ ${plan.lead.duty}
         } : p));
         const startId = item.nodeId && nodes.some(n => n.id === item.nodeId && n.status === NodeStatus.UNEXPLORED) ? item.nodeId : undefined;
         const willAsk = !!startId && !!nextPending(kiAfterCharter);
-        pushFeedItem(feedStatus(`📌 记进 AI 记忆：${charterLabel(charter)}${startId && !willAsk ? '。开始做第一步，做完停下来给你看结果' : ''}`, { tone: 'good' }));
+        pushFeedItem(feedStatus(`📌 记进 AI 记忆：${charterLabel(charter)}`, { tone: 'good' }));
+        void willAsk;
         trackEvent('charter_set', { autoBuy: charter.autoBuyCNY, monthly: charter.monthlyCNY || 0 });
-        if (startId && !askNextInfo(currentProjectId, startId)) kickoffWriting(startId);
+        if (startId && !askNextInfo(currentProjectId, startId)) beginWork(startId);
         break;
       }
       case 'info': {
@@ -2776,11 +2965,39 @@ ${plan.lead.duty}
         projectsRef.current = projectsRef.current.map(p => (p.id === currentProjectId ? { ...p, keyInfo: list } : p));
         patchProject(currentProjectId, { keyInfo: list });
         trackEvent('key_info', { option: optionId, source: k.source });
-        if (optionId === 'start') { pushFeedItem(feedStatus('好，剩下的以后再问。开始做第一步，做完停下来给你看结果')); kickoffWriting(item.nodeId); break; }
+        if (optionId === 'start') { pushFeedItem(feedStatus('好，剩下的以后再问')); beginWork(item.nodeId); break; }
         // 答了 / 跳过：趁你在，接着问下一个；开工前的问完就开始写
         const chain = optionId !== 'later' || !!item.nodeId;
         if (chain && askNextInfo(currentProjectId, item.nodeId)) break;
-        if (item.nodeId) { pushFeedItem(feedStatus('问完了，开始做第一步，做完停下来给你看结果')); kickoffWriting(item.nodeId); }
+        if (item.nodeId) { pushFeedItem(feedStatus('问完了')); beginWork(item.nodeId); }
+        else {
+          const pa = projectsRef.current.find(p => p.id === currentProjectId)?.autonomy;
+          if (pa?.on && pa.pausedFor === 'user' && chain) { patchAutonomy(currentProjectId, { pausedFor: undefined }); pushFeedItem(feedStatus('问完了，我接着自主运行')); resumeAutoRef.current?.(currentProjectId); }
+        }
+        break;
+      }
+      case 'report': {
+        if (!currentProjectId) break;
+        const pid = currentProjectId;
+        if (typed) {
+          // 你的调整记进 AI 记忆，之后照着做
+          const ki = remember(projectsRef.current.find(p => p.id === pid)?.keyInfo, 'other', '自主运行时的要求', typed, 'user');
+          projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, keyInfo: ki } : p));
+          patchProject(pid, { keyInfo: ki });
+          noteAuto('think', `你要求：${typed}——记下了，照这个做`);
+          pushFeedItem(feedStatus(`📌 记进 AI 记忆：${typed}`, { tone: 'good' }));
+        }
+        if (optionId === 'pause') {
+          patchAutonomy(pid, { pausedFor: 'user' });
+          if (continuousMode) endBatch('stopped');
+          pushFeedItem(feedStatus('⏸ 好，我先停着。点「⚡ 自主运行」我就接着做'));
+        } else if (optionId === 'questions') {
+          patchAutonomy(pid, { pausedFor: 'user' });
+          if (!askNextInfo(pid)) { patchAutonomy(pid, { pausedFor: undefined }); resumeAutoRef.current?.(pid); }
+        } else {
+          patchAutonomy(pid, { pausedFor: undefined });
+          resumeAutoRef.current?.(pid);
+        }
         break;
       }
       case 'outline': {
@@ -2795,7 +3012,8 @@ ${plan.lead.duty}
         break;
       }
     }
-  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline, askNextInfo, kickoffWriting, inquiryTeams, syncPm]);
+  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline, askNextInfo, kickoffWriting, beginWork, noteAuto, patchAutonomy, inquiryTeams, syncPm]);
+  useEffect(() => { answerFeedRef.current = handleAnswerFeed; }, [handleAnswerFeed]);
 
   /** 打开决策记录弹窗（打开时就对节点子树做快照，保证删除/失效前的状态被留存） */
   const openDecisionRecorder = useCallback((nodeId: string, trigger: DecisionTrigger, opts?: { pendingAction?: 'delete' | 'invalidate'; presetQuestion?: string; presetOptions?: { label: string; chosen: boolean }[]; skippable?: boolean }) => {
@@ -3426,12 +3644,20 @@ ${plan.lead.duty}
             <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1.5 flex-shrink-0"><span>💬</span>{ui("对话")}{isLooping && <span className="text-[10px] font-normal text-slate-500 animate-pulse">{ui("· AI 正在做")}</span>}</h3>
             <div className="flex items-center gap-1.5 flex-shrink-0 overflow-x-auto scroll-hide">
               <button
-                onClick={() => { if (continuousMode) endBatch('stopped'); else startBatch(); }}
+                onClick={() => {
+                  if (continuousMode) { endBatch('stopped'); return; }
+                  if (!currentProjectId) return;
+                  const a = currentProject?.autonomy;
+                  if (!a?.on || a.pausedFor === 'budget') { setAutonomyFor({ pid: currentProjectId }); return; }
+                  patchAutonomy(currentProjectId, { pausedFor: undefined });
+                  resumeAuto(currentProjectId);
+                }}
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5 ${continuousMode ? 'bg-emerald-600 text-white' : 'bg-gradient-to-r from-emerald-600/80 to-teal-600/80 text-white hover:from-emerald-500 hover:to-teal-500'}`}
                 title={continuousMode ? ui("AI 正在自主推进，点一下把方向盘收回来") : ui("交给 AI 自主运行：它自己一步一步往下做，只在需要你的时候来叫你；一轮最多 5 步，做完给你一张汇总，随时可以收回")}
               >{continuousMode
                   ? <><span className="w-1.5 h-1.5 rounded-full bg-white hx-breathe" />{ui("自主运行中 · 收回")}</>
-                  : <>⚡ {ui("自主运行")}</>}</button>
+                  : <>⚡ {ui("自主运行")}{currentProject?.autonomy?.on && currentProject.autonomy.pausedFor ? <span className="font-normal opacity-80">{ui(" · 已暂停")}</span> : null}</>}</button>
+              {currentProject?.autonomy?.on && <button onClick={() => currentProjectId && void giveReport(currentProjectId, true)} className="px-2.5 py-1 bg-slate-700/70 hover:bg-slate-600 text-slate-200 rounded-lg text-[11px] font-bold" title={ui(`让 AI 汇报这段时间做了什么、怎么想的、卡在哪、需要你什么。下次来看：${new Date(nextCheckIn(currentProject.autonomy)).toLocaleDateString()}`)}>{ui("📋 汇报")}</button>}
               <button onClick={() => setShowGraphModal(true)} className="px-2.5 py-1 bg-slate-700/70 hover:bg-purple-600 text-slate-200 hover:text-white rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5" title={ui("打开关系图谱")}>{ui("🕸️ 图谱")}</button>
             </div>
           </div>
@@ -3566,6 +3792,13 @@ ${plan.lead.duty}
         messages={<div className="flex-1 overflow-auto space-y-3">{adminMessages.length === 0 ? <div className="text-center py-12 text-slate-500">{ui("暂无留言")}</div> : adminMessages.map((msg, i) => <div key={i} className="p-4 bg-slate-800/50 rounded-xl border border-slate-700"><div className="flex justify-between mb-2"><span className="text-sm font-bold text-blue-400">{msg.username}</span><span className="text-[10px] text-slate-500">{new Date(msg.createdAt).toLocaleString()}</span></div><p className="text-sm text-slate-300">{msg.content}</p></div>)}</div>}
       />}
 
+      {autonomyFor && (() => { const ap = projects.find(p => p.id === autonomyFor.pid); if (!ap) return null; return (
+        <AutonomyModal project={ap}
+          onAllow={o => { setAutonomyFor(null); allowAutonomy(ap.id, o, autonomyFor.nodeId); }}
+          onStepByStep={() => { setAutonomyFor(null); if (!ap.autonomy?.on) patchAutonomy(ap.id, { on: false, grantedAt: 0, budgetCNY: 0, checkInDays: 7 }); pushFeedItem(feedStatus('好，先一步一步来：每做完一步停下来给你看结果。想放手了随时点「⚡ 自主运行」'), ap.id); if (autonomyFor.nodeId) kickoffWriting(autonomyFor.nodeId); }}
+          onClose={() => { setAutonomyFor(null); if (autonomyFor.nodeId) pushFeedItem(feedStatus('准备好了。点「⚡ 自主运行」交给我，或者在步骤上点「▶」一步一步来'), ap.id); }}
+          onEditCharter={() => { setAutonomyFor(null); patchFeed(f => pushFeed(closeAsks(f, 'charter', '已重新问'), charterAsk(ap.id, autonomyFor.nodeId)), ap.id); setRightChatOpen(true); }} />
+      ); })()}
       {showMetaModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"><div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-8 shadow-2xl"><h2 className="text-2xl font-bold">{ui("新探索任务")}</h2><textarea value={metaInput} onChange={e => setMetaInput(e.target.value)} placeholder={ui("描述你想探索的问题...")} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-5 mt-6 min-h-[100px] outline-none text-slate-200 resize-none" /><button disabled={!metaInput.trim()} onClick={() => { setShowMetaModal(false); setShowQVSModal(true); }} className="w-full mt-4 py-3 bg-gradient-to-r from-violet-600/20 to-blue-600/20 border border-violet-500/30 text-violet-300 rounded-xl font-bold text-sm hover:from-violet-600/30 hover:to-blue-600/30 transition-all disabled:opacity-40 flex items-center justify-center gap-2"><span>📊</span>{ui("先评估问题价值（推荐）")}</button><div className="flex gap-4 mt-4"><button onClick={() => setShowMetaModal(false)} className="flex-1 py-4 bg-slate-800 rounded-xl font-bold">{ui("取消")}</button><button disabled={isAnalyzingIntent || !metaInput.trim()} onClick={async () => { if (!metaInput.trim()) return; setIsAnalyzingIntent(true); try { const { analysis, needsConfirmation } = await analyzeIntentWithAutoConfirm(metaInput); if (needsConfirmation) { setPendingIntent({ input: metaInput, analysis }); setShowMetaModal(false); } else createProjectWithMode(metaInput, analysis.mode, analysis); } catch { createProjectWithMode(metaInput, 'research'); } finally { setIsAnalyzingIntent(false); } }} className="flex-[2] py-4 bg-blue-600 rounded-xl font-bold disabled:opacity-50">{isAnalyzingIntent ? ui("分析中...") : ui("直接开启探索")}</button></div></div></div>}
 
       {/* 问题价值评估（QVS）模块 */}

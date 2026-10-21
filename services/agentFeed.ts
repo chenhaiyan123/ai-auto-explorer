@@ -266,3 +266,32 @@ export const batchAsk = (b: Batch, reason: 'done' | 'empty' | 'stopped' | 'halte
     detail: [b.newDirs ? `途中新长出 ${b.newDirs} 个方向` : '', remaining ? `还有 ${remaining} 步没做` : '没有待做的了'].filter(Boolean).join('；'),
   });
 };
+
+// ===== 自主运行：用户回来时的汇报 =====
+/**
+ * 用户授权自主运行后回来了：一张汇报卡说清楚四件事——
+ * 做了什么、我是怎么想的、遇到什么困难、需要你什么支持。
+ */
+export const reportAsk = (
+  r: { headline: string; did: string[]; thinking: string[]; difficulties: string[]; needs: string[] },
+  opts: { since: number; paused?: string; nextCheck?: number; hasQuestions?: boolean } = { since: 0 },
+): FeedItem => {
+  const days = Math.max(0, Math.round((Date.now() - opts.since) / 86400000));
+  const span = days >= 1 ? `这 ${days} 天` : '刚才这段时间';
+  const options: FeedOption[] = [
+    { id: 'continue', label: opts.paused ? '好，继续自主运行' : '好，你继续', primary: true },
+    ...(opts.hasQuestions ? [{ id: 'questions', label: '回答你的问题' }] : []),
+    { id: 'pause', label: '先停一下' },
+  ];
+  return ask('report', `📋 ${span}的汇报：${r.headline || '我继续在做'}`, options, {
+    key: 'report',
+    sections: [
+      { label: '这段时间我做了什么', items: r.did.length ? r.did : ['没做成什么'] },
+      ...(r.thinking.length ? [{ label: '我的思考', items: r.thinking }] : []),
+      { label: '遇到的困难', items: r.difficulties.length ? r.difficulties : ['没有卡住的地方'] },
+      { label: '需要你的支持', items: r.needs.length ? r.needs : ['暂时不需要，我继续'] },
+    ],
+    foot: [opts.paused ? `现在停着：${opts.paused}` : '', opts.nextCheck ? `下次来看我：${new Date(opts.nextCheck).toLocaleDateString()}` : ''].filter(Boolean).join(' · ') || undefined,
+    input: { placeholder: '有什么要调整的直接说，比如「先别花钱找人，先把资料做扎实」，我记进 AI 记忆照着做…', optionId: 'adjust' },
+  });
+};

@@ -43,6 +43,7 @@
     "test:sync": "npm run wake:build && node --test __test__/project-sync.test.mjs && esbuild __test__/project-sync-client.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/project-sync-test.mjs && node node_modules/.cache/project-sync-test.mjs",
     "test:charter": "esbuild __test__/project-charter.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-charter-test.mjs && node node_modules/.cache/hiexplore-charter-test.mjs",
     "test:wallet": "esbuild __test__/project-wallet.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-wallet-test.mjs && node node_modules/.cache/hiexplore-wallet-test.mjs",
+    "test:autonomy": "esbuild __test__/autonomy.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-autonomy-test.mjs && node node_modules/.cache/hiexplore-autonomy-test.mjs",
     "test:pm": "npm run wake:build && esbuild services/pmAgent.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-pm-agent.mjs && node --test __test__/pm-agent.test.mjs"
   },
   "build": {

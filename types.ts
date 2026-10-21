@@ -335,6 +335,44 @@ export interface ProjectBrief {
   longTerm: string;
   /** 开工前要主动问用户的问题（只有用户知道答案的） */
   asks?: { topic: KeyInfoTopic; question: string }[];
+  /** 分阶段目标：先小后大，第一阶段要小到 ¥10–20 就能跑起来 */
+  stages?: { title: string; goal: string; weeks: number }[];
+  /** 建议的启动资金（元）：提倡从小做起，先让 AI 活下来 */
+  startCNY?: number;
+  /** 这笔启动资金大概能让 AI 自主运行多久（一句话） */
+  runEstimate?: string;
+  /** 建议多少天回来看一次（7 或 14） */
+  checkInDays?: number;
+}
+
+/**
+ * 自主运行：用户在开工弹框里点了「允许自主运行」之后，AI 项目经理就当自己是个独立的人——
+ * 不重要的事自己判断、不来打扰；用户回来时给一份「这段时间」的汇报。
+ */
+export interface Autonomy {
+  on: boolean;
+  grantedAt: number;
+  /** 这个项目自主运行的启动资金（元）：花到这个数就停下来等用户 */
+  budgetCNY: number;
+  /** 多少天回来看一次 */
+  checkInDays: number;
+  /** 停下来的原因（on=true 但暂时停着）：预算花完 / 阶段做完在等 / 有很重要的事要用户拍板 */
+  pausedFor?: 'budget' | 'stage' | 'important' | 'user';
+  /** 上一次给用户汇报的时间 */
+  lastReportAt?: number;
+  /** 自主拆过几个新阶段（防止无限往下拆） */
+  stageRounds?: number;
+  lastStageAt?: number;
+  /** AI 在服务广场花掉的钱（分），算进启动资金 */
+  marketCents?: number;
+}
+
+/** 自主运行日志：回来汇报的原料 */
+export interface AutoLogEntry {
+  at: number;
+  kind: 'did' | 'think' | 'stuck' | 'need';
+  text: string;
+  nodeId?: string;
 }
 
 /**
@@ -393,7 +431,7 @@ export interface ChatMessage {
 
 // ========== 对话流（Agent Feed）==========
 // 像 Codex 一样：AI 在干什么、需要人拍板的地方，都以一行字 / 一张问题卡出现在右侧聊天记录里。
-export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline' | 'batch' | 'charter' | 'info';
+export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline' | 'batch' | 'charter' | 'info' | 'report';
 export interface FeedOption { id: string; label: string; primary?: boolean }
 export interface FeedItem {
   id: string;
@@ -613,6 +651,10 @@ export interface Project {
   keyInfo?: KeyInfo[];
   /** 项目钱包：模型调用按天汇总的账（服务订单在服务端，按需读取） */
   wallet?: ProjectWalletLedger;
+  /** 用户授权的自主运行 */
+  autonomy?: Autonomy;
+  /** 自主运行日志 */
+  autolog?: AutoLogEntry[];
   /** 用户维护的项目目标与范围，AI 摘要不得覆盖。 */
   overviewBrief?: string;
   /** User-owned acceptance criteria, never inferred from AI completion. */

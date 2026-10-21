@@ -39,7 +39,7 @@ ${userNote ? `用户补充：${userNote}\n` : ''}${existingTitles.length ? `已�
   "items": [
     { "title": "这一步要做的事，动词开头，不超过 12 字", "question": "做成什么算完成——一个能检验的结果，不超过 25 字", "why": "为什么先做这一步，不超过 25 字" }
   ],
-  "brief": { "approach": "", "hard": [], "support": [], "resources": [], "permissions": [], "budget": "", "shortTerm": "", "longTerm": "", "asks": [{ "topic": "support", "question": "" }] }
+  "brief": { "approach": "", "hard": [], "support": [], "resources": [], "permissions": [], "budget": "", "shortTerm": "", "longTerm": "", "stages": [{ "title": "", "goal": "", "weeks": 2 }], "startCNY": 20, "runEstimate": "", "checkInDays": 7, "asks": [{ "topic": "support", "question": "" }] }
 }
 
 要求：

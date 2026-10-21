@@ -38,6 +38,12 @@ export function parseBrief(raw: any): ProjectBrief | undefined {
     shortTerm: clean(raw.shortTerm ?? raw.short, 80),
     longTerm: clean(raw.longTerm ?? raw.long, 80),
   };
+  const stages = (Array.isArray(raw.stages) ? raw.stages : []).map((x: any) => ({ title: clean(x?.title, 16), goal: clean(x?.goal, 60), weeks: Math.min(12, Math.max(1, Math.round(Number(x?.weeks) || 1))) })).filter((x: any) => x.title && x.goal).slice(0, 3);
+  if (stages.length) b.stages = stages;
+  const start = Math.round(Number(raw.startCNY));
+  if (Number.isFinite(start) && start > 0) b.startCNY = Math.min(500, Math.max(5, start));
+  const run = clean(raw.runEstimate, 80); if (run) b.runEstimate = run;
+  const ci = Math.round(Number(raw.checkInDays)); if (ci === 7 || ci === 14) b.checkInDays = ci;
   const asks = parseAsks(raw.asks);
   if (asks.length) b.asks = asks;
   const filled = [b.approach, b.hard.length, b.support.length || b.resources.length || b.permissions.length, b.shortTerm || b.longTerm].filter(Boolean).length;
@@ -54,6 +60,10 @@ export const BRIEF_PROMPT = `同时给一份**项目简报**，放在 "brief" �
 - budget：大概要花多少，给量级（模型调用费 + 可能要买的外部服务），不确定就说不确定
 - shortTerm：短期（这一两周）实际能做成哪一步、拿到什么结果——实话实说，做不成就说做不成
 - longTerm：长期靠一轮轮去做、看结果、调整，能走到哪里——让他知道短期做不到不要紧
+- stages：分 2-3 个阶段，每段 {title:不超过 10 字, goal:这一段做成什么（可检验）, weeks:几周}。**第一阶段要小**：花 ¥10–20 的模型费就能跑完、一两周内看到第一个真实结果
+- startCNY：建议他先投多少钱让 AI 跑起来（元，整数，一般 10–50，提倡从小做起）
+- runEstimate：这笔钱大概能让 AI 自主运行多久、做到哪一步（一句话，实话实说）
+- checkInDays：建议他隔几天回来看一次：7 或 14
 - asks：开工前要问他的 1-3 个问题，只问**只有他知道、又会改变怎么做**的事（他手上有什么数据和资源、目标人群、能接受的范围……），每个问题一句话、能直接回答；topic 取 goal / support / resources / permissions / other（预算会单独问，这里不要问）
 每一条都要具体到这个项目，不要写谁的项目都能套的话。关键是把事做成、拿到结果，不是写报告。`;
 
@@ -66,7 +76,9 @@ export function briefSections(b: ProjectBrief, items: Pick<OutlineItem, 'title' 
   if (b.support.length) s.push({ label: '需要你', items: b.support });
   if (b.resources.length) s.push({ label: '需要的资源', items: b.resources });
   if (b.permissions.length) s.push({ label: '需要你授权', items: b.permissions });
+  if (b.stages?.length) s.push({ label: '分阶段', items: b.stages.map((x, i) => `第 ${i + 1} 阶段 · ${x.title}（约 ${x.weeks} 周）—— ${x.goal}`) });
   if (b.budget) s.push({ label: '预算', items: [b.budget] });
+  if (b.startCNY) s.push({ label: '建议先从小做起', items: [`先投 ¥${b.startCNY} 让 AI 跑起来${b.runEstimate ? `：${b.runEstimate}` : ''}`, `建议每 ${b.checkInDays || 7} 天回来看一次进展`] });
   return s;
 }
 
