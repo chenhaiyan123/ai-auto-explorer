@@ -1,6 +1,7 @@
 import { ExplorationMode } from '../types';
 import { callGemini } from './geminiService';
 import { parseOutline, OutlineParse, MAX_ITEMS } from './outline';
+import { BRIEF_PROMPT, parseBrief } from './projectBrief';
 
 /**
  * 让 AI 拟一份**框架**：只出标题和「这篇要回答什么」，不写正文。
@@ -37,7 +38,8 @@ ${userNote ? `用户补充：${userNote}\n` : ''}${existingTitles.length ? `已�
 {
   "items": [
     { "title": "不超过 12 字的标题", "question": "这一篇要回答的那一个问题，不超过 25 字", "why": "为什么值得单独成一篇，不超过 25 字" }
-  ]
+  ],
+  "brief": { "approach": "", "hard": [], "support": [], "resources": [], "permissions": [], "budget": "", "shortTerm": "", "longTerm": "" }
 }
 
 要求：
@@ -48,7 +50,9 @@ ${userNote ? `用户补充：${userNote}\n` : ''}${existingTitles.length ? `已�
    ✓「愿意为这个每月付 30 块的是哪一类人」「现有方案慢在哪一步」
 4. 按**该先想清楚哪个**排序，第一篇放最该先弄明白的那个。
 5. 各篇之间不要重叠——两篇写的是同一件事，用户读第二篇时会觉得被浪费了时间。
-6. 不确定的地方宁可拆得粗一点：用户会自己往下拆，但删掉一篇多余的对他是纯负担。`;
+6. 不确定的地方宁可拆得粗一点：用户会自己往下拆，但删掉一篇多余的对他是纯负担。
+
+${BRIEF_PROMPT}`;
 
   let raw = '';
   try {
@@ -63,7 +67,10 @@ ${userNote ? `用户补充：${userNote}\n` : ''}${existingTitles.length ? `已�
   if (a >= 0 && b > a) clean = clean.slice(a, b + 1);
 
   try {
-    return parseOutline(JSON.parse(clean), goal);
+    const json = JSON.parse(clean);
+    const parsed = parseOutline(json, goal);
+    const brief = parseBrief(json?.brief);
+    return parsed.outline && brief ? { ...parsed, outline: { ...parsed.outline, brief } } : parsed;
   } catch {
     return { problems: ['模型返回的不是合法 JSON，这次没拟出框架'] };
   }

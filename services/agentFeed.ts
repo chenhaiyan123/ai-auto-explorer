@@ -1,5 +1,6 @@
 import { FeedItem, FeedAskType, FeedOption, ProblemNode, NodeStatus, Outline } from '../types';
 import { OutlineProgress, keptItems } from './outline';
+import { briefSections, briefFoot, CHARTER_PRESETS } from './projectBrief';
 
 /**
  * 对话流（Agent Feed）——像 Codex 一样，把「AI 在干什么」和「需要你拍板的地方」
@@ -157,9 +158,27 @@ export const haltedAsk = (title: string, detail: string): FeedItem =>
     { id: 'retry', label: '重试' },
   ], { key: 'halted', detail: clip(detail, 140) });
 
-/** 框架草稿：在聊天里放精简版，要细改再展开编辑器 */
+/**
+ * 框架草稿：在聊天里放精简版，要细改再展开编辑器。
+ * 有简报时，这张卡就是「项目简报」：像一个人那样先把事说清楚——
+ * 怎么拆、大概怎么做、难在哪、需要你什么，以及短期 / 长期的实话。
+ */
 export const outlineAsk = (outline: Outline): FeedItem => {
   const items = keptItems(outline);
+  const b = outline.brief;
+  if (b) {
+    return ask('outline', '🧭 开工前，我先把这件事想了一遍', [
+      { id: 'confirm', label: '思路没问题，往下谈预算', primary: true },
+      { id: 'edit', label: '我要改改目录' },
+      { id: 'redo', label: '重想一份' },
+    ], {
+      key: `outline:${outline.id}`,
+      ref: outline.id,
+      sections: briefSections(b, items),
+      foot: briefFoot(b),
+      input: { placeholder: '哪里不对就直接说，比如「目标用户是成人，不是小孩」，我按这个重想…', optionId: 'redo' },
+    });
+  }
   return ask('outline', `🗺️ 先拟了 ${items.length} 篇的目录，你看行不行`, [
     { id: 'confirm', label: '就这样，开始写', primary: true },
     { id: 'edit', label: '我要改改' },
@@ -171,6 +190,21 @@ export const outlineAsk = (outline: Outline): FeedItem => {
     input: { placeholder: '补充要求，比如「加一篇讲定价」，会按这个重拟…', optionId: 'redo' },
   });
 };
+
+/**
+ * 花钱权限：AI 自己做不了的事（真实数据、访谈、实验、测量）要去服务广场找人。
+ * 先问清楚多少钱以内它可以自己下单——答完才开始写。
+ */
+export const charterAsk = (projectId: string, firstNodeId?: string): FeedItem =>
+  ask('charter', '💰 最后一件事：遇到 AI 自己做不了的，要花钱找人吗？', [
+    { id: 'cny:0', label: '花钱都先问我，开始写', primary: true },
+    ...CHARTER_PRESETS.filter(n => n > 0).map(n => ({ id: `cny:${n}`, label: `单笔 ≤ ¥${n} 可以自己下单` })),
+  ], {
+    key: `charter:${projectId}`,
+    nodeId: firstNodeId,
+    detail: '比如要真实的业务数据、找用户访谈、做一次实验或测量——这些光靠推理做不出来，得去服务广场找人或 Agent 做；找不到就发布需求。超过额度的照样先问你。以后可以在项目总览里改。',
+    input: { placeholder: '或者直接说，比如「每月最多 300，单笔不超过 100」…', optionId: 'text' },
+  });
 
 // ===== 连写一轮（原来的「持续探索」）=====
 // 连写时对话流里只占一行（原地更新进度），写完一轮给一张汇总卡；不再每篇刷一行、也不再无限写下去。

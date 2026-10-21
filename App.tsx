@@ -16,7 +16,8 @@ import MessageBoard from './components/MessageBoard';
 import { v4 as uuidv4 } from 'uuid';
 import { ProblemNode, NodeStatus, DecisionPoint, Project, ChatMessage, DecisionOption, DecisionTrigger, Probe, FeedItem } from './types';
 import { type HelpSeek, seekFromFact } from './services/factHelp';
-import { batchProgress, batchAsk, BATCH_SIZE, type Batch } from './services/agentFeed';
+import { batchProgress, batchAsk, BATCH_SIZE, charterAsk, type Batch } from './services/agentFeed';
+import { briefMarkdown, charterFromText, charterLabel } from './services/projectBrief';
 import { pushFeed, answerFeed, closeAsks, openAsks, status as feedStatus, stepAsk, branchAsk, contradictedAsk, realityAsk, anchorAsk, unattendedAsk, haltedAsk, outlineAsk } from './services/agentFeed';
 import { DecisionRecordModal, DecisionTimelineModal, DecisionDraft } from './components/DecisionCenter';
 import { captureSubtree, createDecision, forkFromDecision } from './services/decisionService';
@@ -2007,7 +2008,7 @@ ${plan.lead.duty}
     setNodes(prev => [...prev, ...fresh]);
     patchProject(currentProjectId, { outline, pace: 'step' });
     // 把商量好的目录写进总览：「我们说好要写哪几篇」得有个固定的地方可查
-    const md = outlineToMarkdown(outline, fresh);
+    const md = outlineToMarkdown(outline, fresh) + (outline.brief ? `\n\n${briefMarkdown(outline.brief, proj?.charter)}` : '');
     setProjects(prev => prev.map(p => p.id === currentProjectId ? {
       ...p,
       nodes: (p.nodes || []).map(n => n.noteType === 'overview'
@@ -2019,9 +2020,25 @@ ${plan.lead.duty}
     trackEvent('outline_confirmed', { items: keptItems(outline).length });
     setOutlineEditing(false);
     closeFeedAsks('outline', '已确认');
-    addNotification('info', `🗺️ 框架定了，一共 ${keptItems(outline).length} 篇`, '每写完一篇会停下来问你。');
+    if (proj?.charter) addNotification('info', `🗺️ 框架定了，一共 ${keptItems(outline).length} 篇`, '每写完一篇会停下来问你。');
     return first?.nodeId;
   }, [currentProjectId, projectOutline, patchProject, addNotification, closeFeedAsks]);
+
+  /**
+   * 框架 / 简报定了之后：还没谈过花钱权限 → 先问清楚再开始写（等用户回话才往下走）；
+   * 谈过了 → 直接写第一篇。
+   */
+  const startAfterOutline = useCallback((firstId?: string) => {
+    const pid = currentProjectId;
+    if (!pid) return;
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!proj?.charter) {
+      patchFeed(f => pushFeed(closeAsks(f, 'charter', '已重新问'), charterAsk(pid, firstId)), pid);
+      setRightChatOpen(true);
+      return;
+    }
+    if (firstId) { forceNodeRef.current = firstId; setTimeout(() => setIsLooping(true), 50); }
+  }, [currentProjectId, patchFeed]);
 
   const handleDiscardOutline = useCallback(() => {
     if (currentProjectId) patchProject(currentProjectId, { outline: undefined });
@@ -2603,19 +2620,38 @@ ${plan.lead.duty}
         else { consecutiveFailRef.current = 0; setIsLooping(true); }
         break;
       }
+      case 'charter': {
+        if (!currentProjectId) break;
+        const charter = optionId.startsWith('cny:')
+          ? { autoBuyCNY: Number(optionId.slice(4)) || 0, confirmedAt: Date.now() }
+          : charterFromText(typed);
+        patchProject(currentProjectId, { charter });
+        // 记进项目总览，以后能查「当初说好的」
+        setProjects(prev => prev.map(p => p.id === currentProjectId ? {
+          ...p,
+          nodes: (p.nodes || []).map(n => n.noteType === 'overview'
+            ? { ...n, fullNote: `${n.fullNote || ''}\n\n**花钱权限**（${new Date().toLocaleDateString()}）：${charterLabel(charter)}\n`, noteUpdatedAt: Date.now() }
+            : n),
+        } : p));
+        const startId = item.nodeId && nodes.some(n => n.id === item.nodeId && n.status === NodeStatus.UNEXPLORED) ? item.nodeId : undefined;
+        pushFeedItem(feedStatus(`✅ 记下了：${charterLabel(charter)}${startId ? '。开始写第一篇，写完停下来给你看' : ''}`, { tone: 'good' }));
+        trackEvent('charter_set', { autoBuy: charter.autoBuyCNY, monthly: charter.monthlyCNY || 0 });
+        if (startId) { forceNodeRef.current = startId; setJustWroteId(null); setTimeout(() => setIsLooping(true), 50); }
+        break;
+      }
       case 'outline': {
         if (projectOutline?.status !== 'draft' || projectOutline.id !== item.ref) break;
         if (optionId === 'confirm') {
           const firstId = handleConfirmOutline();
-          // 「就这样，开始写」= 确认 + 直接写第一篇，省掉一次点击
-          if (firstId) { forceNodeRef.current = firstId; setTimeout(() => setIsLooping(true), 50); }
+          // 确认 + （谈过预算就）直接写第一篇；没谈过先问花钱权限
+          startAfterOutline(firstId);
         } else if (optionId === 'redo') {
           handleProposeOutline(undefined, undefined, typed || undefined);
         }
         break;
       }
     }
-  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage]);
+  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline]);
 
   /** 打开决策记录弹窗（打开时就对节点子树做快照，保证删除/失效前的状态被留存） */
   const openDecisionRecorder = useCallback((nodeId: string, trigger: DecisionTrigger, opts?: { pendingAction?: 'delete' | 'invalidate'; presetQuestion?: string; presetOptions?: { label: string; chosen: boolean }[]; skippable?: boolean }) => {
@@ -2802,6 +2838,8 @@ ${plan.lead.duty}
       life={lifeOf(currentProject, Date.now(), projects.indexOf(currentProject))}
       waking={wakingId === currentProject.id}
       autoOff={isTrialMode()}
+      charter={currentProject.charter ? charterLabel(currentProject.charter) : undefined}
+      onEditCharter={() => { patchFeed(f => pushFeed(closeAsks(f, 'charter', '已重新问'), charterAsk(currentProject.id)), currentProject.id); setRightChatOpen(true); }}
       cloud={WAKE_API ? { ...(cloudWatch[currentProject.id] || { enabled: false }), onSetup: () => setOpenActivation(n => n + 1) } : undefined}
       onWakeNow={() => void wakeProject(currentProject.id, true)}
       onCadence={h => patchLife(currentProject.id, l => setCadence(l, h, Date.now()))}
@@ -3218,7 +3256,7 @@ ${plan.lead.duty}
                 <OutlinePlanner
                   outline={projectOutline}
                   onChange={handleOutlineChange}
-                  onConfirm={() => { const firstId = handleConfirmOutline(); if (firstId) { forceNodeRef.current = firstId; setTimeout(() => setIsLooping(true), 50); } }}
+                  onConfirm={() => startAfterOutline(handleConfirmOutline())}
                   onRegenerate={() => handleProposeOutline()}
                   onDiscard={handleDiscardOutline}
                   busy={outlineBusy}

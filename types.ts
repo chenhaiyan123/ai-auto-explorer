@@ -307,6 +307,45 @@ export interface Outline {
   /** 用户在框架阶段补的一句话，会带进后面每一篇的提示词 */
   userNote?: string;
   confirmedAt?: number;
+  /** 和目录一起拟的「项目简报」：思路、难点、需要你的支持/资源/权限/预算 */
+  brief?: ProjectBrief;
+}
+
+/**
+ * 项目简报——把用户当成一个人来沟通，而不是丢给他一堆笔记。
+ * 他真正想知道的是：这事怎么拆、大概怎么做、难在哪、需要他给什么。
+ * 每一栏都很短（最多 3 条），三十秒能看完。
+ */
+export interface ProjectBrief {
+  /** 大概的思路 / 方案，一两句 */
+  approach: string;
+  /** 难点 */
+  hard: string[];
+  /** 需要你（用户）做的、决定的 */
+  support: string[];
+  /** 需要的资源：数据、人、设备、外部服务 */
+  resources: string[];
+  /** 需要你授权 AI 去做的事 */
+  permissions: string[];
+  /** 预算估计（文字，给量级，不装精确） */
+  budget: string;
+  /** 短期能做到什么 */
+  shortTerm: string;
+  /** 长期靠积累和迭代能做到什么 */
+  longTerm: string;
+}
+
+/**
+ * 用户对简报的答复：给 AI 多大的花钱权限。
+ * 0 = 花钱都先问我。单笔不超过 autoBuyCNY 的服务，AI 可以自己下单；超过的照样先问。
+ */
+export interface ProjectCharter {
+  autoBuyCNY: number;
+  /** 每月总共最多花多少（不填 = 不设总额，只看单笔） */
+  monthlyCNY?: number;
+  /** 用户的原话 */
+  note?: string;
+  confirmedAt: number;
 }
 
 /**
@@ -327,7 +366,7 @@ export interface ChatMessage {
 
 // ========== 对话流（Agent Feed）==========
 // 像 Codex 一样：AI 在干什么、需要人拍板的地方，都以一行字 / 一张问题卡出现在右侧聊天记录里。
-export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline' | 'batch';
+export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline' | 'batch' | 'charter';
 export interface FeedOption { id: string; label: string; primary?: boolean }
 export interface FeedItem {
   id: string;
@@ -339,6 +378,10 @@ export interface FeedItem {
   detail?: string;
   /** 精简列表（框架草稿用） */
   list?: { title: string; sub?: string }[];
+  /** 分栏小节（项目简报用）：一栏一个小标题 + 几条短句 */
+  sections?: { label: string; items: string[] }[];
+  /** 卡片底部的一句话（简报里的「短期 / 长期」） */
+  foot?: string;
   tone?: 'info' | 'good' | 'warn';
   nodeId?: string;
   /** 额外引用（路标 id / 框架 id 等） */
@@ -537,6 +580,8 @@ export interface IntentAnalysis {
 
 // ========== 项目类型（扩展版）==========
 export interface Project {
+  /** 用户对项目简报的答复（花钱权限） */
+  charter?: ProjectCharter;
   /** 用户维护的项目目标与范围，AI 摘要不得覆盖。 */
   overviewBrief?: string;
   /** User-owned acceptance criteria, never inferred from AI completion. */

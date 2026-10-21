@@ -73,6 +73,19 @@ const FeedCard: React.FC<{
           ))}
         </ol>
       )}
+      {item.sections && item.sections.length > 0 && (
+        <div className="space-y-2 text-[13px] leading-6">
+          {item.sections.map((sec, i) => (
+            <div key={i}>
+              <div className="text-[12px] font-semibold text-slate-400">{sec.label}</div>
+              {sec.items.length === 1 && !/^怎么拆/.test(sec.label)
+                ? <div className="text-slate-200">{sec.items[0]}</div>
+                : <ul className="space-y-0.5">{sec.items.map((x, j) => <li key={j} className="flex gap-1.5 text-slate-200"><span className="text-slate-500 flex-shrink-0">{/^怎么拆/.test(sec.label) ? `${j + 1}.` : '·'}</span><span className="min-w-0">{x}</span></li>)}</ul>}
+            </div>
+          ))}
+        </div>
+      )}
+      {item.foot && <div className="text-[13px] leading-6 text-emerald-300 whitespace-pre-wrap rounded-lg bg-emerald-950/30 border border-emerald-800/40 px-2.5 py-1.5">{item.foot}</div>}
       <div className="flex flex-wrap gap-1.5 pt-0.5">
         {ask.options.map(o => (
           <button key={o.id} disabled={busy} onClick={() => onAnswer(item, o.id)}

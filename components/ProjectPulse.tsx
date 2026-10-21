@@ -22,11 +22,14 @@ const ProjectPulse: React.FC<{
   onToFact: (note: PulseNote) => void;
   onDismiss: (note: PulseNote) => void;
   onOpenNote?: (title: string) => void;
+  /** 花钱权限（说人话的一句）；undefined = 还没谈过 */
+  charter?: string;
+  onEditCharter?: () => void;
   /** 免配置体验额度下不自动醒来 */
   autoOff?: boolean;
   /** 云端长期关注（关掉电脑也会醒）。undefined = 这个部署没有云端执行器 */
   cloud?: { enabled: boolean; nextCheckAt?: number; lastSummary?: string; lastAt?: number; onSetup: () => void };
-}> = ({ cloud, autoOff, life, waking, onWakeNow, onCadence, onToggle, onToFact, onDismiss, onOpenNote }) => {
+}> = ({ charter, onEditCharter, cloud, autoOff, life, waking, onWakeNow, onCadence, onToggle, onToFact, onDismiss, onOpenNote }) => {
   const [all, setAll] = useState(false);
   const notes = life.journal.filter(j => j.handled !== 'dismissed').slice().reverse();
   const shown = all ? notes : notes.slice(0, 4);
@@ -64,6 +67,12 @@ const ProjectPulse: React.FC<{
           <button onClick={cloud.onSetup} className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white">交给云端（关掉电脑也继续）</button>
         </div>
       ))}
+      {onEditCharter && (
+        <div className="flex items-center gap-2 flex-wrap text-[12px]">
+          <span className="text-slate-400">💰 花钱权限：{charter || '还没谈过（花钱都会先问你）'}</span>
+          <button onClick={onEditCharter} className="text-blue-300 hover:underline">{charter ? '改' : '现在谈'}</button>
+        </div>
+      )}
       {notes.length === 0 ? (
         <p className="text-[12px] text-slate-500">还没记下什么。醒来时想到的灵感、线索、可以找的证据会记在这里，不会刷到对话框里。</p>
       ) : (
