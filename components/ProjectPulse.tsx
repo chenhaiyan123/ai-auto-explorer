@@ -61,7 +61,7 @@ const ProjectPulse: React.FC<{
         <span className="text-[11px] text-slate-500 ml-auto">没新东西会自动放慢；很久没打开也会放慢</span>
       </div>
       {cloud && (cloud.enabled ? (
-        <div className="text-[12px] text-emerald-300/90 flex flex-wrap gap-x-2">
+        <div className="text-[12px] text-emerald-300 flex flex-wrap gap-x-2">
           <span>☁️ 已交给云端：关掉电脑也会按时醒来，并联网查论文和网页线索</span>
           {cloud.nextCheckAt ? <span className="text-slate-400">下次 {when(cloud.nextCheckAt)}</span> : null}
           {cloud.lastSummary ? <span className="text-slate-400">· 上次：{cloud.lastSummary}</span> : null}

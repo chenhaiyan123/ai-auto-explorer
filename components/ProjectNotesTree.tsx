@@ -241,7 +241,7 @@ const ProjectNotesTree: React.FC<{
             {g !== 'standby' && onLight && <button role="menuitem" className={item} onClick={() => { onLight(mp.id, false); setMenu(null); }}>🌙 {ui('待机')}<span className="ml-auto text-[10px] text-slate-500">{ui('熄灯，不再自己醒')}</span></button>}
             {onDelete && (menu.confirmDelete
               ? <button role="menuitem" className={`${item} text-rose-300 bg-rose-950/40`} onClick={() => { onDelete(mp.id); setMenu(null); }}>🗑 {ui('再点一次，确认删除')}</button>
-              : <button role="menuitem" className={`${item} text-rose-300/90`} onClick={() => setMenu({ ...menu, confirmDelete: true })}>🗑 {ui('删除')}</button>)}
+              : <button role="menuitem" className={`${item} text-rose-300`} onClick={() => setMenu({ ...menu, confirmDelete: true })}>🗑 {ui('删除')}</button>)}
           </div>
         );
       })(), document.body)}

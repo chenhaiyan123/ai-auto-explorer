@@ -27,7 +27,7 @@ const FeedCard: React.FC<{
 
   // ── 进度行 ──
   if (!ask) {
-    const tone = item.tone === 'warn' ? 'text-amber-300/90' : item.tone === 'good' ? 'text-emerald-300/90' : 'text-slate-400';
+    const tone = item.tone === 'warn' ? 'text-amber-300' : item.tone === 'good' ? 'text-emerald-300' : 'text-slate-400';
     return (
       <div className={`text-[13px] leading-6 ${tone}`}>
         <div className="flex items-start gap-1.5">
