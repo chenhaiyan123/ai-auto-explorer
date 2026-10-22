@@ -49,7 +49,7 @@ import { lifeOf, defaultLife, pickDue, budgetAllows, spendBudget, buildPulseMess
 import ProjectPulse from './components/ProjectPulse';
 import { callLLM } from './services/llmProvider';
 import AutonomyModal from './components/AutonomyModal';
-import { grantAutonomy, isAutonomous, isRunningAutonomously, logAuto, autoChoice, budgetLeftCNY, autoSpentCNY, canPlanNextStage, entriesSince, reportDue, fallbackReport, buildReportMessages, parseReport, nextCheckIn } from './services/autonomy';
+import { marketCapability, grantAutonomy, isAutonomous, isRunningAutonomously, logAuto, autoChoice, budgetLeftCNY, autoSpentCNY, canPlanNextStage, entriesSince, reportDue, fallbackReport, buildReportMessages, parseReport, nextCheckIn } from './services/autonomy';
 import { reportAsk } from './services/agentFeed';
 import type { Autonomy, AutoLogEntry } from './types';
 import type { SharedCatalog } from './services/sharedModelsClient';
@@ -1445,8 +1445,11 @@ const App: React.FC = () => {
     ));
     // 用户在对话流里补过一句要求 → 这一次带进提示词（走「已有背景」那一栏），写完清空
     // 再加上 AI 记忆里用户交代过的关键信息（预算、手上的资源、目标人群……），写的时候按用户原话来
-    const memo = keyInfoContext(projectsRef.current.find(p => p.id === feedProjectRef.current)?.keyInfo, 1200);
-    const extra = [unexplored.userAsk ? `用户要求：${unexplored.userAsk}` : '', memo].filter(Boolean).join('\n');
+    const memoProj = projectsRef.current.find(p => p.id === feedProjectRef.current);
+    const memo = keyInfoContext(memoProj?.keyInfo, 1200);
+    // 告诉模型它在服务广场真实能做什么，不然它会以为自己「登录不了、只能模拟」
+    const marketNote = memoProj ? marketCapability(memoProj, (() => { try { return !!WAKE_API && !!localStorage.getItem('aae-auth-token'); } catch { return false; } })()) : '';
+    const extra = [unexplored.userAsk ? `用户要求：${unexplored.userAsk}` : '', memo, marketNote].filter(Boolean).join('\n');
     const target: ProblemNode = extra
       ? { ...unexplored, notes: `${unexplored.notes ? unexplored.notes + '\n' : ''}${extra}` }
       : unexplored;
@@ -2158,10 +2161,16 @@ ${plan.lead.duty}
   const pmAct = useCallback(async (node: ProblemNode) => {
     const pid = feedProjectRef.current;
     const proj = projectsRef.current.find(p => p.id === pid);
-    if (!pid || !proj?.charter?.autoBuyCNY || !loggedIn() || pmBusyRef.current.has(node.id)) return;
+    if (!pid || !proj || pmBusyRef.current.has(node.id)) return;
+    // 没去下单要说清楚为什么（自主运行时记进日志，汇报里如实说，不让模型去猜「登录不了」）
+    const why = !proj.charter?.autoBuyCNY ? `「${node.title}」需要找人在现实里做，但花钱权限是 0，没去服务广场下单——要我自己下单，就在钱包页把「花钱权限」调上去`
+      : !loggedIn() ? `「${node.title}」需要找人在现实里做，但这台电脑没登录正式网站，AI 进不了服务广场——登录后我会自己去下单`
+      : '';
+    if (why) { noteAuto('need', why, node.id, pid); return; }
     pmBusyRef.current.add(node.id);
     try {
-      const pm = await syncPm(pid); if (!pm) return;
+      const pm = await syncPm(pid);
+      if (!pm) { noteAuto('stuck', `「${node.title}」想去服务广场下单，但 AI 的服务广场授权没建成（网络或登录过期），下次再试`, node.id, pid); pmBusyRef.current.delete(node.id); return; }
       const r = await pmBuyOrPost(proj, node, pm);
       if (r.kind === 'order') pushFeedItem(feedStatus(`🤝 AI 项目经理为「${node.title}」下单了「${r.title}」${money(r.priceCents)}（${r.provider}）· 钱包担保，你验收后才付给对方`, { tone: 'good', nodeId: node.id }), pid);
       else if (r.kind === 'demand') pushFeedItem(feedStatus(`📢 没找到现成的服务，AI 项目经理发布了需求「${r.title}」，预算 ${money(r.budgetCents)}，等人接单`, { tone: 'good', nodeId: node.id }), pid);
@@ -2171,7 +2180,7 @@ ${plan.lead.duty}
       pushFeedItem(feedStatus(/余额不足/.test(msg) ? `💳 AI 想找人去做「${node.title}」，但 AI 钱包余额不够——去项目的「钱包」充值，再点「🤝 找人 / 服务去做」` : `⚠️ AI 项目经理没能下单：${msg}`, { tone: 'warn', nodeId: node.id }), pid);
       pmBusyRef.current.delete(node.id);
     }
-  }, [syncPm, pushFeedItem]);
+  }, [syncPm, pushFeedItem, noteAuto]);
   useEffect(() => { pmActRef.current = pmAct; }, [pmAct]);
   /** 接一轮单：交付已中标的，再挑新的投标 */
   const workJobs = useCallback(async (pid: string): Promise<string> => {
@@ -2377,7 +2386,8 @@ ${plan.lead.duty}
       const statusLine = `已花 ¥${spent.toFixed(2)} / 启动资金 ¥${a.budgetCNY}；还有 ${remainingCount(proj.nodes || [])} 步没做${a.pausedFor ? `；现在停着（${a.pausedFor}）` : ''}`;
       let r = fallbackReport(entries, pending, extra);
       try {
-        const resp = await meterFor(pid, () => callLLM(buildReportMessages(proj, entries, pending, statusLine) as any, { jsonMode: true, maxTokens: 1500, timeoutMs: 90000 }));
+        const cap = marketCapability(proj, loggedIn());
+        const resp = await meterFor(pid, () => callLLM(buildReportMessages(proj, entries, pending, statusLine, cap) as any, { jsonMode: true, maxTokens: 1500, timeoutMs: 90000 }));
         const parsed = parseReport(resp.content);
         if (parsed) r = { ...parsed, needs: [...new Set([...extra, ...parsed.needs])].slice(0, 4) };
       } catch (e) { console.warn('[autonomy] 汇报没写成，用日志直接汇报', e); }
@@ -2878,6 +2888,14 @@ ${plan.lead.duty}
       }
       case 'branch': {
         if (!node) break;
+        // 自主运行走到岔路口：第一次不直接标完成（那样只留下草稿），而是自己选一个方向、把这一步按这个方向重新做出可验证的结果
+        if (aiWhy && optionId === 'continue' && !node.autoDecided) {
+          updateNode(node.id, { status: NodeStatus.UNEXPLORED, pendingDecision: undefined, autoDecided: true,
+            userAsk: `你是自主运行的项目负责人，用户不在。这一步走到了岔路口${node.pendingDecision?.context ? `（${String(node.pendingDecision.context).slice(0, 200)}）` : ''}：自己选一个方向并写明理由，然后按这个方向把这一步做出能验证的结果；需要真人 / 现实里做的部分，写成要在服务广场找的服务（交付什么、验收标准、预算）。` });
+          if (decision?.nodeId === node.id) setDecision(null);
+          setIsLooping(true);
+          break;
+        }
         if (optionId === 'terminate') updateNode(node.id, { status: NodeStatus.INVALID, pendingDecision: undefined });
         else if (optionId === 'retry') updateNode(node.id, { status: NodeStatus.UNEXPLORED, pendingDecision: undefined });
         else if (optionId === 'add_subproblem' && typed) { addNode(typed, [node.id]); updateNode(node.id, { status: NodeStatus.SOLVED, pendingDecision: undefined }); }

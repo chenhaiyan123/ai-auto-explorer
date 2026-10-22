@@ -531,6 +531,8 @@ export interface ProblemNode {
   pendingDecision?: DecisionPoint;
   /** 用户在对话流里补的一句要求，下一次写这篇时带进提示词，写完即清空 */
   userAsk?: string;
+  /** 自主运行时 AI 已经在这个岔路口自己做过一次决定（再遇到就直接往下走） */
+  autoDecided?: boolean;
   x?: number;
   y?: number;
 }

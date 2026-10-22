@@ -82,12 +82,25 @@ export function fallbackReport(entries: AutoLogEntry[], pending: KeyInfo[] = [],
   };
 }
 
+/**
+ * AI 在服务广场到底能做什么——写进做每一步的提示词和汇报里。
+ * 不写的话，模型会按常识以为自己「登录不了网站、只能模拟」，把能下的单都写成待办。
+ */
+export function marketCapability(p: Pick<Project, 'charter'>, loggedIn: boolean): string {
+  const c = p.charter;
+  if (!loggedIn) return '【服务广场】现在没登录正式网站，AI 暂时进不了服务广场：需要找人做的事写清楚要找什么服务、验收标准、预算，等用户登录后由系统去下单 / 发需求。';
+  if (!c?.autoBuyCNY) return `【服务广场】你有服务广场的真实账号，但花钱权限是 0：需要花钱找人做的事，写清楚要找什么服务、验收标准、预算，系统会先问用户。${c?.allowJobs ? '用户允许你在服务广场接单赚钱。' : ''}不要说自己「登录不了服务广场」或「只能模拟」。`;
+  return `【服务广场】你（AI 项目经理）有服务广场的真实授权：单笔 ≤ ¥${c.autoBuyCNY}${c.monthlyCNY ? `、每月 ≤ ¥${c.monthlyCNY}` : ''}，用 AI 钱包担保下单，对方交付、验收后才付款；找不到现成服务就发布需求等人接单${c.allowJobs ? '；也可以接别人的单赚钱' : ''}。
+做法：遇到必须真人 / 现实里做的事（访谈、测量、实验、拿真实数据、找供应商报价），把它写成一件具体的事——找什么服务、交付什么、验收标准、预算多少——系统会在这一步做完后自动去服务广场下单或发需求。
+不要说自己「登录不了服务广场」「无法下单」或「只能模拟」；真实下单的结果会记进日志。超出权限、或要在平台外花钱（比如买设备）的，才需要问用户。`;
+}
+
 /** 让模型把日志整理成一份像人写的汇报（一次调用，失败就用 fallbackReport） */
-export function buildReportMessages(p: Project, entries: AutoLogEntry[], pending: KeyInfo[], status: string) {
+export function buildReportMessages(p: Project, entries: AutoLogEntry[], pending: KeyInfo[], status: string, capability = '') {
   const lines = entries.slice(-80).map(e => `[${new Date(e.at).toLocaleString()}][${{ did: '做了', think: '想法', stuck: '困难', need: '需要用户' }[e.kind]}] ${e.text}`).join('\n');
   return [
     { role: 'system', content: '你是这个项目的 AI 项目经理，用户授权你自主运行了一段时间，现在他回来了。像一个靠谱的同事那样跟他汇报：具体、诚实、不夸大，没做成的就说没做成。只返回 JSON。' },
-    { role: 'user', content: `项目：${p.name}\n目标：${(p.metaProblem || '').slice(0, 300)}\n现状：${status}\n\n这段时间的工作日志：\n${lines || '（没有记录）'}\n\n${pending.length ? `还没问出答案的问题：\n${pending.map(k => '- ' + k.question).join('\n')}\n\n` : ''}返回 JSON：{"headline":"一句话总结这段时间（≤30字）","did":["做了什么（每条≤40字，最多5条，按重要性）"],"thinking":["我的判断和思考（每条≤50字，最多3条）"],"difficulties":["遇到的困难（每条≤40字，最多3条，没有就空数组）"],"needs":["需要用户怎样支持（具体到一个动作，每条≤40字，最多3条，没有就空数组）"]}` },
+    { role: 'user', content: `项目：${p.name}\n目标：${(p.metaProblem || '').slice(0, 300)}\n现状：${status}\n\n这段时间的工作日志：\n${lines || '（没有记录）'}\n\n${pending.length ? `还没问出答案的问题：\n${pending.map(k => '- ' + k.question).join('\n')}\n\n` : ''}${capability ? `你实际拥有的能力（以这个为准，不要自己猜测「做不到」）：\n${capability}\n\n` : ''}只根据日志说事：日志里没有下单 / 发需求的记录，就说「还没去服务广场下单」并说明原因（比如花钱权限是 0、没登录、还没走到需要找人的那一步），不要说成「无法登录」或「只能模拟」。\n\n返回 JSON：{"headline":"一句话总结这段时间（≤30字）","did":["做了什么（每条≤40字，最多5条，按重要性）"],"thinking":["我的判断和思考（每条≤50字，最多3条）"],"difficulties":["遇到的困难（每条≤40字，最多3条，没有就空数组）"],"needs":["需要用户怎样支持（具体到一个动作，每条≤40字，最多3条，没有就空数组）"]}` },
   ];
 }
 
@@ -112,7 +125,7 @@ export function autoChoice(type: string, optionIds: string[]): { option: string;
   const has = (id: string) => optionIds.includes(id);
   switch (type) {
     case 'step': return has('auto') ? { option: 'auto', why: '接着往下做' } : has('next') ? { option: 'next', why: '接着做下一步' } : has('stop') ? { option: 'stop', why: '这些步骤做完了，看看下一步做什么' } : null;
-    case 'branch': return has('continue') ? { option: 'continue', why: '这一步算完成，继续往下' } : has('terminate') ? { option: 'terminate', why: '几次都没做成，先跳过，记进困难' } : null;
+    case 'branch': return has('continue') ? { option: 'continue', why: '岔路口我自己选方向，接着做' } : has('terminate') ? { option: 'terminate', why: '几次都没做成，先跳过，记进困难' } : null;
     case 'contradicted': return has('pivot') ? { option: 'pivot', why: '现实推翻了原判断，换个假设继续' } : null;
     case 'reality': return has('later') ? { option: 'later', why: '这几步要在现实里做，已经去找人 / 发需求，先做别的' } : null;
     case 'unattended': return has('go') ? { option: 'go', why: '有启动资金兜底，继续' } : null;

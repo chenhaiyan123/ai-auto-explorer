@@ -1,4 +1,4 @@
-import { grantAutonomy, logAuto, autoSpentCNY, budgetLeftCNY, canPlanNextStage, reportDue, fallbackReport, parseReport, autoChoice, nextCheckIn, MAX_STAGE_ROUNDS, STAGE_GAP, LOG_LIMIT, REPORT_GAP } from '../services/autonomy';
+import { marketCapability, buildReportMessages, grantAutonomy, logAuto, autoSpentCNY, budgetLeftCNY, canPlanNextStage, reportDue, fallbackReport, parseReport, autoChoice, nextCheckIn, MAX_STAGE_ROUNDS, STAGE_GAP, LOG_LIMIT, REPORT_GAP } from '../services/autonomy';
 import { reportAsk } from '../services/agentFeed';
 import { parseBrief, briefSections } from '../services/projectBrief';
 import type { Project } from '../types';
@@ -53,7 +53,7 @@ ok(fb.needs.includes('启动资金用完了') && fb.needs.some(n => n.includes('
 const pr = parseReport('```json\n{"headline":"做了三件事","did":["a","b"],"thinking":["c"],"difficulties":[],"needs":["d"]}\n```');
 ok(pr?.did.length === 2 && pr.needs[0] === 'd', '解析模型汇报');
 ok(parseReport('不是 JSON') === null && parseReport('{"did":[],"thinking":[]}') === null, '坏的 / 空的汇报不要');
-const card = reportAsk(pr!, { since: T0 - 7 * DAY, nextCheck: T0 + 7 * DAY, hasQuestions: true });
+const card = reportAsk(pr!, { since: Date.now() - 7 * DAY, nextCheck: T0 + 7 * DAY, hasQuestions: true });
 ok(card.ask?.type === 'report' && card.text.includes('7 天'), '汇报卡：类型 + 时间跨度');
 ok(card.sections?.map(s => s.label).join('|') === '这段时间我做了什么|我的思考|遇到的困难|需要你的支持', '汇报卡四栏');
 ok(card.ask!.options.some(o => o.id === 'questions') && card.ask!.input?.optionId === 'adjust', '能回答问题、能提调整');
@@ -71,6 +71,14 @@ const b = parseBrief({ approach: '先小后大', hard: ['x'], support: ['y'], re
 ok(b?.stages?.length === 2 && b.startCNY === 500 && b.checkInDays === 14, '解析分阶段 / 启动资金（有上限）/ 回看周期');
 const secs = briefSections(b!, []);
 ok(secs.some(s => s.label === '分阶段') && secs.some(s => s.label === '建议先从小做起' && s.items[0].includes('¥500')), '简报卡里有分阶段和从小做起');
+
+// 服务广场能力：告诉模型真实能做什么，不让它说「登录不了 / 只能模拟」
+const capOn = marketCapability({ charter: { autoBuyCNY: 50, monthlyCNY: 300, confirmedAt: 0 } }, true);
+ok(capOn.includes('单笔 ≤ ¥50') && capOn.includes('每月 ≤ ¥300') && capOn.includes('不要说自己「登录不了服务广场」'), '有授权：写明额度，禁止说做不到');
+ok(marketCapability({ charter: { autoBuyCNY: 0, confirmedAt: 0 } }, true).includes('花钱权限是 0'), '权限 0：说清楚会先问用户');
+ok(marketCapability({}, false).includes('没登录'), '没登录：如实说');
+const rm = buildReportMessages(p, [], [], 's', capOn);
+ok(rm[1].content.includes('单笔 ≤ ¥50') && rm[1].content.includes('不要说成「无法登录」'), '汇报提示词带上真实能力');
 
 console.log(`autonomy: ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
