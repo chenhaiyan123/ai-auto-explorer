@@ -655,6 +655,8 @@ export interface Project {
   wallet?: ProjectWalletLedger;
   /** 用户授权的自主运行 */
   autonomy?: Autonomy;
+  /** AI 用模型的策略：省钱 / 均衡（默认）/ 效果优先——难的活换强模型、简单的活用便宜模型 */
+  modelPolicy?: 'save' | 'balanced' | 'best';
   /** 自主运行日志 */
   autolog?: AutoLogEntry[];
   /** 用户维护的项目目标与范围，AI 摘要不得覆盖。 */

@@ -1,3 +1,4 @@
+import { routeModel, currentTask, type TaskLevel } from './modelRouter';
 import { reportModelUsage } from './projectWallet';
 /**
  * LLM Provider — 统一模型接入层
@@ -110,6 +111,8 @@ export interface LLMCallOptions {
   timeoutMs?: number;
   /** 联网搜索（目前只有通义千问支持，走 DashScope 原生接口以拿到来源链接） */
   webSearch?: boolean;
+  /** 这件活有多难（不填就看 asTask 的范围，默认一般）：平台模型会按它换模型 */
+  task?: TaskLevel;
 }
 
 export interface LLMResult {
@@ -137,8 +140,15 @@ export async function callLLM(
   options: LLMCallOptions = {},
   settings?: LLMSettings,
 ): Promise<LLMResult> {
-  const s = settings || loadLLMSettings();
-  const r = await callLLMRaw(messages, options, settings);
+  let s = settings || loadLLMSettings();
+  // AI 自己换模型：没指定模型、走平台模型时，按这件活的难度和项目策略挑（挑不出来就用默认）
+  const route = !settings && !options.model && s.provider === 'platform' ? routeModel(options.task || currentTask()) : undefined;
+  let r: LLMResult;
+  if (route && route.modelId !== s.model) {
+    const routed = { ...s, model: route.modelId };
+    try { r = await callLLMRaw(messages, options, routed); s = routed; }
+    catch (e) { console.warn(`[模型] 换到「${route.label}」没成功，改用默认模型`, e); r = await callLLMRaw(messages, options, settings); }
+  } else r = await callLLMRaw(messages, options, settings);
   // 记进项目钱包（按项目归集；失败不影响干活）
   if (r.usage) reportModelUsage({ model: s.model || s.provider, provider: s.provider, input: r.usage.prompt_tokens || 0, output: r.usage.completion_tokens || 0 });
   return r;

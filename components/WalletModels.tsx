@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { sharedRequest, SHARED_API, type SharedCatalog, type SharedModel } from '../services/sharedModelsClient';
 import { loadLLMSettings, saveLLMSettings } from '../services/llmProvider';
 import { BILLING_CHANGED } from '../services/billingClient';
+import { POLICY_LABEL, POLICY_HINT, TASK_LABEL, routePreview, modelStrength, type ModelPolicy } from '../services/modelRouter';
 
 /**
  * AI 用哪个模型干活、给模型充 API 额度。
@@ -14,7 +15,13 @@ const tokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 
 export const cheapestWalletModel = (models: SharedModel[]): SharedModel | undefined =>
   models.filter(m => m.enabled && m.hasKey && (m.priceCentsPerM || 0) > 0 && m.dailyTokens - m.usedToday > 20000).sort((a, b) => (a.priceCentsPerM || 0) - (b.priceCentsPerM || 0))[0];
 
-const WalletModels: React.FC = () => {
+const STRENGTH = ['', '便宜够用', '较强', '最强'];
+
+const WalletModels: React.FC<{
+  /** 这个项目 AI 用模型的策略（不传就不显示「AI 自己换模型」那一栏） */
+  policy?: ModelPolicy;
+  onPolicy?: (p: ModelPolicy) => void;
+}> = ({ policy, onPolicy }) => {
   const [cat, setCat] = useState<SharedCatalog | null>(null);
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
@@ -49,6 +56,28 @@ const WalletModels: React.FC = () => {
         <span className="text-[11px] text-slate-500">额度不够时会自动从钱包兑换；也可以先充好</span>
         {pick && <button onClick={() => use(pick, true)} className="ml-auto text-[12px] px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300">让 AI 自己挑（最省钱）</button>}
       </div>
+      {onPolicy && (
+        <div className="rounded-lg border border-violet-700/40 bg-violet-950/20 p-2.5 space-y-2" aria-label="AI 自己换模型">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[12px] font-semibold text-slate-200">🔀 AI 自己换模型</span>
+            <div className="flex gap-1" role="radiogroup" aria-label="用模型的策略">
+              {(['save', 'balanced', 'best'] as ModelPolicy[]).map(p => (
+                <button key={p} role="radio" aria-checked={(policy || 'balanced') === p} onClick={() => onPolicy(p)}
+                  className={`px-2 py-0.5 rounded-md text-[12px] border ${(policy || 'balanced') === p ? 'bg-violet-600 border-violet-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-violet-500'}`}>{POLICY_LABEL[p]}</button>
+              ))}
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-400">{POLICY_HINT[policy || 'balanced']}</p>
+          {cat && (() => {
+            const pv = routePreview({ models: cat.models, balances: cat.balances || {}, walletCents: cat.walletCents || 0, defaultId: current.provider === 'platform' ? current.model : undefined, policy });
+            return pv.some(x => x.route)
+              ? <ul className="text-[11px] text-slate-300 space-y-0.5">{pv.map(x => <li key={x.task}>· {TASK_LABEL[x.task]}：{x.route ? x.route.label : '—'}</li>)}</ul>
+              : <p className="text-[11px] text-amber-300">现在没有能用的平台模型（钱包没钱、或模型没开放钱包价），AI 会一直用默认模型。</p>;
+          })()}
+          {current.provider !== 'platform' && <p className="text-[11px] text-slate-500">你现在用的是自己的 API Key，只有一个模型可用，换不了；在设置里改成平台模型后，AI 才能按难易自己换。</p>}
+          {!models.some(m => modelStrength(m) === 3) && <p className="text-[11px] text-slate-500">平台还没开放 Claude / GPT 这类最强模型，难的活会用现有里最强的（比如 Kimi）。</p>}
+        </div>
+      )}
       {err && <p className="text-[12px] text-slate-500">模型列表暂时读不到（登录正式网站后可见）。</p>}
       {!err && !models.length && cat && <p className="text-[12px] text-slate-500">平台还没有开放共享模型。</p>}
       <ul className="divide-y divide-slate-800">
@@ -58,7 +87,7 @@ const WalletModels: React.FC = () => {
           return (
             <li key={m.id} className="py-2 flex items-center gap-2 flex-wrap text-[12px]">
               <div className="min-w-0 flex-1">
-                <div className="text-slate-200 font-medium">{m.label}{isDefault && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-700 text-white">默认</span>}</div>
+                <div className="text-slate-200 font-medium">{m.label}<span className="ml-1.5 text-[10px] text-slate-500">{STRENGTH[modelStrength(m)]}</span>{isDefault && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-emerald-700 text-white">默认</span>}</div>
                 <div className="text-[11px] text-slate-500">{yuanPerM(m.priceCentsPerM)} · 可用 {tokens(b?.available || 0)} Token</div>
               </div>
               {!isDefault && <button onClick={() => use(m)} className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">设为默认</button>}

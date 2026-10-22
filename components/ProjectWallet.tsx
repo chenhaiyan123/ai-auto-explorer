@@ -25,8 +25,10 @@ const ProjectWallet: React.FC<{
   onToggleJobs?: (on: boolean) => void;
   /** 现在让 AI 项目经理去服务广场接一轮单 */
   onWorkJobs?: () => Promise<string>;
+  /** 改 AI 用模型的策略（难的活换强模型、简单的活用便宜模型） */
+  onModelPolicy?: (p: 'save' | 'balanced' | 'best') => void;
   request?: MarketRequest;
-}> = ({ project, onEditCharter, onOpenMarket, onToggleJobs, onWorkJobs, request = marketRequest }) => {
+}> = ({ project, onEditCharter, onOpenMarket, onToggleJobs, onWorkJobs, onModelPolicy, request = marketRequest }) => {
   const [jobMsg, setJobMsg] = useState('');
   const [jobBusy, setJobBusy] = useState(false);
   const pm = readPmToken(project.id);
@@ -94,7 +96,7 @@ const ProjectWallet: React.FC<{
         {jobMsg && <p role="status" className="text-[12px] text-emerald-300">{jobMsg}</p>}
       </section>
 
-      <WalletModels />
+      <WalletModels policy={project.modelPolicy} onPolicy={onModelPolicy} />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div className={cell}>

@@ -49,6 +49,8 @@ import { lifeOf, defaultLife, pickDue, budgetAllows, spendBudget, buildPulseMess
 import ProjectPulse from './components/ProjectPulse';
 import { callLLM } from './services/llmProvider';
 import AutonomyModal from './components/AutonomyModal';
+import { asTask, setModelRouter, pickModel, type TaskLevel, type ModelPolicy } from './services/modelRouter';
+import { SHARED_MODELS_CHANGED } from './services/sharedModelsClient';
 import { marketCapability, grantAutonomy, isAutonomous, isRunningAutonomously, logAuto, autoChoice, budgetLeftCNY, autoSpentCNY, canPlanNextStage, entriesSince, reportDue, fallbackReport, buildReportMessages, parseReport, nextCheckIn } from './services/autonomy';
 import { reportAsk } from './services/agentFeed';
 import type { Autonomy, AutoLogEntry } from './types';
@@ -1070,12 +1072,14 @@ const App: React.FC = () => {
   }, []);
   // ===== 自主运行：AI 当自己是个独立的人 =====
   /** 把一件事记进自主运行日志（只在项目授权了自主运行时记；用户回来时汇报的原料） */
+  const noteAutoRef = useRef<((kind: AutoLogEntry['kind'], text: string, nodeId?: string, projectId?: string) => void) | null>(null);
   const noteAuto = useCallback((kind: AutoLogEntry['kind'], text: string, nodeId?: string, projectId?: string) => {
     const pid = projectId || feedProjectRef.current;
     if (!pid || !isAutonomous(projectsRef.current.find(p => p.id === pid))) return;
     projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, autolog: logAuto(p.autolog, kind, text, nodeId) } : p));
     setProjects(prev => prev.map(p => (p.id === pid ? { ...p, autolog: logAuto(p.autolog, kind, text, nodeId) } : p)));
   }, []);
+  useEffect(() => { noteAutoRef.current = noteAuto; }, [noteAuto]);
   const patchAutonomy = useCallback((pid: string, patch: Partial<Autonomy> | null) => {
     const apply = (p: Project): Project => (p.id !== pid ? p : { ...p, autonomy: patch === null ? undefined : { ...(p.autonomy as Autonomy), ...patch } });
     projectsRef.current = projectsRef.current.map(apply);
@@ -1085,7 +1089,32 @@ const App: React.FC = () => {
   const answerFeedRef = useRef<((item: FeedItem, optionId: string, text?: string, why?: string) => void) | null>(null);
   /** 平台模型的钱包价（分 / 百万 Token）：算自主运行花了多少 */
   const modelPricesRef = useRef<Record<string, number>>({});
-  useEffect(() => { if (SHARED_API) sharedRequest<SharedCatalog>('/shared/catalog').then(c => { modelPricesRef.current = Object.fromEntries(c.models.map(m => [m.id, m.priceCentsPerM || 0])); }).catch(() => {}); }, []);
+  /** 平台模型目录（AI 换模型时看：哪些能用、多少钱、账上还有多少） */
+  const modelCatalogRef = useRef<SharedCatalog | null>(null);
+  useEffect(() => {
+    if (!SHARED_API) return;
+    const load = () => sharedRequest<SharedCatalog>('/shared/catalog').then(c => { modelCatalogRef.current = c; modelPricesRef.current = Object.fromEntries(c.models.map(m => [m.id, m.priceCentsPerM || 0])); }).catch(() => {});
+    void load();
+    const t = window.setInterval(load, 5 * 60_000);
+    window.addEventListener(SHARED_MODELS_CHANGED, load); window.addEventListener(BILLING_CHANGED, load);
+    return () => { clearInterval(t); window.removeEventListener(SHARED_MODELS_CHANGED, load); window.removeEventListener(BILLING_CHANGED, load); };
+  }, []);
+  // AI 自己换模型：按这件活的难度 + 项目的用模型策略，在平台模型里挑；换了就记进自主运行日志
+  const lastRouteRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    setModelRouter((task: TaskLevel) => {
+      const c = modelCatalogRef.current; if (!c) return undefined;
+      const pid = feedProjectRef.current;
+      const proj = projectsRef.current.find(p => p.id === pid);
+      const r = pickModel(task, { models: c.models, balances: c.balances || {}, walletCents: c.walletCents || 0, defaultId: loadLLMSettings().model, policy: proj?.modelPolicy });
+      if (r && pid && lastRouteRef.current[`${pid}:${task}`] !== r.modelId) {
+        lastRouteRef.current[`${pid}:${task}`] = r.modelId;
+        if (task !== 'normal') setTimeout(() => noteAutoRef.current?.('think', `${task === 'hard' ? '难的活' : '简单的活'}换成「${r.label}」来做（${r.why}）`, undefined, pid), 0);
+      }
+      return r;
+    });
+    return () => setModelRouter(null);
+  }, []);
 
   const pushFeedItem = useCallback((item: FeedItem, projectId?: string) => {
     const pid = projectId || feedProjectRef.current;
@@ -1312,7 +1341,7 @@ const App: React.FC = () => {
     overviewRefreshingRef.current = true;
     const overviewEpoch = workspaceEpochRef.current;
     try {
-      const md = await synthesizeOverview(name, goal, directions, findings, cards);
+      const md = await asTask('simple', () => synthesizeOverview(name, goal, directions, findings, cards));
       if (md && md.trim().length > 20) {
         if (overviewEpoch !== workspaceEpochRef.current) return;
         setNodes(prev => prev.map(n => n.id === overview.id && n.autoNote !== false ? { ...n, fullNote: md.trim(), autoNote: true, noteUpdatedAt: Date.now() } : n));
@@ -1465,7 +1494,9 @@ const App: React.FC = () => {
         setTimeout(() => reject(new Error('API调用超时')), 60000)
       );
       
-      const explorationPromise = isResearch 
+      // 这一步有多难：岔路口自己拿主意、出过错在重做、拿现实结果重新推进 → 难的活，换强模型
+      const stepLevel: TaskLevel = unexplored.autoDecided || (retryCountRef.current[cid] || 0) > 0 || /现实结果|岔路口/.test(unexplored.userAsk || '') ? 'hard' : 'normal';
+      const explorationPromise = asTask(stepLevel, async () => isResearch 
         ? exploreResearchNode(target, nodes, (c: KnowledgeCard) => {
             // 知识卡片自己有地方看，不再逐条刷进对话流
             setKnowledgeCards(p => [...p, c]);
@@ -1475,7 +1506,7 @@ const App: React.FC = () => {
               addNotification('discovery', '🔥 重要发现', f.insight.slice(0, 50) + '...');
             }
           }, questionFactContext(currentProject?.inquiries, unexplored.id))
-        : exploreNode(target, nodes, questionFactContext(currentProject?.inquiries, unexplored.id));
+        : exploreNode(target, nodes, questionFactContext(currentProject?.inquiries, unexplored.id)));
       
       const result = await Promise.race([explorationPromise, timeoutPromise]) as any;
       
@@ -2030,10 +2061,10 @@ ${plan.lead.duty}
       const existing = (proj?.nodes || [])
         .filter(n => n.noteType === 'direction' || !n.noteType)
         .map(n => n.title);
-      const { outline, problems } = await proposeOutline(g, proj?.explorationMode || 'research', {
+      const { outline, problems } = await asTask('hard', () => proposeOutline(g, proj?.explorationMode || 'research', {
         existingTitles: existing,
         userNote: noteOverride ?? proj?.outline?.userNote,
-      });
+      }));
       if (!outline) {
         addNotification('warning', '🗺️ 这次没拆出步骤', problems.join('；') || '模型没给出可用的方向');
         return;
@@ -2188,7 +2219,7 @@ ${plan.lead.duty}
     if (!proj?.charter?.allowJobs) return '还没允许 AI 接单';
     const pm = await syncPm(pid);
     if (!pm) return '需要先登录正式网站，AI 才能进服务广场';
-    const llm = async (messages: { role: string; content: string }[], json?: boolean) => (await meterFor(pid, () => callLLM(messages, { jsonMode: !!json, maxTokens: 3000, timeoutMs: 120000 }))).content;
+    const llm = async (messages: { role: string; content: string }[], json?: boolean, task?: TaskLevel) => (await meterFor(pid, () => callLLM(messages, { jsonMode: !!json, maxTokens: 3000, timeoutMs: 120000, task }))).content;
     const r = await pmWorkJobs(pm, llm, `${proj.name}：${(proj.metaProblem || '').slice(0, 200)}`);
     for (const d of r.delivered) pushFeedItem(feedStatus(`📦 AI 项目经理交付了接的单「${d.title}」（${money(d.priceCents)}），等对方验收后钱进 AI 钱包`, { tone: 'good' }), pid);
     for (const b of r.bids) pushFeedItem(feedStatus(`🙋 AI 项目经理在服务广场投了一个单，报价 ${money(b.priceCents)}，${b.deliveryDays} 天交付`, { detail: b.proposal }), pid);
@@ -2347,8 +2378,15 @@ ${plan.lead.duty}
   }, [autoNext]);
   useEffect(() => { resumeAutoRef.current = resumeAuto; }, [resumeAuto]);
 
+  /** AI 用模型的策略：省钱 / 均衡 / 效果优先 */
+  const setModelPolicy = useCallback((pid: string, p: ModelPolicy) => {
+    projectsRef.current = projectsRef.current.map(x => (x.id === pid ? { ...x, modelPolicy: p } : x));
+    patchProject(pid, { modelPolicy: p });
+    pushFeedItem(feedStatus(p === 'best' ? '🔀 用模型改成「效果优先」：一般的活和难的活都用最强的模型（花钱更快）' : p === 'save' ? '🔀 用模型改成「省钱」：基本都用最便宜的模型，特别难的活才升级' : '🔀 用模型改成「均衡」：简单的活用便宜模型，难的活换最强的'), pid);
+  }, [patchProject, pushFeedItem]);
+
   /** 允许自主运行（开工弹框里点的） */
-  const allowAutonomy = useCallback((pid: string, o: { budgetCNY: number; checkInDays: number; allowJobs: boolean }, nodeId?: string) => {
+  const allowAutonomy = useCallback((pid: string, o: { budgetCNY: number; checkInDays: number; allowJobs: boolean; modelPolicy?: ModelPolicy }, nodeId?: string) => {
     const proj = projectsRef.current.find(p => p.id === pid);
     if (!proj) return;
     const prev = proj.autonomy?.on ? proj.autonomy : undefined;
@@ -2359,12 +2397,13 @@ ${plan.lead.duty}
       : grantAutonomy(o.budgetCNY, o.checkInDays);
     patchAutonomy(pid, autonomy);
     if (!!proj.charter?.allowJobs !== o.allowJobs) toggleJobs(pid, o.allowJobs);
+    if (o.modelPolicy && o.modelPolicy !== (proj.modelPolicy || 'balanced')) setModelPolicy(pid, o.modelPolicy);
     noteAuto('think', `你授权我自主运行：¥${o.budgetCNY} 以内，每 ${o.checkInDays} 天回来看一次`, undefined, pid);
     pushFeedItem(feedStatus(`⚡ 收到，我开始自主运行：¥${o.budgetCNY} 以内，小事我自己拿主意，不来打扰你。${o.checkInDays === 14 ? '两周' : '一周'}后回来看我，我把做了什么、怎么想的、卡在哪、需要你什么一起汇报给你`, { tone: 'good' }), pid);
     trackEvent('autonomy_granted', { budget: o.budgetCNY, days: o.checkInDays, jobs: o.allowJobs ? 1 : 0 });
     if (nodeId) forceNodeRef.current = nodeId;
     setTimeout(() => resumeAutoRef.current?.(pid), 50);
-  }, [patchAutonomy, toggleJobs, noteAuto, pushFeedItem]);
+  }, [patchAutonomy, toggleJobs, setModelPolicy, noteAuto, pushFeedItem]);
 
   // ===== 用户回来了：汇报这段时间 =====
   const reportBusyRef = useRef(false);
@@ -3208,7 +3247,7 @@ ${plan.lead.duty}
         } catch (e) { console.warn('[pulse] 联网搜索不可用，退回推理', e); }
       }
       if (!parsed) {
-        const res = await meterFor(projectId, () => callLLM(buildPulseMessages(project, now), { jsonMode: true, maxTokens: 700, timeoutMs: 60000 }));
+        const res = await meterFor(projectId, () => callLLM(buildPulseMessages(project, now), { jsonMode: true, maxTokens: 700, timeoutMs: 60000, task: 'simple' }));
         parsed = parsePulse(res.content);
       }
       const before = lifeOf(project, now, idx);
@@ -3275,7 +3314,8 @@ ${plan.lead.duty}
       onEditCharter={() => { patchFeed(f => pushFeed(closeAsks(f, 'charter', '已重新问'), charterAsk(currentProject.id)), currentProject.id); setRightChatOpen(true); }}
       onOpenMarket={() => { setMarketSeek(null); setShowServiceMarket(true); }}
       onToggleJobs={on => toggleJobs(currentProject.id, on)}
-      onWorkJobs={() => workJobs(currentProject.id)} />
+      onWorkJobs={() => workJobs(currentProject.id)}
+      onModelPolicy={p => setModelPolicy(currentProject.id, p)} />
   ) : null;
 
   const pulsePanel = currentProject ? (<div className="space-y-3">

@@ -91,7 +91,8 @@ export async function pmBuyOrPost(project: Project, node: ProblemNode, pm: PmTok
 
 // ===== 卖：接单赚钱 =====
 
-type LLM = (messages: { role: string; content: string }[], json?: boolean) => Promise<string>;
+/** task='hard'：给人交付的活，平台模型会换强模型来做 */
+type LLM = (messages: { role: string; content: string }[], json?: boolean, task?: 'simple' | 'normal' | 'hard') => Promise<string>;
 
 export interface Bid { demandId: string; proposal: string; priceCents: number; deliveryDays: number }
 
@@ -133,7 +134,7 @@ export async function pmDeliver(state: MarketState, llm: LLM, as: MarketRequest)
 你的接单方案：${o.quote.description}
 
 直接给出交付内容（Markdown，不超过 4000 字），要具体、能直接用；资料来源写清楚，不确定的标明「待核实」。最后一段写「局限」：哪些没做到、为什么。`;
-    const text = (await llm([{ role: 'user', content: prompt }])).trim();
+    const text = (await llm([{ role: 'user', content: prompt }], false, 'hard')).trim();
     if (!text) continue;
     const limIdx = text.lastIndexOf('局限');
     const limitation = (limIdx > 0 ? text.slice(limIdx).replace(/^局限[：:\s]*/, '') : '由 AI 完成，资料需买方核实').slice(0, 1100) || '由 AI 完成，资料需买方核实';

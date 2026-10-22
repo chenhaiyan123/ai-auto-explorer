@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { Project } from '../types';
 import { charterLabel } from '../services/projectBrief';
 import WalletTopup from './WalletTopup';
+import { POLICY_LABEL, POLICY_HINT, type ModelPolicy } from '../services/modelRouter';
 
 /**
  * 开工前最后一步：沟通完目标、方案、阶段、资源和钱之后，请用户授权 AI 自主运行。
@@ -12,7 +13,7 @@ const START_OPTIONS = [10, 20, 50];
 
 const AutonomyModal: React.FC<{
   project: Project;
-  onAllow: (o: { budgetCNY: number; checkInDays: number; allowJobs: boolean }) => void;
+  onAllow: (o: { budgetCNY: number; checkInDays: number; allowJobs: boolean; modelPolicy: ModelPolicy }) => void;
   onStepByStep: () => void;
   onClose: () => void;
   onEditCharter: () => void;
@@ -23,6 +24,7 @@ const AutonomyModal: React.FC<{
   const [budget, setBudget] = useState<number>(suggested);
   const [days, setDays] = useState<number>(brief?.checkInDays === 14 ? 14 : 7);
   const [jobs, setJobs] = useState<boolean>(!!project.charter?.allowJobs);
+  const [policy, setPolicy] = useState<ModelPolicy>(project.modelPolicy || 'balanced');
   const stage = brief?.stages?.[0];
   const perms = brief?.permissions?.filter(Boolean).slice(0, 4) || [];
   const charter = project.charter;
@@ -63,6 +65,14 @@ const AutonomyModal: React.FC<{
         </section>
 
         <section className="space-y-2">
+          <div className="text-[13px] font-semibold text-slate-200">用什么模型 <span className="text-[11px] font-normal text-slate-500">我会按活的难易自己换</span></div>
+          <div className="flex gap-2 flex-wrap" role="radiogroup" aria-label="用模型的策略">
+            {(['save', 'balanced', 'best'] as ModelPolicy[]).map(p => <button key={p} role="radio" aria-checked={policy === p} onClick={() => setPolicy(p)} className={chip(policy === p)}>{POLICY_LABEL[p]}</button>)}
+          </div>
+          <p className="text-[11px] text-slate-500 leading-5">{POLICY_HINT[policy]}。强模型更贵，启动资金花得更快。</p>
+        </section>
+
+        <section className="space-y-2">
           <div className="text-[13px] font-semibold text-slate-200">多久回来看我一次</div>
           <div className="flex gap-2">
             {[7, 14].map(d => <button key={d} onClick={() => setDays(d)} className={chip(days === d)}>{d === 7 ? '每周一次' : '两周一次'}</button>)}
@@ -71,7 +81,7 @@ const AutonomyModal: React.FC<{
         </section>
 
         <div className="flex gap-2 flex-wrap pt-1">
-          <button onClick={() => onAllow({ budgetCNY: budget, checkInDays: days, allowJobs: jobs })} className="flex-1 min-w-[10rem] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[14px]">⚡ 允许自主运行（¥{budget} 以内）</button>
+          <button onClick={() => onAllow({ budgetCNY: budget, checkInDays: days, allowJobs: jobs, modelPolicy: policy })} className="flex-1 min-w-[10rem] px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[14px]">⚡ 允许自主运行（¥{budget} 以内）</button>
           <button onClick={onStepByStep} className="px-4 py-2.5 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 text-[13px]">先一步一步来</button>
         </div>
       </div>
