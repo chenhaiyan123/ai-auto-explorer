@@ -35,7 +35,8 @@ const ProjectNotesTree: React.FC<{
   onWake?: (projectId: string) => void;
   onDelete?: (projectId: string) => void;
 }> = ({ glow = {}, onLight, onWake, onDelete, aliveProjectIds = [], activeProjectIds = [], projects, currentProjectId, selectedNodeId, search, onSearch, onOpenNode, onCreateProject, onCreateDirection, onAddChild, onBuildTeam, onCleanup, onImport, onExportVault, onSaveToFolder, onOpenPage, selectedPage }) => {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // 目录默认全部折叠（刷新也一样）：用户关心的是成果，细节需要时自己点开
+  const [opened, setOpened] = useState<Set<string>>(new Set());
   // 右键菜单（也可以点项目行上的 ⋯）
   const [menu, setMenu] = useState<{ id: string; x: number; y: number; confirmDelete?: boolean } | null>(null);
   const [justLit, setJustLit] = useState<string | null>(null);
@@ -78,7 +79,7 @@ const ProjectNotesTree: React.FC<{
       (n.tags || []).some(t => t.toLowerCase().includes(q)));
   }, [allNodes, q]);
 
-  const toggleProject = (id: string) => setCollapsed(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const toggleProject = (id: string) => setOpened(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
 
   const noteIcon = (n: ProblemNode) => n.noteType === 'readme' ? '📘' : n.noteType === 'overview' ? '🏠' : '📄';
 
@@ -153,7 +154,7 @@ const ProjectNotesTree: React.FC<{
           <div className="text-center text-[11px] text-slate-600 py-8">{ui("还没有项目，点上方新建")}</div>
         ) : (
           projects.map(p => {
-            const isOpen = !collapsed.has(p.id);
+            const isOpen = opened.has(p.id);
             const pn = p.nodes || [];
             const byId = new Map(pn.map(n => [n.id, n]));
             const isDir = (n?: ProblemNode) => !!n && (n.noteType === 'direction' || !n.noteType);
@@ -200,7 +201,7 @@ const ProjectNotesTree: React.FC<{
                     {PageRows(p.id, 'root', 0)}
                     {Array.from(grouped.entries()).map(([fn, fnodes]) => {
                       const fkey = `${p.id}::f::${fn}`;
-                      const fopen = !collapsed.has(fkey);
+                      const fopen = opened.has(fkey);
                       const agent = fnodes.find(n => n.assignedAgent)?.assignedAgent;
                       return (
                         <div key={fkey}>

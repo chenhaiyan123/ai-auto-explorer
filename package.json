@@ -45,6 +45,7 @@
     "test:wallet": "esbuild __test__/project-wallet.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-wallet-test.mjs && node node_modules/.cache/hiexplore-wallet-test.mjs",
     "test:autonomy": "esbuild __test__/autonomy.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-autonomy-test.mjs && node node_modules/.cache/hiexplore-autonomy-test.mjs",
     "test:router": "esbuild __test__/model-router.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-router-test.mjs && node node_modules/.cache/hiexplore-router-test.mjs",
+    "test:digest": "esbuild __test__/digest.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-digest-test.mjs && node node_modules/.cache/hiexplore-digest-test.mjs",
     "test:pm": "npm run wake:build && esbuild services/pmAgent.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-pm-agent.mjs && node --test __test__/pm-agent.test.mjs"
   },
   "build": {

@@ -52,7 +52,9 @@ import AutonomyModal from './components/AutonomyModal';
 import { asTask, setModelRouter, pickModel, type TaskLevel, type ModelPolicy } from './services/modelRouter';
 import { SHARED_MODELS_CHANGED } from './services/sharedModelsClient';
 import { marketCapability, grantAutonomy, isAutonomous, isRunningAutonomously, logAuto, autoChoice, budgetLeftCNY, autoSpentCNY, canPlanNextStage, entriesSince, reportDue, fallbackReport, buildReportMessages, parseReport, nextCheckIn } from './services/autonomy';
-import { reportAsk } from './services/agentFeed';
+import { reportAsk, digestAsk } from './services/agentFeed';
+import DigestPanel from './components/DigestPanel';
+import { collectDigest, digestDue, lastDigestAt, fallbackDigest, buildDigestMessages, parseDigest, digestSections, addDigest } from './services/digest';
 import type { Autonomy, AutoLogEntry } from './types';
 import type { SharedCatalog } from './services/sharedModelsClient';
 import QuestionEvaluator from './components/QuestionEvaluator';
@@ -1119,7 +1121,7 @@ const App: React.FC = () => {
   const pushFeedItem = useCallback((item: FeedItem, projectId?: string) => {
     const pid = projectId || feedProjectRef.current;
     const proj = projectsRef.current.find(p => p.id === pid);
-    if (item.kind === 'ask' && item.ask && item.ask.type !== 'report' && isRunningAutonomously(proj)) {
+    if (item.kind === 'ask' && item.ask && item.ask.type !== 'report' && item.ask.type !== 'digest' && isRunningAutonomously(proj)) {
       const c = autoChoice(item.ask.type, item.ask.options.map(o => o.id));
       if (c && pid === feedProjectRef.current) {
         patchFeed(f => pushFeed(f, item), projectId);
@@ -2437,6 +2439,40 @@ ${plan.lead.duty}
       trackEvent('autonomy_report', { entries: entries.length });
     } finally { reportBusyRef.current = false; }
   }, [pushFeedItem, patchAutonomy]);
+  // ===== 成果播报：定期告诉用户做成了什么、心得、闭环、他自己的成长 =====
+  const [digestBusy, setDigestBusy] = useState(false);
+  const digestBusyRef = useRef(false);
+  const giveDigest = useCallback(async (pid: string, force = false) => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!proj || digestBusyRef.current) return;
+    if (!force && !digestDue(proj)) return;
+    // 自主运行的汇报刚给过，就不再叠一张
+    if (!force && proj.autonomy?.lastReportAt && Date.now() - proj.autonomy.lastReportAt < 10 * 60_000 && proj.autonomy.lastReportAt > proj.autonomy.grantedAt) return;
+    digestBusyRef.current = true; setDigestBusy(true);
+    try {
+      const since = lastDigestAt(proj);
+      const facts = collectDigest(proj, since);
+      let d = fallbackDigest(facts, since);
+      if (facts.tasks.length || facts.loops.length) {
+        try {
+          const resp = await meterFor(pid, () => callLLM(buildDigestMessages(proj, facts, since) as any, { jsonMode: true, maxTokens: 1200, timeoutMs: 90000, task: 'simple' }));
+          d = parseDigest(resp.content, since) || d;
+        } catch (e) { console.warn('[digest] 播报没写成，按记录直接播报', e); }
+      } else if (!force) return;
+      if (!d.tasks.length && !d.loops.length && !d.growth.length) d = { ...d, headline: '这段时间没有新进展', tasks: ['还没有做完的事'] };
+      projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, digests: addDigest(p.digests, d) } : p));
+      setProjects(prev => prev.map(p => (p.id === pid ? { ...p, digests: addDigest(p.digests, d) } : p)));
+      pushFeedItem(digestAsk(d, digestSections(d)), pid);
+      trackEvent('digest', { tasks: d.tasks.length, loops: d.loops.length, growth: d.growth.length });
+    } finally { digestBusyRef.current = false; setDigestBusy(false); }
+  }, [pushFeedItem]);
+  useEffect(() => {
+    if (!currentProjectId) return;
+    const t = setTimeout(() => void giveDigest(currentProjectId), 5000);
+    const iv = window.setInterval(() => { if (feedProjectRef.current) void giveDigest(feedProjectRef.current); }, 3600_000);
+    return () => { clearTimeout(t); clearInterval(iv); };
+  }, [currentProjectId, giveDigest]);
+
   // 打开项目 / 切回这个页面时：离上次汇报有一阵子、又做了些事，就先汇报
   useEffect(() => {
     if (!currentProjectId) return;
@@ -3057,6 +3093,10 @@ ${plan.lead.duty}
         }
         break;
       }
+      case 'digest': {
+        if (optionId === 'open' && currentProject) openProjectPage(currentProject.id, 'root', 'research');
+        break;
+      }
       case 'outline': {
         if (projectOutline?.status !== 'draft' || projectOutline.id !== item.ref) break;
         if (optionId === 'confirm') {
@@ -3319,6 +3359,7 @@ ${plan.lead.duty}
   ) : null;
 
   const pulsePanel = currentProject ? (<div className="space-y-3">
+    <DigestPanel digests={currentProject.digests} busy={digestBusy} onNow={() => void giveDigest(currentProject.id, true)} />
     <ProjectPulse
       life={lifeOf(currentProject, Date.now(), projects.indexOf(currentProject))}
       waking={wakingId === currentProject.id}

@@ -431,7 +431,7 @@ export interface ChatMessage {
 
 // ========== 对话流（Agent Feed）==========
 // 像 Codex 一样：AI 在干什么、需要人拍板的地方，都以一行字 / 一张问题卡出现在右侧聊天记录里。
-export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline' | 'batch' | 'charter' | 'info' | 'report';
+export type FeedAskType = 'step' | 'branch' | 'contradicted' | 'reality' | 'anchor' | 'unattended' | 'halted' | 'outline' | 'batch' | 'charter' | 'info' | 'report' | 'digest';
 export interface FeedOption { id: string; label: string; primary?: boolean }
 export interface FeedItem {
   id: string;
@@ -657,6 +657,8 @@ export interface Project {
   autonomy?: Autonomy;
   /** AI 用模型的策略：省钱 / 均衡（默认）/ 效果优先——难的活换强模型、简单的活用便宜模型 */
   modelPolicy?: 'save' | 'balanced' | 'best';
+  /** 成果播报（最新的在前）：做了什么、心得、闭环、你的成长 */
+  digests?: import('./services/digest').Digest[];
   /** 自主运行日志 */
   autolog?: AutoLogEntry[];
   /** 用户维护的项目目标与范围，AI 摘要不得覆盖。 */

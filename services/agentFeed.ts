@@ -295,3 +295,13 @@ export const reportAsk = (
     input: { placeholder: '有什么要调整的直接说，比如「先别花钱找人，先把资料做扎实」，我记进 AI 记忆照着做…', optionId: 'adjust' },
   });
 };
+
+// ===== 成果播报 =====
+/** 定期的成果播报卡：做了什么 · 心得 · 闭环 · 你的成长 · 接下来 */
+export const digestAsk = (d: { id: string; headline: string; since: number; at: number }, sections: { label: string; items: string[] }[]): FeedItem => {
+  const days = Math.max(1, Math.round((d.at - d.since) / 86400000));
+  return ask('digest', `📣 最近 ${days} 天的成果：${d.headline || '有新进展'}`, [
+    { id: 'ok', label: '👍 知道了', primary: true },
+    { id: 'open', label: '去项目总览看' },
+  ], { key: `digest:${d.id}`, ref: d.id, sections });
+};
