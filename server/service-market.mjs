@@ -58,10 +58,13 @@ export class ServiceMarket {
       const token = actor.agent ? s.tokens.find(t => t.id === actor.tokenId) : null;
       return { settlement: 'external', walletSettlement: true, deviceControl: false,
         agentAuthorization: token ? { permissions: token.permissions || [], maxOrderCents: token.maxOrderCents || 0, remainingQuoteCents: Math.max(0, (token.totalBudgetCents || 0) - (token.committedCents || 0)), expiresAt: token.expiresAt } : null,
-        demands: s.demands.filter(d => d.status === 'open' || d.owner === actor.owner || d.bids.some(b => b.owner === actor.owner)).map(d => demandView(d, actor)),
-        services: s.services.filter(x => x.published || (!actor.agent && x.owner === actor.owner)).map(x => publicService(x, actor.agent ? null : actor.owner)),
-        orders: s.orders.filter(o => actor.agent ? ((o.buyer === actor.owner && o.tokenId === actor.tokenId) || (o.seller === actor.owner && o.sellerTokenId === actor.tokenId && !!o.sharedAt)) : o.buyer === actor.owner || (o.seller === actor.owner && !!o.sharedAt)).map(o => publicOrder(o, actor)),
-        tokens: actor.agent ? [] : s.tokens.filter(t => t.owner === actor.owner).map(({ hash: ignored, owner: ignoredOwner, ...t }) => t) };
+        demands: s.demands.filter(d => (d.status === 'open' && d.deadline > Date.now()) || (!actor.anonymous && (d.owner === actor.owner || d.bids.some(b => b.owner === actor.owner)))).map(d => demandView(d, actor)),
+        services: s.services.filter(x => x.published || (!actor.agent && !actor.anonymous && x.owner === actor.owner)).map(x => publicService(x, actor.agent || actor.anonymous ? null : actor.owner)),
+        // 全站有多少人在挂服务 / 挂需求（不暴露是谁）
+        stats: { providers: new Set(s.services.filter(x => x.published).map(x => x.owner)).size, requesters: new Set(s.demands.filter(d => d.status === 'open').map(d => d.owner)).size },
+        anonymous: !!actor.anonymous,
+        orders: actor.anonymous ? [] : s.orders.filter(o => actor.agent ? ((o.buyer === actor.owner && o.tokenId === actor.tokenId) || (o.seller === actor.owner && o.sellerTokenId === actor.tokenId && !!o.sharedAt)) : o.buyer === actor.owner || (o.seller === actor.owner && !!o.sharedAt)).map(o => publicOrder(o, actor)),
+        tokens: actor.agent || actor.anonymous ? [] : s.tokens.filter(t => t.owner === actor.owner).map(({ hash: ignored, owner: ignoredOwner, ...t }) => t) };
     });
   }
   async saveService(actor, input) {

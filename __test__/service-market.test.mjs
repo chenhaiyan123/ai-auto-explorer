@@ -242,3 +242,41 @@ test('demand constraints: authorization, quote validation, private proposals and
   d = await f.market.demandAction(buyer, d.id, { revision: d.revision, action: 'close' });
   await assert.rejects(f.market.demandAction(buyer, d.id, { revision: d.revision, action: 'award', bidId: d.bids[0].id, confirmed: true }), e => e.status === 409);
 });
+
+test('market is public across accounts: other users and logged-out visitors see published services and open needs, never contacts / bids / orders', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'market-public-'));
+  const app = await createWakeServer({ env: { WAKE_DATA_DIR: dir, WAKE_MASTER_KEY: randomBytes(32).toString('base64'), WAKE_AUTH_API: 'https://auth.example.test', WAKE_HOST: '127.0.0.1' }, fetch: async (url, opts) => Response.json({ email: opts.headers.Authorization.replace('Bearer ', '') }) });
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
+  const call = async (actor, route, method = 'GET', body) => {
+    const r = await fetch(`http://127.0.0.1:${app.server.address().port}${route}`, { method, headers: { ...(actor ? { Authorization: `Bearer ${actor}` } : {}), 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    return { status: r.status, body: await r.json() };
+  };
+  const svc = { revision: 0, title: '家长电话访谈', providerName: '小王调研', category: 'human', description: '电话访谈', inputs: '提纲', deliverables: '记录', limits: '不保证结论', location: '线上', contact: 'secret@example.test', unit: '次', priceCents: 2000, deliveryDays: 3, published: true, confirmed: true };
+  assert.equal((await call('a@example.test', '/market/services', 'PUT', svc)).status, 200);
+  assert.equal((await call('a@example.test', '/market/services', 'PUT', { ...svc, title: '没上架的', published: false })).status, 200);
+  const d = await call('b@example.test', '/market/demands', 'POST', { requestId: randomUUID(), title: '整理 10 家机构续费做法', requirements: '用公开资料', acceptance: '对比表', budgetCents: 1000, deadline: Date.now() + 7 * 864e5, confirmed: true, contact: 'b-secret@example.test' });
+  assert.equal(d.status, 200, JSON.stringify(d.body));
+  const bid = await call('a@example.test', `/market/demands/${d.body.id}/respond`, 'POST', { proposal: '我来整理对比表，三天交付', priceCents: 800, deliveryDays: 3, confirmed: true, contact: 'a-secret@example.test', providerName: '小王调研' }); assert.equal(bid.status, 200, JSON.stringify(bid.body));
+
+  // 另一个账号：看得到别人的服务和需求
+  const c = (await call('c@example.test', '/market/state')).body;
+  assert.deepEqual(c.services.map(s => s.title), ['家长电话访谈']);
+  assert.equal(c.services[0].mine, false); assert.equal(c.services[0].contact, undefined);
+  assert.deepEqual(c.demands.map(x => x.title), ['整理 10 家机构续费做法']);
+  assert.equal(c.demands[0].bidCount, 1); assert.equal(c.demands[0].bids.length, 0, '别人的方案不公开');
+  assert.deepEqual(c.stats, { providers: 1, requesters: 1 });
+
+  // 没登录：也能看，但只读
+  const anon = await call(null, '/market/state');
+  assert.equal(anon.status, 200);
+  assert.equal(anon.body.anonymous, true);
+  assert.deepEqual(anon.body.services.map(s => s.title), ['家长电话访谈']);
+  assert.equal(JSON.stringify(anon.body).includes('secret@example.test'), false);
+  assert.equal(JSON.stringify(anon.body).includes('b-secret'), false);
+  assert.deepEqual(anon.body.orders, []); assert.deepEqual(anon.body.tokens, []);
+  assert.equal(anon.body.demands[0].bids.length, 0); assert.equal(anon.body.demands[0].context, null);
+  // 没登录不能做任何事
+  assert.notEqual((await call(null, '/market/demands', 'POST', { title: 'x' })).status, 200);
+  assert.notEqual((await call(null, '/market/services', 'PUT', svc)).status, 200);
+});

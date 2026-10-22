@@ -325,6 +325,8 @@ export async function createWakeServer(options = {}) {
     if (url.pathname.startsWith('/market/')) {
       try {
         const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+        // 服务广场 / 需求广场全站公开：没登录也能看已上架的服务和开放中的需求（看不到联系方式、订单和别人的方案）
+        if (!token && req.method === 'GET' && url.pathname === '/market/state') { send(200, await market.view({ owner: 'anonymous:visitor', agent: false, anonymous: true })); return; }
         const actor = token.startsWith('hxm_') ? await market.authenticate(token) : { owner: await authenticate(req), agent: false };
         if (req.method === 'GET' && url.pathname === '/market/state') { send(200, await market.view(actor)); return; }
         const body = await readBody(req);

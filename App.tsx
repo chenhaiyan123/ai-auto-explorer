@@ -3433,6 +3433,7 @@ ${plan.lead.duty}
           <span className="font-semibold">HiExplore</span>
           <div className="flex items-center gap-2">
             <select aria-label="Language" className="bg-slate-800 text-slate-200 rounded-lg p-2 text-xs" value={language} onChange={e => setLanguage(e.target.value as 'zh-CN' | 'en')}><option value="zh-CN">简体中文</option><option value="en">English</option></select>
+            <button type="button" onClick={() => setShowServiceMarket(true)} className="shrink-0 rounded-lg border border-slate-700 hover:bg-slate-800 px-3 py-2 text-sm text-slate-200" title={ui('全站公开：不用登录也能看大家挂的服务和需求', 'Browse public services and needs')}>{ui('服务广场', 'Marketplace')}</button>
             <button type="button" onClick={() => { setLandingLogin(true); setIsLoginAsAdmin(false); setLoginMethod('email'); document.getElementById('landing-content')?.scrollIntoView({ block: 'start' }); }} className="shrink-0 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-sm font-semibold text-white">{ui('登录 / 注册', 'Log in / Sign up')}</button>
           </div>
         </div>
@@ -3631,6 +3632,7 @@ ${plan.lead.duty}
       </div>
       </div>
       </main>
+      {showServiceMarket && <ServiceMarket projects={[]} currentProjectId={null} onClose={() => setShowServiceMarket(false)} />}
     </div>
   );
 

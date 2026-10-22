@@ -19,7 +19,7 @@ export interface ServiceOrder {
 }
 export interface ServiceDemand { id: string; revision: number; title: string; requirements: string; acceptance: string; budgetCents: number; deadline: number; status: string; mine: boolean; requestedBy: string; bidCount: number; context: ServiceContext | null; orderId?: string; bids: { id: string; providerName: string; proposal: string; priceCents: number; deliveryDays: number; mine: boolean }[] }
 export interface ServiceToken { id: string; name: string; expiresAt: number; revoked: boolean; context: ServiceContext | null; permissions?: string[]; maxOrderCents?: number; totalBudgetCents?: number; committedCents?: number }
-export interface MarketState { walletSettlement?: boolean; settlement: 'external'; deviceControl: boolean; services: ServiceListing[]; orders: ServiceOrder[]; tokens: ServiceToken[]; demands?: ServiceDemand[] }
+export interface MarketState { /** 全站有几个服务方 / 几个在征集需求的人 */ stats?: { providers: number; requesters: number }; /** 没登录、只读浏览 */ anonymous?: boolean; walletSettlement?: boolean; settlement: 'external'; deviceControl: boolean; services: ServiceListing[]; orders: ServiceOrder[]; tokens: ServiceToken[]; demands?: ServiceDemand[] }
 export type MarketRequest = <T>(path: string, method?: string, body?: unknown) => Promise<T>;
 const env = (import.meta as ImportMeta & { env?: Record<string, string | boolean> }).env;
 /** 用某个令牌访问服务广场（AI 项目经理用自己的 Agent 令牌，权限和额度由后端按令牌卡死） */
@@ -35,8 +35,9 @@ export const marketRequest: MarketRequest = async (path, method = 'GET', body) =
   const url = new URL(WAKE_API), local = !!env?.DEV && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if ((url.protocol !== 'https:' && !local) || url.username || url.password || url.search || url.hash) throw new Error(t('服务地址无效', 'Invalid service endpoint'));
   const token = local && env?.VITE_WAKE_DEV_TOKEN ? String(env.VITE_WAKE_DEV_TOKEN) : localStorage.getItem('aae-auth-token');
-  if (!token) throw new Error(t('请先用邮箱验证码登录，服务与订单将保存到你的账号。', 'Sign in with an email code to save services and orders to your account.'));
-  const response = await fetch(`${WAKE_API}/market${path}`, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: 'error', signal: AbortSignal.timeout(20000) });
+  // 服务广场 / 需求广场全站公开：没登录也能逛（只读），下单、接单、发布才要登录
+  if (!token && !(method === 'GET' && path === '/state')) throw new Error(t('请先用邮箱验证码登录，服务与订单将保存到你的账号。', 'Sign in with an email code to save services and orders to your account.'));
+  const response = await fetch(`${WAKE_API}/market${path}`, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: 'error', signal: AbortSignal.timeout(20000) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || t('服务暂不可用', 'Service unavailable'));
   return data;
