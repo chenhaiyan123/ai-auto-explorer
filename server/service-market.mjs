@@ -52,6 +52,12 @@ export class ServiceMarket {
   checkActor(s, actor) {
     if (actor.agent && !s.tokens.some(t => t.id === actor.tokenId && t.owner === actor.owner && !t.revoked && t.expiresAt > Date.now())) throw fail('服务接口令牌已失效', 401);
   }
+  /** 运营数据用：原始服务、需求、订单（只读） */
+  raw() {
+    return this.tx(s => ({ services: s.services.map(x => ({ owner: x.owner, published: x.published, createdAt: x.createdAt, updatedAt: x.updatedAt })),
+      demands: s.demands.map(d => ({ owner: d.owner, createdAt: d.createdAt, status: d.status, bids: d.bids.map(b => ({ owner: b.owner })) })),
+      orders: s.orders.map(o => ({ buyer: o.buyer, seller: o.seller, status: o.status, totalCents: o.totalCents, createdAt: o.createdAt, tokenId: o.tokenId, sellerTokenId: o.sellerTokenId, requestedBy: o.requestedBy, settlement: { method: o.settlement?.method }, quote: { title: o.quote?.title } })) }));
+  }
   view(actor) {
     return this.tx(s => {
       this.checkActor(s, actor);

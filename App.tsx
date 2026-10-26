@@ -878,7 +878,7 @@ const App: React.FC = () => {
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const [cloudStats, setCloudStats] = useState<UserStats[]>([]);
   const [isBackendAdmin, setIsBackendAdmin] = useState(false);
-  const [adminInitialTab, setAdminInitialTab] = useState<'stats' | 'models'>('models');
+  const [adminInitialTab, setAdminInitialTab] = useState<'stats' | 'models' | 'users' | 'deals'>('users');
   useEffect(() => {
     let active = true;
     setIsBackendAdmin(false);
@@ -3956,7 +3956,7 @@ ${plan.lead.duty}
         onSync={user.email ? () => setShowProjectSync(true) : undefined} syncStatus={projectSyncStatus}
         onClose={() => setShowUserMenu(false)} onBilling={() => setShowPremiumModal(true)} onUsage={() => setShowSharedModels(true)} onSettings={() => setShowSettingsModal(true)}
         onProjects={() => setShowProjectManager(true)} onHelp={() => setShowHelpModal(true)} onFeedback={() => { setShowFeedback(true); trackEvent('feedback_open'); }}
-        onDownload={IS_DESKTOP ? undefined : () => setShowDownloadModal(true)} onAdmin={isBackendAdmin ? () => { setAdminInitialTab('models'); setShowAdminDashboard(true); } : undefined}
+        onDownload={IS_DESKTOP ? undefined : () => setShowDownloadModal(true)} onAdmin={isBackendAdmin ? () => { setAdminInitialTab('users'); setShowAdminDashboard(true); } : undefined}
         onLogout={() => { auth.logout(); setUser(null); }} />}
       {user?.email && loadedOwner === user.username && <ProjectSyncPanel key={user.username} owner={user.username} projects={projects} busy={worktreeBusy} open={showProjectSync} onClose={() => setShowProjectSync(false)} onStatus={setProjectSyncStatus} />}
       {showSharedModels && <SharedModelsPanel personalOnly onClose={() => setShowSharedModels(false)} />}

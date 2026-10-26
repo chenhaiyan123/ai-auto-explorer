@@ -96,6 +96,8 @@ export class SharedModels {
   async guardProject(owner, projectId, options) {
     return this.transaction(s => { checkMandate(s, owner, projectId, options); });
   }
+  /** 运营数据用：模型调用记录（只读，不含内容） */
+  async raw() { return this.transaction(s => ({ calls: s.calls.map(c => ({ owner: c.owner, modelId: c.modelId, status: c.status, at: c.at })) })); }
   async view(owner, admin = false) {
     return this.transaction(s => ({
       isAdmin: admin,

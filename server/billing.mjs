@@ -70,6 +70,12 @@ export class Billing {
         walletBalance: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0), 0), walletSpent: sumTx(s, t => t.type === 'spend') - sumTx(s, t => t.id.startsWith('refund:')),
         walletEscrow: sumTx(s, t => t.type === 'escrow') - sumTx(s, t => t.id.startsWith('escrowback:')) - (s.walletTx || []).filter(t => t.id.startsWith('income:')).reduce((n, t) => n + ((s.walletTx || []).find(e => e.id === `escrow:${t.ref}`)?.cents || 0), 0) } }));
   }
+  /** 运营数据用：原始订单和钱包流水（只读） */
+  async raw() {
+    return this.transaction(s => ({ orders: s.orders.map(o => ({ owner: o.owner, sku: o.sku, amount: o.amount, status: o.status, provider: o.provider, createdAt: o.createdAt, paidAt: o.paidAt })),
+      walletTx: (s.walletTx || []).map(t => ({ id: t.id, owner: t.owner, type: t.type, cents: t.cents, ref: t.ref, at: t.at })),
+      walletBalanceCents: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0), 0) }));
+  }
   /** 当前 AI 钱包余额（分） */
   async walletBalance(owner) {
     return this.transaction(s => account(s, owner).walletCents);

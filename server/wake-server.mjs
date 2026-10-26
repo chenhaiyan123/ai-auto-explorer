@@ -9,6 +9,7 @@ import { mandateError } from './project-mandates.mjs';
 import { ServiceMarket } from './service-market.mjs';
 import { SharedModels } from './shared-models.mjs';
 import { createBilling, PLANS } from './billing.mjs';
+import { UserRegistry, computeMetrics } from './metrics.mjs';
 const PLANS_TOPUP_MIN = PLANS.topup?.minConvertCents || 100;
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
 import { createAwakening, enqueueWake, heartbeatAction, configureAwakening, recoverAwakening, runWake, previewWakeRequest, buildModelRequest, parseModelResponse } from './.wake-build/runner.mjs';
@@ -150,6 +151,8 @@ export async function createWakeServer(options = {}) {
   };
   const invokeShared = async (owner, body, scope) => { await autoFund(owner, body); return shared.invoke(owner, body, scope); };
   const market = new ServiceMarket(storage);
+  /** 谁、哪天来过（运营数据：用户数、活跃、留存） */
+  const registry = new UserRegistry(storage);
   const flushMarket = () => market.flushDeliveries(async order => {
     const c = order.context, key = scopeKey(order.buyer, c.projectId, c.branchId, c.scopeId);
     if (!await storage.read(key)) return false;
@@ -258,7 +261,7 @@ export async function createWakeServer(options = {}) {
     finally { clearInterval(heartbeat); active.delete(key); }
   };
   let ticking = false; let closing = false;
-  const tick = async () => { if (ticking || closing) return; ticking = true; try { await flushMarket().catch(() => console.error('Service delivery sync deferred')); await syncEscrow().catch(() => console.error('Escrow sync deferred')); for (const key of await storage.keys()) { if (closing) break; await tickKey(key); } await notifications.process(); } finally { ticking = false; } };
+  const tick = async () => { if (ticking || closing) return; ticking = true; try { await registry.flush().catch(() => console.error('user registry flush deferred')); await flushMarket().catch(() => console.error('Service delivery sync deferred')); await syncEscrow().catch(() => console.error('Escrow sync deferred')); for (const key of await storage.keys()) { if (closing) break; await tickKey(key); } await notifications.process(); } finally { ticking = false; } };
   const interval = setInterval(() => tick().catch(e => console.error('wake tick:', e.message)), 10000);
   interval.unref();
   const authenticate = async req => {
@@ -328,6 +331,7 @@ export async function createWakeServer(options = {}) {
         // 服务广场 / 需求广场全站公开：没登录也能看已上架的服务和开放中的需求（看不到联系方式、订单和别人的方案）
         if (!token && req.method === 'GET' && url.pathname === '/market/state') { send(200, await market.view({ owner: 'anonymous:visitor', agent: false, anonymous: true })); return; }
         const actor = token.startsWith('hxm_') ? await market.authenticate(token) : { owner: await authenticate(req), agent: false };
+        registry.seen(actor.owner, actor.agent ? 'agent' : 'market');
         if (req.method === 'GET' && url.pathname === '/market/state') { send(200, await market.view(actor)); return; }
         const body = await readBody(req);
         if (req.method === 'PUT' && url.pathname === '/market/services') { send(200, await market.saveService(actor, body)); return; }
@@ -373,7 +377,17 @@ export async function createWakeServer(options = {}) {
     }
     let owner;
     try { owner = await authenticate(req); } catch (e) { send(401, { error: e.message }); return; }
+    registry.seen(owner, url.pathname.split('/')[1] || 'visit');
     try {
+      // 运营数据：用户数、活跃、付费、成交（只给管理员；默认剔除内部 / 测试账号）
+      if (req.method === 'GET' && url.pathname === '/admin/metrics') {
+        if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
+        const [users, b, sh, mk] = await Promise.all([registry.read(), billing.raw(), shared.raw(), market.raw()]);
+        const internal = new Set([...admins, ...String(env.METRICS_EXCLUDE || '').split(',').map(x => x.trim()).filter(Boolean)]);
+        const days = Math.min(90, Math.max(7, Number(url.searchParams.get('days')) || 30));
+        send(200, computeMetrics({ users, billing: b, shared: sh, market: mk, walletBalanceCents: b.walletBalanceCents }, { internal, includeInternal: url.searchParams.get('internal') === '1', days }));
+        return;
+      }
       if (url.pathname === '/projects/workspace') {
         if (req.method === 'GET') { send(200, await projectSync.read(owner)); return; }
         if (req.method === 'PUT') { send(200, await projectSync.write(owner, await readWorkspaceBody(req))); return; }
@@ -571,7 +585,7 @@ export async function createWakeServer(options = {}) {
       send(404, { error: '接口不存在' });
     } catch (e) { send(e.status || 400, { error: e instanceof SyntaxError ? 'JSON 格式错误' : e.message }); }
   });
-  return { server, storage, tick, close: async () => { closing = true; clearInterval(interval); await new Promise(resolve => server.close(resolve)); while (ticking || active.size) await new Promise(r => setTimeout(r, 100)); await fs.unlink(lockFile); claimedDirectories.delete(storage.dir); } };
+  return { server, storage, registry, tick, close: async () => { closing = true; clearInterval(interval); await new Promise(resolve => server.close(resolve)); while (ticking || active.size) await new Promise(r => setTimeout(r, 100)); await registry.flush().catch(() => {}); await fs.unlink(lockFile); claimedDirectories.delete(storage.dir); } };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const app = await createWakeServer(); const port = Number(process.env.PORT || 8790); const host = process.env.WAKE_HOST || '127.0.0.1';
