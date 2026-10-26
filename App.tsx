@@ -1118,13 +1118,15 @@ const App: React.FC = () => {
     return () => setModelRouter(null);
   }, []);
 
+  /** 自主运行中默认安静：不播报「第几步 / 做了几轮」，过程只记进日志，回来时汇报 */
+  const quietAuto = (pid?: string | null) => isRunningAutonomously(projectsRef.current.find(p => p.id === (pid || feedProjectRef.current)));
   const pushFeedItem = useCallback((item: FeedItem, projectId?: string) => {
     const pid = projectId || feedProjectRef.current;
     const proj = projectsRef.current.find(p => p.id === pid);
     if (item.kind === 'ask' && item.ask && item.ask.type !== 'report' && item.ask.type !== 'digest' && isRunningAutonomously(proj)) {
       const c = autoChoice(item.ask.type, item.ask.options.map(o => o.id));
       if (c && pid === feedProjectRef.current) {
-        patchFeed(f => pushFeed(f, item), projectId);
+        // AI 自己拿主意的卡不进对话流（只记日志），不刷屏
         setTimeout(() => answerFeedRef.current?.(item, c.option, undefined, c.why), 30);
         return;
       }
@@ -1469,11 +1471,14 @@ const App: React.FC = () => {
     const nodeTitle = unexplored.title;
     updateNode(cid, { status: NodeStatus.EXPLORING });
     // 开始写了 = 之前挂着的「下一篇？/ 还在看吗？/ 已暂停」都过时了，顺手收掉
-    patchFeed(f => pushFeed(
-      closeAsks(closeAsks(closeAsks(f, 'step', '已继续'), 'unattended', '已继续'), 'halted', '已恢复'),
-      // 连写时对话流里只有一行进度（原地更新），不每篇刷一行
-      batchRef.current ? batchProgress(batchRef.current, nodeTitle) : feedStatus(`🔧 正在做「${nodeTitle}」`, { key: `write:${cid}`, nodeId: cid }),
-    ));
+    {
+      const closed = (f: FeedItem[] | undefined) => closeAsks(closeAsks(closeAsks(f, 'step', '已继续'), 'unattended', '已继续'), 'halted', '已恢复');
+      if (quietAuto()) patchFeed(closed);
+      else patchFeed(f => pushFeed(closed(f),
+        // 连写时对话流里只有一行进度（原地更新），不每篇刷一行
+        batchRef.current ? batchProgress(batchRef.current, nodeTitle) : feedStatus(`🔧 正在做「${nodeTitle}」`, { key: `write:${cid}`, nodeId: cid }),
+      ));
+    }
     // 用户在对话流里补过一句要求 → 这一次带进提示词（走「已有背景」那一栏），写完清空
     // 再加上 AI 记忆里用户交代过的关键信息（预算、手上的资源、目标人群……），写的时候按用户原话来
     const memoProj = projectsRef.current.find(p => p.id === feedProjectRef.current);
@@ -1684,7 +1689,7 @@ const App: React.FC = () => {
             noteAuto('did', `做完「${nodeTitle}」${gist ? `：${gist}` : ''}`, cid);
           }
           if (b.done.length >= b.target) setTimeout(() => endBatchRef.current?.('done'), 0);
-          else pushFeedItem(batchProgress(b));
+          else if (!quietAuto()) pushFeedItem(batchProgress(b));
         }
 
         // 「总览优先」：每解决若干节点，自动刷新一次项目总览，让用户随时看到最新进展
@@ -2076,9 +2081,9 @@ ${plan.lead.duty}
       trackEvent('outline_proposed', { items: outline.items.length });
       // 上一份没答的框架卡作废，换成新的这份
       const card = outlineAsk(withNote);
-      patchFeed(f => pushFeed(closeAsks(f, 'outline', '已重拟'), card), pid);
-      // 自主运行中自己拆的下一阶段：自己确认、接着做（不来打扰你）
+      // 自主运行中自己拆的下一阶段：自己确认、接着做（不来打扰你，卡片也不进对话流）
       const auto = isRunningAutonomously(projectsRef.current.find(p => p.id === pid)) && pid === feedProjectRef.current ? autoChoice('outline', card.ask!.options.map(o => o.id)) : null;
+      patchFeed(f => auto ? closeAsks(f, 'outline', '已重拟') : pushFeed(closeAsks(f, 'outline', '已重拟'), card), pid);
       if (auto) setTimeout(() => answerFeedRef.current?.(card, auto.option, undefined, auto.why), 300);
       else setRightChatOpen(true);
       if (problems.length) addNotification('info', '🗺️ 有几条被丢掉了', problems.join('；'));
@@ -2315,7 +2320,7 @@ ${plan.lead.duty}
     setContinuousMode(true);
     setIsLooping(true);
     closeFeedAsks('step', '交给 AI 自主运行');
-    pushFeedItem(batchProgress(batchRef.current));
+    if (!quietAuto()) pushFeedItem(batchProgress(batchRef.current));
     trackEvent('batch_start', { target });
   }, [closeFeedAsks, pushFeedItem]);
   useEffect(() => { startBatchRef.current = (t?: number) => startBatch(t ?? Math.min(BATCH_SIZE, Math.max(1, remainingCount(nodesRef.current)))); }, [startBatch]);
@@ -2341,7 +2346,6 @@ ${plan.lead.duty}
     if (canPlanNextStage(a)) {
       patchAutonomy(pid, { stageRounds: (a.stageRounds || 0) + 1, lastStageAt: Date.now() });
       noteAuto('think', '这一阶段能推进的都推进了，我自己拆了下一阶段接着做', undefined, pid);
-      pushFeedItem(feedStatus('🧭 这一阶段能推进的都推进了，我自己拆下一阶段'), pid);
       proposeOutlineRef.current?.(pid);
       return;
     }
@@ -2360,7 +2364,6 @@ ${plan.lead.duty}
     const proj = projectsRef.current.find(p => p.id === pid);
     if (pid && isRunningAutonomously(proj) && reason !== 'stopped') {
       // 自主运行：一轮做完不打扰你，进度行收个尾，自己决定接下来
-      pushFeedItem(feedStatus(`⚡ 自主运行了一轮，做了 ${b.done.length} 步`, { key: `batch:${b.id}`, detail: b.done.map(d => `${d.flag || '✅'} ${d.title}`).join('、') || undefined }));
       autoNext(pid, reason);
       return;
     }
