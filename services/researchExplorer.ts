@@ -46,6 +46,8 @@ export async function exploreResearchNode(
   confidence: number;
   subProblems?: { title: string; initialNotes?: string }[];
   triggerDecision?: boolean;
+  /** 这一步必须问真人才能确定（研究模式靠它进入「现实验证」） */
+  needsReality?: { what: string };
   decisionContext?: string;
   taskType?: string;
 }> {
@@ -73,7 +75,8 @@ ${context || '无'}
   ],
   "subProblems": [{"title": "接下来要做的子任务"}],
   "needsDecision": false,
-  "decisionContext": "如果需要决策，说明原因"
+  "decisionContext": "如果需要决策，说明原因",
+  "needsReality": {"needed": false, "what": "这一步的关键判断如果只靠推理站不住、必须问真人 / 看真实数据才能确定，needed 填 true，并写清要验证什么（≤40字）"}
 }`;
 
   try {
@@ -131,6 +134,7 @@ ${context || '无'}
       subProblems: result.subProblems,
       triggerDecision: result.needsDecision,
       decisionContext: result.decisionContext,
+      needsReality: result.needsReality?.needed === true ? { what: String(result.needsReality.what || '').slice(0, 80) } : undefined,
       taskType: 'research'
     };
   } catch (e) {

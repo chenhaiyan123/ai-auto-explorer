@@ -54,6 +54,8 @@ import { SHARED_MODELS_CHANGED } from './services/sharedModelsClient';
 import { marketCapability, grantAutonomy, isAutonomous, isRunningAutonomously, logAuto, autoChoice, budgetLeftCNY, autoSpentCNY, canPlanNextStage, entriesSince, reportDue, fallbackReport, buildReportMessages, parseReport, nextCheckIn } from './services/autonomy';
 import { reportAsk, digestAsk } from './services/agentFeed';
 import DigestPanel from './components/DigestPanel';
+import RealityPanel from './components/RealityPanel';
+import { platformRequest, pageUrl, buildActionMessages, parseAction, actionCost, shouldIngest, buildIngestMessages, parseIngest, addCheck, patchCheck, type RealityAction, type RealityCheck, type RealityKind, type PlatformCatalog } from './services/realityActions';
 import { collectDigest, digestDue, lastDigestAt, fallbackDigest, buildDigestMessages, parseDigest, digestSections, addDigest } from './services/digest';
 import type { Autonomy, AutoLogEntry } from './types';
 import type { SharedCatalog } from './services/sharedModelsClient';
@@ -1060,6 +1062,8 @@ const App: React.FC = () => {
   // 进度和需要人拍板的地方，都以一行字 / 一张问题卡进右侧聊天记录，不再走铃铛和弹窗。
   const feedProjectRef = useRef<string | null>(null);
   const pmActRef = useRef<((node: ProblemNode) => void) | null>(null);
+  /** 卡在现实那一步：AI 选发问卷 / 做预售页 / 查企业 / 去服务广场 */
+  const realityRef = useRef<((node: ProblemNode, force?: RealityKind) => void) | null>(null);
   useEffect(() => { feedProjectRef.current = currentProjectId; }, [currentProjectId]);
   // 项目钱包：每次模型调用都记到对应项目的账上（后台醒来看一眼的记到被叫醒的那个项目）
   useEffect(() => onModelUsage((u, pid) => {
@@ -1635,7 +1639,9 @@ const App: React.FC = () => {
           trackEvent('hypothesis_contradicted');
           // 转向是这个系统里最值得留痕的时刻：在对话流里问一句，记下来之后随时可以 fork 回到旧路线
           pushFeedItem(contradictedAsk({ ...unexplored, hypothesis }));
-        } else if (hits.length) {
+        } else if (hits.length || result.needsReality) {
+          // 研究模式没有「假设」，靠模型自己说「这一步必须问真人」
+          if (!hits.length) hits.push({ reason: 'weak_evidence', label: '要问真人才能确定', detail: result.needsReality.what || '这一步的判断要靠真实数据确认' } as any);
           // 注意：这里**不要** setIsLooping(false)。
           // 单个节点该验证了不代表整个探索该停——挂起它，循环继续跑别的节点，
           // 等到「剩下的全在等现实」时（见上面 isBlockedOnReality）才叫人。
@@ -1646,7 +1652,7 @@ const App: React.FC = () => {
           }));
           finalStatus = NodeStatus.VALIDATING;
           // 花钱权限内：AI 项目经理自己去服务广场找人 / 发需求（不等人点）
-          pmActRef.current?.({ ...unexplored, status: NodeStatus.VALIDATING, notes: result.notes, hypothesis: withHyp({}).hypothesis ?? unexplored.hypothesis } as ProblemNode);
+          realityRef.current?.({ ...unexplored, status: NodeStatus.VALIDATING, notes: result.notes, validationReason: summarizeHits(hits), hypothesis: withHyp({}).hypothesis ?? unexplored.hypothesis } as ProblemNode);
           if (!batchRef.current) pushFeedItem(feedStatus(`🟡「${nodeTitle}」要到现实里做：${hits[0].label}`, { key: `write:${cid}`, nodeId: cid, detail: hits[0].detail, tone: 'warn' }));
           trackEvent('validation_triggered', { reason: hits[0].reason });
         } else {
@@ -2233,6 +2239,139 @@ ${plan.lead.duty}
     try { localStorage.setItem(`hx-pm-jobs:${pid}`, String(Date.now())); } catch { /* ignore */ }
     return r.delivered.length || r.bids.length ? `交付 ${r.delivered.length} 单，新投 ${r.bids.length} 单` : '这次没有合适的单（AI 只接自己能独立做完的调研 / 写作类需求）';
   }, [syncPm, pushFeedItem]);
+  // ===== 让 AI 碰到真人：问卷 / 预售页 / 企业信息 =====
+  const platformCatRef = useRef<{ at: number; cat: PlatformCatalog } | null>(null);
+  const pendingActionsRef = useRef<Record<string, { pid: string; node: ProblemNode; action: RealityAction }>>({});
+  const realityBusyRef = useRef<Set<string>>(new Set());
+  const loadPlatformCatalog = useCallback(async () => {
+    if (platformCatRef.current && Date.now() - platformCatRef.current.at < 10 * 60_000) return platformCatRef.current.cat;
+    const cat = await platformRequest<PlatformCatalog>('/catalog');
+    platformCatRef.current = { at: Date.now(), cat };
+    return cat;
+  }, []);
+  const patchChecks = useCallback((pid: string, fn: (l: RealityCheck[] | undefined) => RealityCheck[]) => {
+    projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, realityChecks: fn(p.realityChecks) } : p));
+    setProjects(prev => prev.map(p => (p.id === pid ? { ...p, realityChecks: fn(p.realityChecks) } : p)));
+  }, []);
+  /** 现实给了答案：记进事实看板（待核实），拿它重新推进那一步 */
+  const applyReality = useCallback((pid: string, nodeId: string | undefined, claim: string, detail: string, source: string) => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    try { inquiryTeams.change(pid, 'root', proj?.metaProblem || proj?.name || '', w => addFact(w, { claim, source, excerpt: detail, scope: '' })); } catch (e) { console.warn('[reality] 没记进事实看板', e); }
+    const node = nodeId ? proj?.nodes?.find(n => n.id === nodeId) : undefined;
+    if (node && pid === feedProjectRef.current) {
+      updateNode(node.id, { status: NodeStatus.UNEXPLORED, validationReason: undefined, noteUpdatedAt: Date.now(), userAsk: `现实给了答案（${source}）：${claim}。${detail} 按这个真实结果重新推进这一步：说明了什么、原来的判断要不要改、接下来做什么。` });
+      if (isRunningAutonomously(projectsRef.current.find(p => p.id === pid))) setTimeout(() => resumeAutoRef.current?.(pid), 500);
+    }
+    noteAuto('did', `现实给了答案：${claim}`, nodeId, pid);
+    pushFeedItem(feedStatus(`🧪 现实给了答案：${claim}`, { tone: 'good', detail: `${source}${detail ? ` · ${detail}` : ''}`, nodeId }), pid);
+  }, [inquiryTeams, updateNode, noteAuto, pushFeedItem]);
+
+  const executeReality = useCallback(async (pid: string, node: ProblemNode, a: RealityAction) => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    const llm = async (messages: { role: string; content: string }[]) => (await meterFor(pid, () => callLLM(messages as any, { jsonMode: true, maxTokens: 800, timeoutMs: 60000, task: 'simple' }))).content;
+    const spent = (cents: number) => { if (cents && proj?.autonomy?.on) patchAutonomy(pid, { marketCents: (projectsRef.current.find(p => p.id === pid)?.autonomy?.marketCents || 0) + cents }); };
+    try {
+      if (a.type === 'survey') {
+        const r = await platformRequest<{ id: string; url: string; title: string; chargedCents: number }>('/surveys', 'POST', { title: a.title, intro: a.intro, questions: a.questions, projectId: pid, nodeId: node.id, requestId: crypto.randomUUID() });
+        spent(r.chargedCents);
+        patchChecks(pid, l => addCheck(l, { id: r.id, kind: 'survey', nodeId: node.id, title: r.title, url: r.url, createdAt: Date.now(), target: a.target, count: 0, ingested: 0 }));
+        noteAuto('did', `为「${node.title}」发了问卷「${r.title}」（${a.questions.length} 题）`, node.id, pid);
+        noteAuto('need', `问卷链接要发到目标人群手里才有回答：${r.url}（目标 ${a.target} 份）`, node.id, pid);
+        pushFeedItem(feedStatus(`📋 为「${node.title}」发了问卷：${r.url}`, { tone: 'good', nodeId: node.id, detail: `${a.why}。把链接发到目标人群（群聊、朋友圈、客户群），回收够 ${a.target} 份我会自动总结并接着推进。${r.chargedCents ? `花了 ¥${(r.chargedCents / 100).toFixed(2)}` : ''}` }), pid);
+      } else if (a.type === 'page') {
+        const r = await platformRequest<{ id: string; path: string; headline: string }>('/pages', 'POST', { projectId: pid, nodeId: node.id, headline: a.headline, sub: a.sub, bullets: a.bullets, price: a.price, cta: a.cta, maker: proj?.name });
+        const url = pageUrl(r.path);
+        patchChecks(pid, l => addCheck(l, { id: r.id, kind: 'page', nodeId: node.id, title: r.headline, url, createdAt: Date.now(), visitors: 0, clicks: 0, leads: 0, ingested: 0 }));
+        noteAuto('did', `为「${node.title}」做了预售页「${r.headline}」`, node.id, pid);
+        noteAuto('need', `预售页要发出去才有人看：${url}`, node.id, pid);
+        pushFeedItem(feedStatus(`🧪 为「${node.title}」做了预售页：${url}`, { tone: 'good', nodeId: node.id, detail: `${a.why}。发到目标人群看多少人点「${a.cta}」、留联系方式——这比问卷里说「愿意买」更可信。` }), pid);
+      } else if (a.type === 'company') {
+        const s = await platformRequest<{ result: any; chargedCents: number }>('/company/search', 'POST', { keyword: a.keyword, requestId: crypto.randomUUID() });
+        const items = s.result?.items || s.result?.data?.items || s.result?.result?.items || (Array.isArray(s.result) ? s.result : []);
+        const top = items?.[0]?.name || items?.[0]?.companyName || a.keyword;
+        const info = await platformRequest<{ chargedCents: number } & Record<string, unknown>>('/company/info', 'POST', { name: top, requestId: crypto.randomUUID() });
+        spent((s.chargedCents || 0) + (info.chargedCents || 0));
+        const raw = JSON.stringify({ search: items?.slice?.(0, 5), info }).slice(0, 8000);
+        const check: RealityCheck = { id: crypto.randomUUID().slice(0, 12), kind: 'company', nodeId: node.id, title: `企业信息：${top}`, createdAt: Date.now(), ingested: 1, closed: true };
+        const sum = parseIngest(await llm(buildIngestMessages(proj!, node, check, raw)));
+        patchChecks(pid, l => addCheck(l, { ...check, summary: sum?.claim }));
+        applyReality(pid, node.id, sum?.claim || `查到企业「${top}」的工商信息`, sum?.detail || '', '天眼查企业信息');
+      }
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      noteAuto('stuck', `「${node.title}」想${a.type === 'survey' ? '发问卷' : a.type === 'page' ? '做预售页' : '查企业信息'}没成功：${msg}`, node.id, pid);
+      pushFeedItem(feedStatus(/余额不足/.test(msg) ? `💳 AI 想为「${node.title}」${a.type === 'survey' ? '发问卷' : '查企业信息'}，但 AI 钱包余额不够——去钱包充值` : `⚠️ 没能${a.type === 'survey' ? '发问卷' : a.type === 'page' ? '做预售页' : '查企业信息'}：${msg}`, { tone: 'warn', nodeId: node.id }), pid);
+      if (/未开通|还没开通/.test(msg)) pmActRef.current?.(node);
+    }
+  }, [patchChecks, noteAuto, pushFeedItem, patchAutonomy, applyReality]);
+
+  const realityAct = useCallback(async (node: ProblemNode, force?: RealityKind) => {
+    const pid = feedProjectRef.current;
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!pid || !proj || realityBusyRef.current.has(node.id)) return;
+    if (!loggedIn()) { pmActRef.current?.(node); return; }
+    realityBusyRef.current.add(node.id);
+    try {
+      let cat: PlatformCatalog;
+      try { cat = await loadPlatformCatalog(); } catch { pmActRef.current?.(node); return; }
+      const ready = Object.fromEntries(cat.services.map(s => [s.id, s.ready]));
+      if (force && force !== 'market' && !ready[force]) { pushFeedItem(feedStatus(`「${force === 'survey' ? '问卷' : force === 'page' ? '预售页' : '企业信息'}」服务还没开通（管理员要先在后台填密钥）`, { tone: 'warn' }), pid); return; }
+      const resp = await meterFor(pid, () => callLLM(buildActionMessages(proj, node, ready, cat.prices, force) as any, { jsonMode: true, maxTokens: 1500, timeoutMs: 90000 }));
+      const a = parseAction(resp.content, ready) || { type: 'market' as const, why: '' };
+      if (a.type === 'market') { pmActRef.current?.(node); return; }
+      if (a.type === 'none') { noteAuto('think', `「${node.title}」暂时不需要去现实里验证：${a.why}`, node.id, pid); return; }
+      const cost = actionCost(a, cat.prices);
+      const auto = isRunningAutonomously(proj) && cost <= (proj.charter?.autoBuyCNY || 0) * 100 && budgetLeftCNY(proj, modelPricesRef.current) * 100 >= cost;
+      if (auto) { await executeReality(pid, node, a); return; }
+      // 不在自主运行（或超出花钱权限）：把方案摆出来，你点头才做
+      const card: FeedItem = {
+        id: `rp${Date.now().toString(36)}`, ts: Date.now(), kind: 'ask', nodeId: node.id, key: `realityPlan:${node.id}`,
+        text: a.type === 'survey' ? `📋 「${node.title}」要问真人：发一份问卷「${a.title}」？` : a.type === 'page' ? `🧪 「${node.title}」要看真需求：做一个预售页「${a.headline}」？` : `🔎 「${node.title}」要核实：查一下「${a.keyword}」的企业信息？`,
+        detail: `${a.why}${cost ? ` · 花费 ¥${(cost / 100).toFixed(2)}（从 AI 钱包扣）` : ' · 免费'}`,
+        list: a.type === 'survey' ? a.questions.map((q, i) => ({ title: `${i + 1}. ${q.title}`, sub: q.options?.join(' / ') })) : a.type === 'page' ? [{ title: a.headline, sub: a.sub }, ...a.bullets.map(b => ({ title: `· ${b}` })), ...(a.price ? [{ title: a.price }] : [])] : undefined,
+        ask: { type: 'realityPlan', options: [{ id: 'go', label: a.type === 'survey' ? '发吧' : a.type === 'page' ? '做吧' : '查吧', primary: true }, { id: 'market', label: '改成去服务广场找人' }, { id: 'skip', label: '先不用' }] },
+      };
+      pendingActionsRef.current[card.id] = { pid, node, action: a };
+      pushFeedItem(card, pid);
+    } catch (e) { console.warn('[reality] 没想好怎么验证', e); pmActRef.current?.(node); }
+    finally { realityBusyRef.current.delete(node.id); }
+  }, [loadPlatformCatalog, executeReality, noteAuto, pushFeedItem]);
+  useEffect(() => { realityRef.current = (n, f) => void realityAct(n, f); }, [realityAct]);
+
+  /** 去问卷星 / 预售页拿最新数字；新增够多就总结成证据、拿去推进 */
+  const realitySyncRef = useRef(false);
+  const syncReality = useCallback(async (pid: string) => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    const live = (proj?.realityChecks || []).filter(c => !c.closed && c.kind !== 'company');
+    if (!proj || !live.length || !loggedIn() || realitySyncRef.current) return;
+    realitySyncRef.current = true;
+    try {
+      for (const c of live) {
+        try {
+          let raw = '';
+          if (c.kind === 'survey') {
+            const r = await platformRequest<{ count: number; report: string | null }>(`/surveys/${c.id}/results`);
+            patchChecks(pid, l => patchCheck(l, c.id, { count: r.count, checkedAt: Date.now() }));
+            raw = r.report || `有效答卷 ${r.count} 份（报告还没生成）`;
+            c.count = r.count;
+          } else {
+            const r = await platformRequest<{ views: number; visitors: number; clicks: number; leads: { at: number; note: string }[]; closed: boolean }>(`/pages/${c.id}`);
+            patchChecks(pid, l => patchCheck(l, c.id, { visitors: r.visitors, clicks: r.clicks, leads: r.leads.length, closed: r.closed, checkedAt: Date.now() }));
+            raw = `浏览 ${r.views} 次，独立访客 ${r.visitors}，点按钮 ${r.clicks}，留联系方式 ${r.leads.length}；留言：${r.leads.map(l => l.note).filter(Boolean).slice(0, 20).join(' | ')}`;
+            Object.assign(c, { visitors: r.visitors, clicks: r.clicks, leads: r.leads.length });
+          }
+          if (!shouldIngest(c)) continue;
+          const node = proj.nodes?.find(n => n.id === c.nodeId);
+          const resp = await meterFor(pid, () => callLLM(buildIngestMessages(proj, node, c, raw) as any, { jsonMode: true, maxTokens: 600, timeoutMs: 60000, task: 'simple' }));
+          const sum = parseIngest(resp.content);
+          const now = c.kind === 'survey' ? c.count || 0 : (c.visitors || 0) + (c.leads || 0) * 10;
+          patchChecks(pid, l => patchCheck(l, c.id, { ingested: now, summary: sum?.claim }));
+          if (sum) applyReality(pid, c.nodeId, sum.claim, sum.detail, c.kind === 'survey' ? `问卷「${c.title}」${c.count} 份真实回答` : `预售页「${c.title}」的真实访问`);
+        } catch (e) { console.warn('[reality] 同步失败', c.id, e); }
+      }
+    } finally { realitySyncRef.current = false; }
+  }, [patchChecks, applyReality]);
+
   const toggleJobs = useCallback((pid: string, on: boolean) => {
     const proj = projectsRef.current.find(p => p.id === pid); if (!proj) return;
     const charter = { ...(proj.charter || { autoBuyCNY: 0, confirmedAt: Date.now() }), allowJobs: on };
@@ -2471,10 +2610,10 @@ ${plan.lead.duty}
   }, [pushFeedItem]);
   useEffect(() => {
     if (!currentProjectId) return;
-    const t = setTimeout(() => void giveDigest(currentProjectId), 5000);
-    const iv = window.setInterval(() => { if (feedProjectRef.current) void giveDigest(feedProjectRef.current); }, 3600_000);
+    const t = setTimeout(() => { void syncReality(currentProjectId).finally(() => giveDigest(currentProjectId)); }, 5000);
+    const iv = window.setInterval(() => { const pid = feedProjectRef.current; if (pid) void syncReality(pid).finally(() => giveDigest(pid)); }, 30 * 60_000);
     return () => { clearTimeout(t); clearInterval(iv); };
-  }, [currentProjectId, giveDigest]);
+  }, [currentProjectId, giveDigest, syncReality]);
 
   // 打开项目 / 切回这个页面时：离上次汇报有一阵子、又做了些事，就先汇报
   useEffect(() => {
@@ -2930,6 +3069,8 @@ ${plan.lead.duty}
           forceNodeRef.current = node.id;
           setJustWroteId(null); setIsLooping(true);
           trackEvent('step_rewrite');
+        } else if ((optionId === 'survey' || optionId === 'page') && node) {
+          realityRef.current?.(node, optionId);
         } else if (optionId === 'seek' && node && currentProjectId) {
           // AI 做不了的那一件现实里的事 → 去服务广场找人 / Agent 做；没有合适的就帮你起草需求
           const need = node.hypothesis?.unknown || node.hypothesis?.statement || node.title;
@@ -3096,6 +3237,14 @@ ${plan.lead.duty}
         }
         break;
       }
+      case 'realityPlan': {
+        const pend = pendingActionsRef.current[item.id];
+        delete pendingActionsRef.current[item.id];
+        if (!pend) break;
+        if (optionId === 'go') void executeReality(pend.pid, pend.node, pend.action);
+        else if (optionId === 'market') pmActRef.current?.(pend.node);
+        break;
+      }
       case 'digest': {
         if (optionId === 'open' && currentProject) openProjectPage(currentProject.id, 'root', 'research');
         break;
@@ -3112,7 +3261,7 @@ ${plan.lead.duty}
         break;
       }
     }
-  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline, askNextInfo, kickoffWriting, beginWork, noteAuto, patchAutonomy, inquiryTeams, syncPm]);
+  }, [nodes, projectOutline, outlineDone, justWroteId, decision, currentProject, currentProjectId, patchFeed, pushFeedItem, updateNode, addNode, patchProject, recordDecisionDirect, handleConfirmOutline, handleProposeOutline, handleSkipAnchor, openProjectPage, startAfterOutline, askNextInfo, kickoffWriting, beginWork, noteAuto, patchAutonomy, inquiryTeams, syncPm, executeReality]);
   useEffect(() => { answerFeedRef.current = handleAnswerFeed; }, [handleAnswerFeed]);
 
   /** 打开决策记录弹窗（打开时就对节点子树做快照，保证删除/失效前的状态被留存） */
@@ -3363,6 +3512,7 @@ ${plan.lead.duty}
 
   const pulsePanel = currentProject ? (<div className="space-y-3">
     <DigestPanel digests={currentProject.digests} busy={digestBusy} onNow={() => void giveDigest(currentProject.id, true)} />
+    <RealityPanel checks={currentProject.realityChecks} onSync={() => syncReality(currentProject.id)} onClose={async (id: string) => { try { await platformRequest(`/pages/${id}/close`, 'POST'); patchChecks(currentProject.id, l => patchCheck(l, id, { closed: true })); } catch (e) { addNotification('warning', '没能关闭页面', e instanceof Error ? e.message : String(e)); } }} onOpenNode={(id: string) => setSelectedNodeId(id)} />
     <ProjectPulse
       life={lifeOf(currentProject, Date.now(), projects.indexOf(currentProject))}
       waking={wakingId === currentProject.id}

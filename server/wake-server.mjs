@@ -10,6 +10,7 @@ import { ServiceMarket } from './service-market.mjs';
 import { SharedModels } from './shared-models.mjs';
 import { createBilling, PLANS } from './billing.mjs';
 import { UserRegistry, computeMetrics } from './metrics.mjs';
+import { PlatformServices, renderPage } from './platform-services.mjs';
 const PLANS_TOPUP_MIN = PLANS.topup?.minConvertCents || 100;
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
 import { createAwakening, enqueueWake, heartbeatAction, configureAwakening, recoverAwakening, runWake, previewWakeRequest, buildModelRequest, parseModelResponse } from './.wake-build/runner.mjs';
@@ -153,6 +154,8 @@ export async function createWakeServer(options = {}) {
   const market = new ServiceMarket(storage);
   /** 谁、哪天来过（运营数据：用户数、活跃、留存） */
   const registry = new UserRegistry(storage);
+  /** 平台直连服务：问卷星、天眼查、预售页 */
+  const platform = new PlatformServices(storage, billing, externalFetch, env);
   const flushMarket = () => market.flushDeliveries(async order => {
     const c = order.context, key = scopeKey(order.buyer, c.projectId, c.branchId, c.scopeId);
     if (!await storage.read(key)) return false;
@@ -296,6 +299,27 @@ export async function createWakeServer(options = {}) {
       }
       return;
     }
+    // 预售页 / 报名页：公开访问（任何人都能打开、留资），只放固定模板里的文字
+    const pageMatch = new URL(req.url, 'http://wake').pathname.match(/^\/p\/([A-Za-z0-9_-]{8,20})(\/lead)?$/);
+    if (pageMatch) {
+      const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+      const visitor = createHash('sha256').update(`${ip}|${req.headers['user-agent'] || ''}`).digest('hex').slice(0, 16);
+      res.setHeader('Cache-Control', 'no-store'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Frame-Options', 'DENY');
+      try {
+        if (!pageMatch[2] && req.method === 'GET') {
+          const page = await platform.viewPage(pageMatch[1], visitor);
+          if (!page) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('这个页面已关闭或不存在'); return; }
+          res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'");
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(renderPage(page)); return;
+        }
+        if (pageMatch[2] && req.method === 'POST') {
+          let raw = ''; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) throw Object.assign(new Error('内容太长'), { status: 413 }); }
+          const out = await platform.leadPage(pageMatch[1], visitor, JSON.parse(raw || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(out)); return;
+        }
+        res.writeHead(405); res.end(); return;
+      } catch (e) { res.writeHead(e.status || 400, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: e instanceof SyntaxError ? '格式错误' : e.message })); return; }
+    }
     const origin = req.headers.origin;
     if (origin && !allowedOrigins.has(origin)) { res.writeHead(403); res.end(); return; }
     if (origin) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
@@ -379,6 +403,26 @@ export async function createWakeServer(options = {}) {
     try { owner = await authenticate(req); } catch (e) { send(401, { error: e.message }); return; }
     registry.seen(owner, url.pathname.split('/')[1] || 'visit');
     try {
+      // 平台直连服务：问卷、企业信息、预售页（按次从 AI 钱包扣费）
+      if (url.pathname.startsWith('/platform/') || url.pathname === '/admin/platform') {
+        if (url.pathname === '/admin/platform') {
+          if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
+          if (req.method === 'PUT') { send(200, await platform.configure(await readBody(req))); return; }
+          if (req.method === 'GET') { send(200, await platform.configure({})); return; }
+        }
+        if (req.method === 'GET' && url.pathname === '/platform/catalog') { send(200, await platform.catalog()); return; }
+        if (req.method === 'GET' && url.pathname === '/platform/mine') { send(200, await platform.mine(owner, url.searchParams.get('projectId') || '')); return; }
+        if (req.method === 'POST' && url.pathname === '/platform/company/search') { send(200, await platform.companySearch(owner, await readBody(req))); return; }
+        if (req.method === 'POST' && url.pathname === '/platform/company/info') { send(200, await platform.companyInfo(owner, await readBody(req))); return; }
+        if (req.method === 'POST' && url.pathname === '/platform/surveys') { send(200, await platform.createSurvey(owner, await readBody(req))); return; }
+        const sr = url.pathname.match(/^\/platform\/surveys\/([A-Za-z0-9_-]{8,20})\/results$/);
+        if (req.method === 'GET' && sr) { send(200, await platform.surveyResults(owner, sr[1])); return; }
+        if (req.method === 'POST' && url.pathname === '/platform/pages') { send(200, await platform.createPage(owner, await readBody(req))); return; }
+        const pg = url.pathname.match(/^\/platform\/pages\/([A-Za-z0-9_-]{8,20})(\/close)?$/);
+        if (pg && req.method === 'GET' && !pg[2]) { send(200, await platform.pageStats(owner, pg[1])); return; }
+        if (pg && req.method === 'POST' && pg[2]) { send(200, await platform.closePage(owner, pg[1])); return; }
+        send(404, { error: '服务接口不存在' }); return;
+      }
       // 运营数据：用户数、活跃、付费、成交（只给管理员；默认剔除内部 / 测试账号）
       if (req.method === 'GET' && url.pathname === '/admin/metrics') {
         if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }

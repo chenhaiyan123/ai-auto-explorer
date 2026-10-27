@@ -91,6 +91,8 @@ export const stepAsk = (node: ProblemNode, progress: OutlineProgress): FeedItem 
   const options: FeedOption[] = [];
   if (stuck) {
     options.push({ id: 'seek', label: '🤝 找人 / 服务去做', primary: !progress.next });
+    options.push({ id: 'survey', label: '📋 发问卷问真人' });
+    options.push({ id: 'page', label: '🧪 做预售页看真需求' });
     if (progress.next) options.push({ id: 'next', label: `先做下一步「${clip(progress.next.title, 12)}」`, primary: true });
     options.push({ id: 'stop', label: '先停一下' });
   } else {
