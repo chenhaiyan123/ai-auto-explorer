@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { auth, hasPasswordLogin } from '../services/authService';
 import { t as ui } from '../services/language';
 import WalletTopup from './WalletTopup';
 
@@ -12,6 +13,41 @@ interface Props {
   onSync?: () => void; syncStatus?: string;
   /** 项目 id → 名字（显示每个项目钱包里有多少钱） */
   projectNames?: Record<string, string>;
+}
+
+/** 登录密码：设了以后用「邮箱 + 密码」直接登录，不用每次收验证码 */
+function PasswordSetting() {
+  const [st, setSt] = useState<{ hasPassword: boolean; setAt: number | null } | null>(null);
+  const [open, setOpen] = useState(false);
+  const [pw, setPw] = useState(''); const [pw2, setPw2] = useState('');
+  const [msg, setMsg] = useState(''); const [busy, setBusy] = useState(false);
+  useEffect(() => { auth.passwordStatus().then(setSt).catch(() => setSt(null)); }, []);
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault(); setMsg('');
+    if (pw !== pw2) { setMsg(ui('两次输入的密码不一样', 'Passwords do not match')); return; }
+    setBusy(true);
+    try { await auth.setPassword(pw); setSt({ hasPassword: true, setAt: Date.now() }); setOpen(false); setPw(''); setPw2(''); setMsg(ui('设好了，下次可以用「邮箱 + 密码」直接登录', 'Saved. Next time sign in with email + password.')); try { localStorage.setItem('hx-login-mode', 'password'); } catch {} }
+    catch (err) { setMsg(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="mt-4 rounded-xl border border-slate-700 p-3 text-sm">
+      <div className="flex items-center gap-2">
+        <span className="font-medium text-slate-100">{ui('登录密码', 'Password')}</span>
+        <span className="text-xs text-slate-500">{st ? (st.hasPassword ? ui('已设置 · 可以用邮箱 + 密码直接登录', 'Set · sign in with email + password') : ui('没设置 · 现在每次都要收验证码', 'Not set · you need an email code each time')) : ''}</span>
+        <button onClick={() => setOpen(v => !v)} className="ml-auto text-xs text-blue-300 hover:underline">{open ? ui('收起', 'Close') : st?.hasPassword ? ui('修改', 'Change') : ui('设置密码', 'Set password')}</button>
+      </div>
+      {open && (
+        <form onSubmit={save} className="mt-3 space-y-2">
+          <input type="password" autoComplete="new-password" aria-label={ui('新密码', 'New password')} placeholder={ui('新密码（8 位以上，字母加数字）', 'New password (8+ chars, letters and numbers)')} value={pw} onChange={e => setPw(e.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-100 outline-none" />
+          <input type="password" autoComplete="new-password" aria-label={ui('再输一次', 'Repeat password')} placeholder={ui('再输一次', 'Repeat password')} value={pw2} onChange={e => setPw2(e.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-100 outline-none" />
+          <button type="submit" disabled={busy || pw.length < 8} className="w-full rounded-lg bg-blue-600 py-2 font-semibold text-white disabled:opacity-50">{busy ? ui('正在保存…', 'Saving…') : ui('保存密码', 'Save password')}</button>
+          {st?.hasPassword && <p className="text-[11px] text-slate-500">{ui('改了密码以后，别的设备上用旧密码登录的会被退出', 'Changing it signs out other password sessions')}</p>}
+        </form>
+      )}
+      {msg && <p role="status" className="mt-2 text-xs text-emerald-300">{msg}</p>}
+    </section>
+  );
 }
 
 export default function PersonalCenter(p: Props) {
@@ -41,6 +77,7 @@ export default function PersonalCenter(p: Props) {
       <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">{ui('个人中心', 'Personal center')}</h2><p className="mt-2 text-sm text-slate-200 break-all">{p.name} <span className="ml-2 rounded-full bg-blue-500/15 px-2 py-1 text-xs text-blue-300">{p.pro ? 'Pro' : 'Free'}</span></p><p className="mt-1 text-xs text-slate-400 break-all">{p.email}</p></div><button onClick={p.onClose} aria-label={ui('关闭', 'Close')} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800">✕</button></div>
       <div className="mt-5"><h3 className="mb-2 text-sm font-semibold text-slate-200">{ui('我的钱包', 'My wallet')}</h3><WalletTopup compact projectNames={p.projectNames} />
         <p className="mt-1.5 text-[11px] leading-5 text-slate-500">{ui('充值进用户钱包；在项目的「钱包」页把一部分放进项目钱包，那个项目的 AI 就用它自己决定怎么花、怎么赚，赚的也进项目钱包，随时能收回。', 'Top up here, then move money into a project wallet from the project page.')}</p></div>
+      {p.email && hasPasswordLogin() && <PasswordSetting />}
       <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
         {tile(ui('套餐与订单', 'Plans & orders'), ui('查看 Free / Pro、支付订单与下载权益', 'View plans, payment orders and download access'), p.onBilling)}
         {tile(ui('用量与额度', 'Usage & credits'), ui('查看各模型剩余额度与使用记录', 'Check model balances and usage history'), p.onUsage)}

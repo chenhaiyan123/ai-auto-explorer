@@ -13,7 +13,7 @@ COPY server/wake-notifications.mjs ./server/
 COPY server/project-sync.mjs ./server/
 COPY server/project-mandates.mjs server/service-market.mjs server/market-demands.mjs ./server/
 COPY server/wechat-provider.mjs server/wechat-certificates.mjs ./server/
-COPY server/metrics.mjs server/platform-services.mjs ./server/
+COPY server/metrics.mjs server/platform-services.mjs server/password-auth.mjs ./server/
 COPY shared/billing-plans.json ./shared/
 COPY --from=build /app/server/.wake-build ./server/.wake-build
 RUN mkdir /data && chown node:node /data

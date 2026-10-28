@@ -39,7 +39,7 @@ import NodeDetails from './components/NodeDetails';
 import DecisionModal from './components/DecisionModal';
 import { exploreNode, chatWithNode, generateProjectSummary, callGemini, identifyNodeTask, synthesizeOverview } from './services/geminiService';
 import { monitor } from './services/monitoringService';
-import { auth, hasAuthBackend } from './services/authService';
+import { auth, hasPasswordLogin, hasAuthBackend } from './services/authService';
 import { GEMINI_MODEL } from './constants';
 import { analyzeIntentWithAutoConfirm, IntentAnalysis, ExplorationMode } from './services/intentService';
 import IntentConfirmModal from './components/IntentConfirmModal';
@@ -876,6 +876,13 @@ const App: React.FC = () => {
   const [isLoginAsAdmin, setIsLoginAsAdmin] = useState(false);
   const [landingLogin, setLandingLogin] = useState(false);
   const [loginMethod, setLoginMethod] = useState<'wechat' | 'phone' | 'email'>('email'); // 登录方式
+  const [pwMode, setPwMode] = useState(() => { try { return localStorage.getItem('hx-login-mode') === 'password'; } catch { return false; } }); // 密码登录
+  const [loginPassword, setLoginPassword] = useState('');
+  const [pwBusy, setPwBusy] = useState(false);
+  // 打开登录页时按上次 / 刚设好的习惯选「验证码」还是「密码」
+  useEffect(() => { if (!user) { try { setPwMode(localStorage.getItem('hx-login-mode') === 'password'); } catch { /* ignore */ } } }, [user, landingLogin]);
+  // 记住登录：验证码登录的令牌快过期时悄悄续上
+  useEffect(() => { if (user?.email) void auth.refreshIfNeeded(); }, [user?.email]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [showMetaModal, setShowMetaModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
@@ -3772,8 +3779,38 @@ ${plan.lead.duty}
               </>
             )}
             
+            {/* 验证码 / 密码 切换（密码要登录后在个人中心设置过） */}
+            {loginMethod === 'email' && !isOtpSent && hasPasswordLogin() && (
+              <div className="flex gap-1 p-1 bg-slate-800 rounded-xl text-xs" role="tablist" aria-label={ui('登录方式', 'Sign-in method')}>
+                {[[false, ui('验证码登录', 'Email code')], [true, ui('密码登录', 'Password')]].map(([v, label]) => (
+                  <button key={String(v)} role="tab" aria-selected={pwMode === v} onClick={() => { setPwMode(v as boolean); try { localStorage.setItem('hx-login-mode', v ? 'password' : 'code'); } catch {} }}
+                    className={`flex-1 py-2 rounded-lg font-medium ${pwMode === v ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>{label as string}</button>
+                ))}
+              </div>
+            )}
+            {loginMethod === 'email' && !isOtpSent && pwMode && hasPasswordLogin() && (
+              <form className="space-y-3" onSubmit={async e => {
+                e.preventDefault(); if (pwBusy) return;
+                setPwBusy(true);
+                try {
+                  const loggedIn = await auth.loginWithPassword(loginEmail, loginPassword);
+                  setLoginPassword(''); setUser(loggedIn); trackEvent('login', { via: 'password' });
+                  if (isLoginAsAdmin) {
+                    try { const session = await sharedRequest<{ isAdmin: boolean }>('/shared/session'); if (session.isAdmin) { setIsBackendAdmin(true); setAdminInitialTab('models'); setShowAdminDashboard(true); } else alert('已登录，但此账号尚未获得后台管理员授权。'); }
+                    catch (err: any) { alert('已登录，管理员权限暂时无法确认：' + err.message); }
+                  }
+                } catch (err: any) { alert(err.message || '登录失败'); }
+                finally { setPwBusy(false); }
+              }}>
+                <input aria-label={ui("电子邮箱")} type="email" autoComplete="username" placeholder={ui("电子邮箱")} value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
+                <input aria-label={ui("密码", "Password")} type="password" autoComplete="current-password" placeholder={ui("密码", "Password")} value={loginPassword} onChange={e => setLoginPassword(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
+                <button type="submit" disabled={pwBusy || !loginEmail.includes('@') || !loginPassword} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl">{pwBusy ? ui('正在登录…', 'Signing in…') : ui("登录", "Sign in")}</button>
+                <p className="text-center text-[11px] text-slate-500 leading-5">{ui('还没设过密码、或者忘了密码：先用验证码登录，再到「个人中心」设置', 'No password yet or forgot it? Sign in with an email code, then set one in Personal center')}</p>
+              </form>
+            )}
+
             {/* 邮箱验证码登录 */}
-            {loginMethod === 'email' && !isOtpSent && (
+            {loginMethod === 'email' && !isOtpSent && !(pwMode && hasPasswordLogin()) && (
               <>
                 <input key={landingLogin ? "login" : "landing"} autoFocus={landingLogin} aria-label={ui("电子邮箱")} type="email" autoComplete="email" placeholder={ui("电子邮箱")} value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
                 <button onClick={async () => {

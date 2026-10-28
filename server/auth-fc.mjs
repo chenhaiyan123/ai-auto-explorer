@@ -10,6 +10,7 @@
  *   POST /auth/email/verify      校验验证码并签发令牌
  *   GET  /auth/health            健康检查
  *   GET  /auth/me                校验令牌
+ *   POST /auth/refresh           用没过期的令牌换新令牌（续期）
  *   POST /api/chat               体验代理：按额度调用 DeepSeek(藏 Key)
  *   GET  /api/quota              查询当前剩余体验次数
  *   POST /api/feedback           用户反馈 -> 转邮件发到 FEEDBACK_TO
@@ -42,6 +43,7 @@ const SECRET = process.env.AUTH_SECRET || 'dev-secret-change-me';
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '*';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const MAIL_FROM = process.env.MAIL_FROM || 'HiExplore <onboarding@resend.dev>';
+const TOKEN_DAYS = Number(process.env.TOKEN_DAYS || 30);
 const CODE_TTL = 10 * 60 * 1000;     // 验证码 10 分钟有效
 const RESEND_COOLDOWN = 60 * 1000;   // 同邮箱 60 秒内只能发一次
 
@@ -113,7 +115,8 @@ const gen6 = () => String(Math.floor(100000 + Math.random() * 900000));
 const b64u = (buf) => Buffer.from(buf).toString('base64url');
 const sign = (body) => crypto.createHmac('sha256', SECRET).update(body).digest('base64url');
 function issueToken(payload) {
-  const body = b64u(JSON.stringify({ ...payload, exp: Date.now() + 7 * 864e5 }));
+  // 30 天有效；网页每天用着时会调 /auth/refresh 续期，常来的人基本不用再收验证码
+  const body = b64u(JSON.stringify({ ...payload, iat: Date.now(), exp: Date.now() + TOKEN_DAYS * 864e5 }));
   return `${body}.${sign(body)}`;
 }
 function verifyToken(token) {
@@ -269,6 +272,13 @@ const server = http.createServer(async (req, res) => {
       store.delete(email);
       const user = { email, username: email.split('@')[0], role: 'user' };
       return send2(200, { token: issueToken({ email }), user });
+    }
+
+    // 续期：拿着还没过期的令牌换一张新的（不用再收验证码）
+    if (req.method === 'POST' && path === '/auth/refresh') {
+      const p = verifyToken((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+      if (!p?.email) return send2(401, { error: '未登录或登录已过期' });
+      return send2(200, { token: issueToken({ email: p.email }), user: { email: p.email, username: p.email.split('@')[0], role: 'user' } });
     }
 
     if (req.method === 'GET' && path === '/auth/me') {

@@ -10,6 +10,7 @@ import { ServiceMarket } from './service-market.mjs';
 import { SharedModels } from './shared-models.mjs';
 import { createBilling, PLANS } from './billing.mjs';
 import { UserRegistry, QuestionLog, computeMetrics } from './metrics.mjs';
+import { PasswordAuth } from './password-auth.mjs';
 import { PlatformServices, renderPage } from './platform-services.mjs';
 const PLANS_TOPUP_MIN = PLANS.topup?.minConvertCents || 100;
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
@@ -155,6 +156,7 @@ export async function createWakeServer(options = {}) {
   /** 谁、哪天来过（运营数据：用户数、活跃、留存） */
   const registry = new UserRegistry(storage);
   const questions = new QuestionLog(storage);
+  const passwords = new PasswordAuth(storage);
   /** 平台直连服务：问卷星、天眼查、预售页 */
   const platform = new PlatformServices(storage, billing, externalFetch, env);
   const flushMarket = () => market.flushDeliveries(async order => {
@@ -270,6 +272,8 @@ export async function createWakeServer(options = {}) {
   interval.unref();
   const authenticate = async req => {
     const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''); if (!token || token.length > 8192 || token.startsWith('hxm_')) throw new Error('请先登录');
+    // 密码登录签发的会话令牌（本服务自己发的）
+    if (token.startsWith('hxs_')) { const who = await passwords.verify(token); if (!who) throw new Error('登录已过期'); return who; }
     if (env.WAKE_DEV_TOKEN && Buffer.byteLength(token) === Buffer.byteLength(env.WAKE_DEV_TOKEN) && timingSafeEqual(Buffer.from(token), Buffer.from(env.WAKE_DEV_TOKEN))) return 'development';
     if (!authAPI) throw new Error('登录无效');
     const r = await externalFetch(`${authAPI}/auth/me`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000), redirect: 'error' });
@@ -348,6 +352,16 @@ export async function createWakeServer(options = {}) {
         await billing.notify('wechat', Buffer.concat(chunks).toString('utf8'), req.headers);
         res.writeHead(204); res.end();
       } catch { send(400, { code: 'FAIL', message: '通知未通过核验，请重试' }); }
+      return;
+    }
+    // 邮箱 + 密码登录（密码是用户登录后自己设的）
+    if (req.method === 'POST' && url.pathname === '/auth/password/login') {
+      try {
+        const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
+        if (questions.limited(`pw:${ip}`)) { send(429, { error: '尝试太频繁，过一会儿再试' }); return; }
+        const body = await readBody(req);
+        send(200, await passwords.login(body.email, body.password));
+      } catch (e) { send(e.status || 400, { error: e instanceof SyntaxError ? '格式错误' : e.message }); }
       return;
     }
     // 记一下大家在研究什么（登录、免注册体验都记；体验用户只记设备编号的哈希）
@@ -436,6 +450,11 @@ export async function createWakeServer(options = {}) {
         send(404, { error: '服务接口不存在' }); return;
       }
       // 运营数据：用户数、活跃、付费、成交（只给管理员；默认剔除内部 / 测试账号）
+      if (url.pathname.startsWith('/auth/')) {
+        if (req.method === 'GET' && url.pathname === '/auth/password/status') { send(200, await passwords.status(owner)); return; }
+        if (req.method === 'POST' && url.pathname === '/auth/password/set') { send(200, await passwords.setPassword(owner, (await readBody(req)).password)); return; }
+        if (req.method === 'POST' && url.pathname === '/auth/logout') { send(200, await passwords.logout(String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''))); return; }
+      }
       if (req.method === 'GET' && url.pathname === '/admin/questions') {
         if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
         const internal = new Set([...admins, ...String(env.METRICS_EXCLUDE || '').split(',').map(x => x.trim()).filter(Boolean)]);
