@@ -79,7 +79,6 @@ import { checkTriggers, summarizeHits, isContradictedByReality, isBlockedOnReali
 import { pendingProbeCount, designProbes, applyProbeResult } from './services/probeService';
 import DeviceGuard from './components/DeviceGuard';
 import ChatLauncher from './components/ChatLauncher';
-import SimPreview from './components/SimPreview';
 import { designSimulation } from './services/simService';
 import OutlinePlanner from './components/OutlinePlanner';
 import { proposeOutline } from './services/outlineService';
@@ -3661,17 +3660,10 @@ ${plan.lead.duty}
         onTrial={hasTrialBackend() ? () => { trackEvent('trial_start'); setUser(auth.loginAsGuest()); } : undefined}
         onLogin={() => { setLandingLogin(true); setIsLoginAsAdmin(false); setLoginMethod('email'); setTimeout(() => document.getElementById('landing-content')?.scrollIntoView({ block: 'start' }), 0); }}
         onMarket={() => setShowServiceMarket(true)} />}
+      {!showLandingSim && (
       <main id="landing-content" className="scroll-mt-20 flex justify-center p-4 sm:py-8">
-      <div className={`w-full ${showLandingSim ? 'max-w-5xl lg:grid lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-6 lg:items-start' : 'max-w-md'}`}>
-      {showLandingSim && (
-        <SimPreview
-          className="mb-4 lg:mb-0"
-          onEnter={() => {
-            if (hasTrialBackend()) { trackEvent('trial_start'); trackEvent('sim_to_trial'); setUser(auth.loginAsGuest()); }
-            else document.getElementById('landing-card')?.scrollIntoView({ behavior: 'smooth' });
-          }}
-        />
-      )}
+      <div className="w-full max-w-md">
+        {landingLogin && !isOtpSent && <button onClick={() => setLandingLogin(false)} className="mb-3 text-[13px] text-slate-400 hover:text-white">← {ui('返回首页', 'Back')}</button>}
       <div id="landing-card" className="max-w-md w-full mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-emerald-600"></div>
         <div className="text-center mb-6">
@@ -3854,6 +3846,19 @@ ${plan.lead.duty}
       </div>
       </div>
       </main>
+      )}
+      {showLandingSim && (
+        <footer className="border-t border-slate-800/80 py-8 text-center text-[12px] leading-6 text-slate-500">
+          <div className="flex items-center justify-center gap-4">
+            <a href="https://github.com/chenhaiyan123/ai-auto-explorer" target="_blank" rel="noopener noreferrer" className="hover:text-white">{ui("开源代码")}</a>
+            <span className="text-slate-700">·</span>
+            <button onClick={() => { setIsLoginAsAdmin(true); setLoginMethod('email'); setOtpCode(''); setIsOtpSent(false); }} className="hover:text-white">{ui("管理员入口")}</button>
+          </div>
+          {/* ICP 备案：首页底部必须标明备案号并链接到工信部（备案承诺书第二条） */}
+          <div className="mt-3">深圳市海探科技有限公司</div>
+          <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer" className="hover:text-slate-300 underline decoration-dotted">粤ICP备2023000583号-1</a>
+        </footer>
+      )}
       {showServiceMarket && <ServiceMarket projects={[]} currentProjectId={null} onClose={() => setShowServiceMarket(false)} />}
     </div>
   );

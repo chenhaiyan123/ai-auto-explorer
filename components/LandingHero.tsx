@@ -52,7 +52,6 @@ export default function LandingHero({ onTrial, onLogin, onMarket }: { onTrial?: 
             </div>
           ))}
         </div>
-        <p className="mt-6 text-center text-[12px] text-slate-500">{ui('下面可以先玩一个现成的例子，看看它怎么推演一个问题 ↓', 'Try a ready-made example below ↓')}</p>
       </div>
     </section>
   );
