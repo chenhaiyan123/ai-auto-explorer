@@ -88,3 +88,25 @@ test('registry persists daily visits; /admin/metrics is admin-only and counts re
   const reg = await app.registry.read();
   assert.ok(reg['u1@qq.com'].days.length === 1 && reg['u1@qq.com'].kinds.includes('billing'));
 });
+
+test('大家在研究什么：体验用户和登录用户的问题都记下，同一个项目只记一条，管理员才能看', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'questions-'));
+  const app = await createWakeServer({ env: { WAKE_DATA_DIR: dir, WAKE_MASTER_KEY: randomBytes(32).toString('base64'), WAKE_AUTH_API: 'https://auth.example.test', WAKE_HOST: '127.0.0.1', WAKE_ADMIN_IDENTITIES: 'boss@hiexplore.com' },
+    fetch: async (url, opts) => Response.json({ email: opts.headers.Authorization.replace('Bearer ', '') }) });
+  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
+  t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const log = (q, pid, who, dev = 'dev-1') => fetch(`${base}/questions/log`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Device-Id': dev, ...(who ? { Authorization: `Bearer ${who}` } : {}) }, body: JSON.stringify({ question: q, projectId: pid }) }).then(r => r.status);
+  assert.equal(await log('怎么做一台太阳能无人机', 'p1'), 200);
+  assert.equal(await log('怎么做一台太阳能无人机', 'p1'), 200);
+  assert.equal(await log('怎么做一台高效的太阳能无人机', 'p1'), 200, '改了问题：更新同一条');
+  assert.equal(await log('新项目', 'p2'), 200);
+  assert.equal(await log('少儿编程怎么提高续费', 'p3', 'a@qq.com'), 200);
+  assert.equal(await log('管理员自己的测试问题', 'p4', 'boss@hiexplore.com'), 200);
+  const get = who => fetch(`${base}/admin/questions`, { headers: { Authorization: `Bearer ${who}` } }).then(async r => ({ status: r.status, body: await r.json() }));
+  assert.equal((await get('a@qq.com')).status, 403);
+  const d = (await get('boss@hiexplore.com')).body;
+  assert.equal(d.total, 2, '「新项目」不算，管理员默认剔除'); assert.equal(d.guests, 1); assert.equal(d.people, 2);
+  assert.ok(d.items.some(x => x.q === '怎么做一台高效的太阳能无人机' && x.who === '体验用户'));
+  assert.ok(d.items.some(x => x.who === 'a***@qq.com'));
+});

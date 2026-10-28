@@ -161,3 +161,44 @@ export const mask = owner => {
   const [name, host] = owner.split('@');
   return host ? `${name.slice(0, 1)}***@${host}` : `${owner.slice(0, 2)}***`;
 };
+
+/**
+ * 大家在研究什么：每个项目的问题（登录用户和免注册体验用户都记），给运营看、找方向用。
+ * 只存问题原文（≤300 字）、时间、谁（登录用户存邮箱，体验用户只存设备编号的哈希），不存笔记正文。
+ */
+const QUESTIONS = createHash('sha256').update('hiexplore-question-log-v1').digest('hex');
+const Q_MAX = 20000;
+export class QuestionLog {
+  constructor(storage) { this.storage = storage; this.queue = Promise.resolve(); this.hits = new Map(); }
+  /** 每个 IP 每小时最多记 60 条（防灌） */
+  limited(ip, now = Date.now()) {
+    const h = this.hits.get(ip);
+    if (!h || now - h.start > 3600000) { this.hits.set(ip, { start: now, n: 1 }); if (this.hits.size > 5000) this.hits.clear(); return false; }
+    return ++h.n > 60;
+  }
+  async add({ text, projectId, owner, device, at = Date.now() }) {
+    const q = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (q.length < 4 || q === '新项目') return { ok: false };
+    const who = owner || `guest:${createHash('sha256').update(String(device || 'nodev')).digest('hex').slice(0, 12)}`;
+    const pid = createHash('sha256').update(`${who}:${String(projectId || '').slice(0, 160)}`).digest('hex').slice(0, 16);
+    this.queue = this.queue.catch(() => {}).then(async () => {
+      const s = (await this.storage.credentials(QUESTIONS)) || { version: 1, items: [] };
+      const items = s.items || [];
+      const same = items.findIndex(x => x.pid === pid);
+      const rec = { q, who, guest: !owner, pid, at: same >= 0 ? items[same].at : at, updatedAt: at };
+      if (same >= 0) { if (items[same].q === q) return; items[same] = rec; } else items.push(rec);
+      await this.storage.credentials(QUESTIONS, { version: 1, items: items.slice(-Q_MAX) });
+    });
+    await this.queue;
+    return { ok: true };
+  }
+  async list({ limit = 200, internal = new Set(), includeInternal = false } = {}) {
+    await this.queue.catch(() => {});
+    const items = (((await this.storage.credentials(QUESTIONS)) || {}).items || []).filter(x => includeInternal || !internalTest(x.who, internal));
+    return {
+      total: items.length, people: new Set(items.map(x => x.who)).size, guests: items.filter(x => x.guest).length,
+      firstAt: items.length ? Math.min(...items.map(x => x.at)) : null,
+      items: items.slice().sort((a, b) => b.at - a.at).slice(0, Math.min(1000, limit)).map(x => ({ q: x.q, at: x.at, who: x.guest ? '体验用户' : mask(x.who), guest: x.guest })),
+    };
+  }
+}

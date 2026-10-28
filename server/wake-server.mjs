@@ -9,7 +9,7 @@ import { mandateError } from './project-mandates.mjs';
 import { ServiceMarket } from './service-market.mjs';
 import { SharedModels } from './shared-models.mjs';
 import { createBilling, PLANS } from './billing.mjs';
-import { UserRegistry, computeMetrics } from './metrics.mjs';
+import { UserRegistry, QuestionLog, computeMetrics } from './metrics.mjs';
 import { PlatformServices, renderPage } from './platform-services.mjs';
 const PLANS_TOPUP_MIN = PLANS.topup?.minConvertCents || 100;
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
@@ -154,6 +154,7 @@ export async function createWakeServer(options = {}) {
   const market = new ServiceMarket(storage);
   /** 谁、哪天来过（运营数据：用户数、活跃、留存） */
   const registry = new UserRegistry(storage);
+  const questions = new QuestionLog(storage);
   /** 平台直连服务：问卷星、天眼查、预售页 */
   const platform = new PlatformServices(storage, billing, externalFetch, env);
   const flushMarket = () => market.flushDeliveries(async order => {
@@ -323,7 +324,7 @@ export async function createWakeServer(options = {}) {
     const origin = req.headers.origin;
     if (origin && !allowedOrigins.has(origin)) { res.writeHead(403); res.end(); return; }
     if (origin) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type'); res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS'); res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Device-Id'); res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS'); res.setHeader('Cache-Control', 'no-store');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
     const send = (status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
     const url = new URL(req.url, 'http://wake');
@@ -347,6 +348,17 @@ export async function createWakeServer(options = {}) {
         await billing.notify('wechat', Buffer.concat(chunks).toString('utf8'), req.headers);
         res.writeHead(204); res.end();
       } catch { send(400, { code: 'FAIL', message: '通知未通过核验，请重试' }); }
+      return;
+    }
+    // 记一下大家在研究什么（登录、免注册体验都记；体验用户只记设备编号的哈希）
+    if (req.method === 'POST' && url.pathname === '/questions/log') {
+      try {
+        const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
+        if (questions.limited(ip)) { send(429, { error: '太频繁了' }); return; }
+        const body = await readBody(req);
+        let owner = null; if (req.headers.authorization) { try { owner = await authenticate(req); } catch { /* 登录过期：当体验用户记 */ } }
+        send(200, await questions.add({ text: body.question, projectId: body.projectId, owner, device: String(req.headers['x-device-id'] || '').slice(0, 80) }));
+      } catch (e) { send(400, { error: e instanceof SyntaxError ? '格式错误' : e.message }); }
       return;
     }
     if (url.pathname.startsWith('/market/')) {
@@ -424,6 +436,12 @@ export async function createWakeServer(options = {}) {
         send(404, { error: '服务接口不存在' }); return;
       }
       // 运营数据：用户数、活跃、付费、成交（只给管理员；默认剔除内部 / 测试账号）
+      if (req.method === 'GET' && url.pathname === '/admin/questions') {
+        if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
+        const internal = new Set([...admins, ...String(env.METRICS_EXCLUDE || '').split(',').map(x => x.trim()).filter(Boolean)]);
+        send(200, await questions.list({ limit: Number(url.searchParams.get('limit')) || 200, internal, includeInternal: url.searchParams.get('internal') === '1' }));
+        return;
+      }
       if (req.method === 'GET' && url.pathname === '/admin/metrics') {
         if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
         const [users, b, sh, mk] = await Promise.all([registry.read(), billing.raw(), shared.raw(), market.raw()]);

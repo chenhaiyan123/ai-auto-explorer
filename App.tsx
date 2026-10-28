@@ -25,6 +25,8 @@ import { marketRequestAs } from './services/serviceMarket';
 import { money } from './services/serviceMarket';
 import { onModelUsage, meterFor, addModelSpend, reportModelUsage, setDefaultMeterProject } from './services/projectWallet';
 import { transferProject } from './services/billingClient';
+import { logQuestions } from './services/questionLog';
+import LandingHero from './components/LandingHero';
 import { profileDue, buildProfileMessages, parseProfile, solvedCount, profileSkills, profileToListing, type PmProfileState } from './services/pmProfile';
 import { briefMarkdown, charterFromText, charterLabel } from './services/projectBrief';
 import { pushFeed, answerFeed, closeAsks, openAsks, status as feedStatus, stepAsk, branchAsk, contradictedAsk, realityAsk, anchorAsk, unattendedAsk, haltedAsk, outlineAsk } from './services/agentFeed';
@@ -1070,6 +1072,8 @@ const App: React.FC = () => {
   useEffect(() => { feedProjectRef.current = currentProjectId; }, [currentProjectId]);
   // 项目钱包：每次模型调用都记到对应项目的账上（后台醒来看一眼的记到被叫醒的那个项目）
   useEffect(() => { setDefaultMeterProject(() => feedProjectRef.current || null); }, []);
+  // 大家在研究什么：项目的问题报给后台（每个问题只报一次；体验用户也报，登录页写明了）
+  useEffect(() => { if (!user) return; const t = setTimeout(() => void logQuestions(projectsRef.current), 8000); return () => clearTimeout(t); }, [user, projects.length, projects.map(p => p.metaProblem).join('|')]);
   useEffect(() => onModelUsage((u, pid) => {
     const id = pid || feedProjectRef.current;
     if (!id) return;
@@ -3653,6 +3657,10 @@ ${plan.lead.duty}
           </div>
         </div>
       </header>
+      {showLandingSim && <LandingHero
+        onTrial={hasTrialBackend() ? () => { trackEvent('trial_start'); setUser(auth.loginAsGuest()); } : undefined}
+        onLogin={() => { setLandingLogin(true); setIsLoginAsAdmin(false); setLoginMethod('email'); setTimeout(() => document.getElementById('landing-content')?.scrollIntoView({ block: 'start' }), 0); }}
+        onMarket={() => setShowServiceMarket(true)} />}
       <main id="landing-content" className="scroll-mt-20 flex justify-center p-4 sm:py-8">
       <div className={`w-full ${showLandingSim ? 'max-w-5xl lg:grid lg:grid-cols-[minmax(0,1fr)_400px] lg:gap-6 lg:items-start' : 'max-w-md'}`}>
       {showLandingSim && (
@@ -3677,16 +3685,15 @@ ${plan.lead.duty}
               数据依据：上线首 12 天 40 访客只有 3 次登录、跳出率 86%、平均停留 47 秒——
               访客落地看到的是一个要邮箱的表单，没有任何信息告诉他为什么要填。
             */
-            <p className="text-slate-400 text-[13px] leading-6 mt-3">{ui("别急着让 AI 回答问题，")}<br className="sm:hidden" />{ui("先算清楚这个问题")}<span className="text-blue-400 font-bold">{ui("值不值得答")}</span>
-            </p>
+            <p className="text-slate-400 text-[13px] leading-6 mt-3">{ui("带一个你真想弄明白的问题来，", "Bring a question you really want answered — ")}<br className="sm:hidden" />{ui("剩下的交给它", "and let it take over")}</p>
           )}
         </div>
 
         {!isLoginAsAdmin && !isOtpSent && !landingLogin && (
           <div className="mb-6 space-y-2 text-[12px] text-slate-400 leading-6">
-            <div className="flex gap-2"><span className="text-blue-400">01</span><span>{ui("给问题打分：稀缺性、深度、可验证性等六个维度，先筛掉不值得研究的")}</span></div>
-            <div className="flex gap-2"><span className="text-blue-400">02</span><span>{ui("值得的问题一键立项，AI 组一支分工的团队长期跑，你关掉也在继续")}</span></div>
-            <div className="flex gap-2"><span className="text-blue-400">03</span><span>{ui("产出是带双链的 Markdown，能直接当 Obsidian 库打开")}</span></div>
+            <div className="flex gap-2"><span className="text-blue-400">01</span><span>{ui("说出问题，一起定好目标和启动资金", "Describe the question; agree on the goal and a starting budget")}</span></div>
+            <div className="flex gap-2"><span className="text-blue-400">02</span><span>{ui("它自己拆步骤、找证据、改方向，你关掉网页也在跑", "It plans, gathers evidence and changes course — even when you close the tab")}</span></div>
+            <div className="flex gap-2"><span className="text-blue-400">03</span><span>{ui("做不到的事去服务广场找人；定期告诉你做成了什么", "What AI can't do, it hires out; it reports results on a schedule")}</span></div>
           </div>
         )}
 
@@ -3700,7 +3707,7 @@ ${plan.lead.duty}
               onClick={() => { trackEvent('trial_start'); setUser(auth.loginAsGuest()); }}
               className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition-colors"
             >{ui("🎁 免注册，直接开始")}</button>
-            <p className="text-center text-[11px] text-slate-500 mt-2.5 leading-5">{ui("不用填任何信息 · 笔记只存在你自己的浏览器里")}</p>
+            <p className="text-center text-[11px] text-slate-500 mt-2.5 leading-5">{ui("不用填任何信息 · 笔记只存在你自己的浏览器里", "No sign-up · notes stay in your browser")}<br />{ui("你提的问题会匿名记录，用来改进产品", "Your questions are logged anonymously to improve the product")}</p>
           </div>
         )}
 

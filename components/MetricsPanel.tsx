@@ -58,6 +58,28 @@ const Bars: React.FC<{ title: string; data: Daily[]; field: string; fmt?: (n: nu
   );
 };
 
+/** 大家在研究什么：每个项目的问题（含免注册体验用户），最新的在前 */
+const Questions: React.FC<{ internal: boolean }> = ({ internal }) => {
+  const [d, setD] = useState<{ total: number; people: number; guests: number; firstAt: number | null; items: { q: string; at: number; who: string; guest: boolean }[] } | null>(null);
+  const [err, setErr] = useState('');
+  const [n, setN] = useState(30);
+  useEffect(() => { sharedRequest<any>(`/admin/questions?limit=500${internal ? '&internal=1' : ''}`).then(x => { setD(x); setErr(''); }).catch(e => setErr(e instanceof Error ? e.message : String(e))); }, [internal]);
+  return (
+    <section className="rounded-xl border border-slate-700">
+      <div className="px-3 py-2 border-b border-slate-800 flex items-baseline gap-2 flex-wrap">
+        <span className="text-[13px] font-semibold text-slate-300">大家在研究什么</span>
+        {d && <span className="text-[11px] text-slate-500">{d.total} 个问题 · {d.people} 个人（其中免注册体验的问题 {d.guests} 个）{d.firstAt ? ` · 从 ${new Date(d.firstAt).toLocaleDateString()} 开始记录` : ''}</span>}
+      </div>
+      {err ? <p className="px-3 py-3 text-[12px] text-amber-300">读不到：{err}</p>
+        : !d ? <p className="px-3 py-3 text-[12px] text-slate-500">正在读取…</p>
+        : !d.items.length ? <p className="px-3 py-3 text-[12px] text-slate-500">还没有记录。用户新建项目（包括免注册体验）后，问题会出现在这里；老用户下次打开网站时，浏览器里已有的项目也会补报上来。</p>
+        : <ul className="divide-y divide-slate-800/70 text-[12px]">{d.items.slice(0, n).map((x, i) => (
+            <li key={i} className="px-3 py-1.5 flex gap-2"><span className="text-slate-200 flex-1 min-w-0">{x.q}</span><span className={`shrink-0 ${x.guest ? 'text-emerald-400' : 'text-slate-500'}`}>{x.who}</span><span className="shrink-0 text-slate-500 tabular-nums">{new Date(x.at).toLocaleDateString()}</span></li>))}</ul>}
+      {d && d.items.length > n && <button onClick={() => setN(v => v + 50)} className="w-full py-2 text-[11px] text-slate-400 hover:text-slate-200 border-t border-slate-800">再看 {Math.min(50, d.items.length - n)} 个</button>}
+    </section>
+  );
+};
+
 export default function MetricsPanel({ mode }: { mode: 'users' | 'money' }) {
   const [m, setM] = useState<Metrics | null>(null);
   const [err, setErr] = useState('');
@@ -105,6 +127,7 @@ export default function MetricsPanel({ mode }: { mode: 'users' | 'money' }) {
         <Bars title="每天新增用户" data={u.daily} field="newUsers" />
         <Bars title="每天活跃用户" data={u.daily} field="active" />
       </div>
+      <Questions internal={internal} />
       <p className="text-[11px] text-slate-500 leading-5">口径：登录服务不存用户表，「用户」是用邮箱验证码登录后访问过后台的人。逐日活跃从 {u.trackedSince ? new Date(u.trackedSince).toLocaleDateString() : '这一版上线'} 开始记录；更早的用户由充值、模型调用、服务广场记录补上（只知道他们哪天用过，留存只按逐日记录的人算）。游客浏览量看 Umami。</p>
     </div>;
   }
