@@ -9,9 +9,10 @@ import { Checkout } from './BillingPanel';
  * 用自己 API Key 的调用不碰钱包。金额、到账都以服务器为准，前端只负责选档位、拉起支付、刷新状态。
  */
 const yuan = (cents: number) => `¥${(cents / 100).toFixed(2)}`;
-const TX_LABEL: Record<string, string> = { topup: '充值', spend: '兑换模型额度', refund: '退回', escrow: '服务广场下单（担保冻结）', income: '接单收入' };
-const TX_ICON: Record<string, string> = { topup: '💳', spend: '🧠', refund: '↩️', escrow: '🔒', income: '💰' };
-const isOut = (type: string) => type === 'spend' || type === 'escrow';
+const TX_LABEL: Record<string, string> = { topup: '充值', spend: '兑换模型额度', refund: '退回', escrow: '服务广场下单（担保冻结）', income: '接单收入', allocate: '放进项目钱包', release: '从项目钱包收回' };
+const TX_ICON: Record<string, string> = { topup: '💳', spend: '🧠', refund: '↩️', escrow: '🔒', income: '💰', allocate: '➡️', release: '⬅️' };
+/** 站在「用户钱包」看：放进项目是出，收回是进 */
+const isOut = (type: string) => type === 'spend' || type === 'escrow' || type === 'allocate';
 
 export function useAIWallet() {
   const [catalog, setCatalog] = useState<BillingCatalog | null>(null);
@@ -27,7 +28,7 @@ export function useAIWallet() {
   return { catalog, account, error, reload: load };
 }
 
-const WalletTopup: React.FC<{ compact?: boolean }> = ({ compact }) => {
+const WalletTopup: React.FC<{ compact?: boolean; projectNames?: Record<string, string> }> = ({ compact, projectNames }) => {
   const { catalog, account, error, reload } = useAIWallet();
   const amounts = catalog?.topupAmounts?.length ? catalog.topupAmounts : (plans as any).topup?.amounts || [1000, 3000, 10000, 30000];
   const [amount, setAmount] = useState<number>(amounts[1] || amounts[0]);
@@ -40,6 +41,10 @@ const WalletTopup: React.FC<{ compact?: boolean }> = ({ compact }) => {
   useEffect(() => { if (catalog && !catalog.providers.find(p => p.id === provider)?.ready) setProvider(catalog.providers.find(p => p.ready)?.id || 'wechat'); }, [catalog]);
 
   const balance = account?.wallet?.balanceCents ?? 0;
+  const pots = Object.entries(account?.wallet?.projects || {});
+  const inPots = pots.reduce((n, [, v]) => n + v, 0);
+  // 用户钱包流水：自己的钱 + 和项目之间的划转（项目里花的、赚的在各项目钱包里看）
+  const myTx = (account?.wallet?.tx || []).filter(t => !t.projectId || t.type === 'allocate' || t.type === 'release');
   const ready = catalog?.providers.find(p => p.id === provider)?.ready;
   const blocked = platform() === 'ios' ? 'iOS 版暂不支持充值，请在网页版 www.hiexplore.com 充值'
     : !BILLING_API ? '当前是本地预览，充值请到正式网站登录后进行'
@@ -61,9 +66,10 @@ const WalletTopup: React.FC<{ compact?: boolean }> = ({ compact }) => {
     <section className="rounded-xl border border-emerald-700/50 bg-emerald-950/20 p-3 space-y-3" aria-label="AI 钱包">
       <div className="flex items-center gap-3 flex-wrap">
         <div>
-          <div className="text-[11px] text-slate-400">AI 钱包余额（所有项目共用）</div>
+          <div className="text-[11px] text-slate-400">用户钱包余额{pots.length ? '（还没分给项目的钱）' : '（所有项目共用）'}</div>
           <div className="text-2xl font-bold text-slate-100">{account ? yuan(balance) : '—'}</div>
         </div>
+        {pots.length > 0 && <div className="text-[11px] text-slate-400">另有 <b className="text-slate-200">{yuan(inPots)}</b> 在 {pots.length} 个项目钱包里</div>}
         {compact && <button onClick={() => setOpen(v => !v)} className="ml-auto px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[13px] font-bold">{open ? '收起' : '💳 充值'}</button>}
       </div>
       {open && (
@@ -89,14 +95,19 @@ const WalletTopup: React.FC<{ compact?: boolean }> = ({ compact }) => {
           <p className="text-[11px] text-slate-500 leading-5">钱怎么花：AI 在平台模型上干活，额度不够时按该模型的价格自动从余额兑换（每次至少 ¥1，用不完留着下次用）；在服务广场下单时，钱先由平台暂存，你验收后才付给对方。AI 接单赚的钱也进这里，只能在平台内花，暂不能提现。用自己 API Key 的调用不扣钱包。到账以服务器核验为准；需要退款请联系客服。</p>
         </div>
       )}
-      {!!account?.wallet?.tx.length && (
+      {pots.length > 0 && projectNames && (
+        <ul className="text-[12px] grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+          {pots.map(([id, v]) => <li key={id} className="flex items-center gap-2 rounded-lg bg-slate-900/70 border border-slate-800 px-2 py-1.5"><span className="truncate text-slate-300">📁 {projectNames[id] || '（已删除 / 别的设备上的项目）'}</span><span className="ml-auto font-mono text-slate-100">{yuan(v)}</span></li>)}
+        </ul>
+      )}
+      {!!myTx.length && (
         <details className="text-[12px]">
-          <summary className="cursor-pointer text-slate-400">钱包流水（{account.wallet.tx.length}）</summary>
+          <summary className="cursor-pointer text-slate-400">钱包流水（{myTx.length}）</summary>
           <ul className="mt-2 divide-y divide-slate-800">
-            {account.wallet.tx.map(t => (
+            {myTx.map(t => (
               <li key={t.id} className="flex items-center gap-2 py-1.5">
                 <span>{TX_ICON[t.type] || '·'}</span>
-                <div className="min-w-0 flex-1"><div className="text-slate-200 truncate">{t.note || TX_LABEL[t.type] || t.type}</div><div className="text-[11px] text-slate-500">{new Date(t.at).toLocaleString()} · 余额 {yuan(t.balanceAfter)}</div></div>
+                <div className="min-w-0 flex-1"><div className="text-slate-200 truncate">{t.note || TX_LABEL[t.type] || t.type}{t.projectId && projectNames?.[t.projectId] ? ` · ${projectNames[t.projectId]}` : ''}</div><div className="text-[11px] text-slate-500">{new Date(t.at).toLocaleString()}{t.projectId ? '' : ` · 余额 ${yuan(t.balanceAfter)}`}</div></div>
                 <span className={`font-mono ${isOut(t.type) ? 'text-slate-100' : 'text-emerald-300'}`}>{isOut(t.type) ? '-' : '+'}{yuan(t.cents)}</span>
               </li>
             ))}

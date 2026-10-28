@@ -26,8 +26,9 @@ async function fixture(t) {
   const market = bearer => (p, m, b) => raw(bearer, '/market' + p, m, b);
   const topup = async (who, amount) => { const o = await raw(who, '/billing/orders', 'POST', { sku: 'topup', amount, provider: 'alipay', requestId: randomUUID() }); await raw(who, `/billing/orders/${o.id}`, 'POST'); };
   const wallet = async who => (await raw(who, '/billing/account')).wallet.balanceCents;
+  const pots = async who => (await raw(who, '/billing/account')).wallet.projects || {};
   t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
-  return { raw, market, topup, wallet };
+  return { raw, market, topup, wallet, pots };
 }
 const project = (charter) => ({ id: `p-${randomUUID().slice(0, 8)}`, name: '续费率项目', metaProblem: '提高续费率', createdAt: 0, nodes: [], charter });
 const node = { id: 'n1', title: '找 5 位退费家长聊', status: 'validating', confidence: 0, dependencies: [], notes: '', hypothesis: { statement: '家长退费因为看不到作品', belief: 'medium', unknown: '电话访谈 5 位退费家长，问退费原因', evidence: [], updatedAt: 0 } };
@@ -84,7 +85,7 @@ test('接单赚钱：AI 只投自己做得了的，报价不超预算；中标�
   const d1 = await f.raw('other', '/market/demands', 'POST', { requestId: randomUUID(), title: '整理 10 家机构的续费做法', requirements: '公开资料对比表', acceptance: '对比表 + 建议', budgetCents: 1000, deadline: Date.now() + 7 * 864e5, confirmed: true });
   const p = project({ autoBuyCNY: 0, allowJobs: true, confirmedAt: 0 });
   const tok = await pm.ensurePmToken(p, f.market('user'));
-  assert.deepEqual(tok.permissions.sort(), ['demand_respond', 'order_execute'], '只接单、不花钱');
+  assert.deepEqual(tok.permissions.sort(), ['demand_respond', 'order_execute', 'service_publish'], '只接单（含挂用户确认过的简介）、不花钱');
   const llm = async msgs => {
     const all = msgs.map(m => m.content).join('\n');
     if (all.includes('可以在服务广场接单赚钱')) return JSON.stringify({ bids: [{ demandId: d1.id, proposal: '检索公开资料整理对比表', priceYuan: 8, deliveryDays: 2 }, { demandId: 'not-a-demand', proposal: 'x', priceYuan: 1, deliveryDays: 1 }, { demandId: d1.id, proposal: '超预算', priceYuan: 99, deliveryDays: 1 }] });
@@ -99,7 +100,7 @@ test('接单赚钱：AI 只投自己做得了的，报价不超预算；中标�
   const o = (await f.raw('other', '/market/state')).orders.find(x => x.demandId === d1.id);
   assert.equal(o.status, 'delivered'); assert.equal(o.delivery.source, ''); assert.match(o.delivery.summary, /对比表/); assert.match(o.delivery.limitation, /公开资料/);
   await f.raw('other', `/market/orders/${o.id}/action`, 'POST', { action: 'complete', revision: o.revision, note: 'ok' });
-  assert.equal(await f.wallet('user'), 800);
+  assert.equal((await f.pots('user'))[p.id], 800, '收入进这个项目的钱包'); assert.equal(await f.wallet('user'), 0);
   // 没授权花钱的 AI：不能买东西
   await assert.rejects(f.market(tok.token)('/demands', 'POST', { requestId: randomUUID(), title: 't', requirements: 'r', acceptance: 'a', budgetCents: 100, deadline: Date.now() + 864e5, confirmed: true }), e => e.status === 403);
 });

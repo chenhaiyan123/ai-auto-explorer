@@ -3,7 +3,7 @@ import type { Project } from '../types';
 import { marketRequest, money, orderLabel, type MarketRequest, type MarketState } from '../services/serviceMarket';
 import { walletSummary, serviceSpentThisMonth, fmtCNY, fmtTokens, charterRoom } from '../services/projectWallet';
 import { charterLabel } from '../services/projectBrief';
-import WalletTopup from './WalletTopup';
+import { ProjectFunds, PmProfileCard } from './ProjectFunds';
 import WalletModels from './WalletModels';
 import { readPmToken } from '../services/pmAgent';
 import { sharedRequest, SHARED_API, type SharedCatalog } from '../services/sharedModelsClient';
@@ -27,8 +27,12 @@ const ProjectWallet: React.FC<{
   onWorkJobs?: () => Promise<string>;
   /** 改 AI 用模型的策略（难的活换强模型、简单的活用便宜模型） */
   onModelPolicy?: (p: 'save' | 'balanced' | 'best') => void;
+  /** AI 项目经理简介：重写 / 确认发布（或撤下） */
+  profileBusy?: boolean;
+  onRefreshProfile?: () => Promise<string>;
+  onPublishProfile?: (on: boolean) => Promise<string>;
   request?: MarketRequest;
-}> = ({ project, onEditCharter, onOpenMarket, onToggleJobs, onWorkJobs, onModelPolicy, request = marketRequest }) => {
+}> = ({ project, onEditCharter, onOpenMarket, onToggleJobs, onWorkJobs, onModelPolicy, profileBusy, onRefreshProfile, onPublishProfile, request = marketRequest }) => {
   const [jobMsg, setJobMsg] = useState('');
   const [jobBusy, setJobBusy] = useState(false);
   const pm = readPmToken(project.id);
@@ -77,7 +81,8 @@ const ProjectWallet: React.FC<{
         <span className="text-[11px] text-slate-500">这个项目花了多少、花在哪、还能花多少</span>
       </div>
 
-      <WalletTopup compact />
+      <ProjectFunds project={project} />
+      <PmProfileCard project={project} busy={profileBusy} onRefresh={onRefreshProfile} onPublish={onPublishProfile} />
 
       <section className="rounded-xl border border-violet-700/40 bg-violet-950/20 p-3 space-y-2" aria-label="AI 项目经理在服务广场">
         <div className="text-[13px] font-semibold text-slate-200">🤖 AI 项目经理在服务广场</div>
@@ -85,7 +90,7 @@ const ProjectWallet: React.FC<{
           <li>· <b>买服务 / 发需求</b>：卡在 AI 做不了的事时，单笔不超过「花钱权限」就自己用钱包担保下单；没有现成服务就发布需求。超过的先问你。
             <span className="text-slate-500"> 现在：{project.charter?.autoBuyCNY ? `单笔 ≤ ¥${project.charter.autoBuyCNY}${project.charter.monthlyCNY ? `，每月 ≤ ¥${project.charter.monthlyCNY}` : ''}` : '花钱都先问你'}</span>
             <button onClick={onEditCharter} className="ml-1 text-blue-300 hover:underline">改</button></li>
-          <li>· <b>接单赚钱</b>：挑 AI 自己能做完的需求（调研、整理、写作），报价、交付，买方验收后钱进 AI 钱包（只能在平台内花，暂不能提现）。
+          <li>· <b>接单赚钱</b>：挑 AI 自己能做完的需求（调研、整理、写作），报价、交付，买方验收后钱进项目钱包（还没建项目钱包就进用户钱包；只能在平台内花，暂不能提现）。
             <div className="flex items-center gap-2 flex-wrap mt-1 pl-3">
             {onToggleJobs && <label className="inline-flex items-center gap-1.5 text-slate-200"><input type="checkbox" checked={!!project.charter?.allowJobs} onChange={e => onToggleJobs(e.target.checked)} />允许 AI 接单</label>}
             {project.charter?.allowJobs && onWorkJobs && <button disabled={jobBusy} onClick={async () => { setJobBusy(true); setJobMsg(''); try { setJobMsg(await onWorkJobs()); } catch (e) { setJobMsg(e instanceof Error ? e.message : String(e)); } finally { setJobBusy(false); } }} className="px-2 py-0.5 rounded-lg bg-violet-700 hover:bg-violet-600 text-white disabled:opacity-40">{jobBusy ? '正在看…' : '现在去接单看看'}</button>}

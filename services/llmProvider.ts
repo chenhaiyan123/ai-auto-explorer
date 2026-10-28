@@ -1,5 +1,5 @@
 import { routeModel, currentTask, type TaskLevel } from './modelRouter';
-import { reportModelUsage } from './projectWallet';
+import { reportModelUsage, currentMeterProject } from './projectWallet';
 /**
  * LLM Provider — 统一模型接入层
  *
@@ -161,7 +161,7 @@ async function callLLMRaw(
 ): Promise<LLMResult> {
   if (getLanguage() === 'en') messages = [{ role: 'system', content: 'Use English for user-facing prose and generated descriptions. Keep JSON schema keys, IDs, quotations and source evidence unchanged.' }, ...messages];
   const s = settings || loadLLMSettings();
-  if (s.provider === 'platform') return sharedRequest<LLMResult>('/shared/chat', 'POST', { modelId: s.model, requestId: crypto.randomUUID(), messages, maxTokens: options.maxTokens ?? 2048, jsonMode: options.jsonMode === true }, options.timeoutMs ?? 90000);
+  if (s.provider === 'platform') return sharedRequest<LLMResult>('/shared/chat', 'POST', { modelId: s.model, requestId: crypto.randomUUID(), ...(currentMeterProject() ? { projectId: currentMeterProject() } : {}), messages, maxTokens: options.maxTokens ?? 2048, jsonMode: options.jsonMode === true }, options.timeoutMs ?? 90000);
   if (!s.baseUrl) {
     throw new Error('尚未配置模型 API，请点击右上角 ⚙️ 设置模型接入');
   }

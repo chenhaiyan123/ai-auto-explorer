@@ -64,7 +64,7 @@ export class PlatformServices {
   }
 
   /** 扣钱 → 调用 → 失败退回。ref 幂等。 */
-  async charged(owner, kind, ref, note, run) {
+  async charged(owner, kind, ref, note, run, projectId) {
     const cents = await this.tx(s => {
       const c = this.prices(s)[kind] || 0;
       const today = day(Date.now());
@@ -73,7 +73,7 @@ export class PlatformServices {
       if (c) s.spend[owner] = { day: today, cents: used + c };
       return c;
     });
-    if (cents) await this.billing.spendWallet(owner, cents, `svc-${kind}-${ref}`, note);
+    if (cents) await this.billing.spendWallet(owner, cents, `svc-${kind}-${ref}`, note, projectId || undefined);
     try { return { ...(await run()), chargedCents: cents }; }
     catch (e) {
       if (cents) {
@@ -102,7 +102,7 @@ export class PlatformServices {
   async companySearch(owner, input) {
     const keyword = clean(input.keyword, 60);
     if (keyword.length < 2) throw fail('请给出至少两个字的企业名称或关键词');
-    return this.charged(owner, 'company_search', input.requestId || id(), `企业查询：${keyword}`, async () => ({ keyword, result: await this.tyc('search_companies', { searchKey: keyword, pageSize: 10 }) }));
+    return this.charged(owner, 'company_search', input.requestId || id(), `企业查询：${keyword}`, async () => ({ keyword, result: await this.tyc('search_companies', { searchKey: keyword, pageSize: 10 }) }), clean(input.projectId, 120));
   }
   async companyInfo(owner, input) {
     const name = clean(input.name, 80);
@@ -114,7 +114,7 @@ export class PlatformServices {
       const v = x => (x.status === 'fulfilled' ? x.value : null);
       if (registration.status === 'rejected') throw registration.reason;
       return { name, registration: v(registration), profile: v(profile), scale: v(scale), risk: v(risk) };
-    });
+    }, clean(input.projectId, 120));
   }
 
   // ===== 问卷星 =====
@@ -169,7 +169,7 @@ export class PlatformServices {
       const rec = { id: id(), owner, projectId, nodeId: clean(input.nodeId, 120) || null, vid, url, title, questions: questions.length, createdAt: Date.now(), lastCount: 0 };
       await this.tx(s => { s.surveys.push(rec); if (s.surveys.length > 20000) s.surveys = s.surveys.slice(-20000); });
       const { owner: _o, ...pub } = rec; return pub;
-    });
+    }, projectId);
   }
   /** 回收结果（不收费）：答卷数 + 统计报告原文（给 AI 总结） */
   async surveyResults(owner, sid) {

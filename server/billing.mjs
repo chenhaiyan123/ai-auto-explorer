@@ -20,11 +20,22 @@ const titleOf = (sku, amount) => sku === 'pro_month' ? 'HiExplore Pro 月度会�
 const amountOf = (sku, amount) => sku === 'pro_month' ? PLANS.pro.amount : sku === 'topup' ? amount : PLANS.export.amount;
 /** AI 钱包流水：充值 / 兑换模型额度（支出）/ 兑换失败退回 */
 const sumTx = (s, f) => (s.walletTx || []).filter(f).reduce((n, t) => n + t.cents, 0);
-const walletTxView = t => ({ id: t.id, type: t.type, cents: t.cents, balanceAfter: t.balanceAfter, note: t.note, at: t.at });
-const pushWalletTx = (s, owner, type, cents, ref, note, now) => {
+const walletTxView = t => ({ id: t.id, type: t.type, cents: t.cents, balanceAfter: t.balanceAfter, note: t.note, at: t.at, ...(t.projectId ? { projectId: t.projectId } : {}) });
+/**
+ * 项目钱包：用户把一部分钱放进某个项目，AI 在这个项目里花的钱从这里出、赚的钱进这里。
+ * 只有「建过项目钱包」的项目才走项目钱包；没建过的项目照旧用用户钱包。
+ */
+const projectIdOk = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,120}$/.test(id);
+const hasPot = (a, projectId) => !!projectId && a.projects && Object.prototype.hasOwnProperty.call(a.projects, projectId);
+const balanceOf = (a, projectId) => (hasPot(a, projectId) ? a.projects[projectId] : a.walletCents);
+const pushWalletTx = (s, owner, type, cents, ref, note, now, projectId) => {
   const a = account(s, owner);
-  a.walletCents += type === 'spend' || type === 'escrow' ? -cents : cents;
-  const tx = { id: `${type}:${ref}`, owner, type, cents, ref, note, balanceAfter: a.walletCents, at: now };
+  // 某个项目的 AI 接单赚的钱：这个项目还没有钱包就顺手建一个，钱记在它名下
+  if (type === 'income' && projectIdOk(projectId) && !hasPot(a, projectId)) (a.projects ||= {})[projectId] = 0;
+  const pot = hasPot(a, projectId) ? projectId : null;
+  const delta = type === 'spend' || type === 'escrow' ? -cents : cents;
+  if (pot) a.projects[pot] += delta; else a.walletCents += delta;
+  const tx = { id: `${type}:${ref}`, owner, type, cents, ref, note, balanceAfter: pot ? a.projects[pot] : a.walletCents, at: now, ...(pot ? { projectId: pot } : {}) };
   (s.walletTx ||= []).push(tx);
   if (s.walletTx.length > 50000) s.walletTx = s.walletTx.slice(-50000);
   return tx;
@@ -61,58 +72,83 @@ export class Billing {
   }
   async view(owner) {
     return this.transaction(s => ({ ...entitlement(s, owner, this.now()), purchaseAllowed: this.canPurchase(owner), orders: s.orders.filter(o => o.owner === owner).slice(-30).reverse().map(orderView),
-      wallet: { balanceCents: account(s, owner).walletCents, tx: (s.walletTx || []).filter(t => t.owner === owner).slice(-50).reverse().map(walletTxView) },
+      wallet: { balanceCents: account(s, owner).walletCents, projects: { ...(account(s, owner).projects || {}) }, tx: (s.walletTx || []).filter(t => t.owner === owner).slice(-80).reverse().map(walletTxView) },
       artifacts: s.artifacts.filter(a => a.owner === owner).map(a => ({ id: a.id, title: a.report.title, createdAt: a.createdAt, unlocked: account(s, owner).unlocked.includes(a.id) })) }));
   }
   async adminView() {
     return this.transaction(s => ({ catalog: this.catalog(), orders: s.orders.slice(-100).reverse().map(o => ({ ...orderView(o), owner: o.owner, transactionId: o.transactionId })),
       totals: { orders: s.orders.length, paid: s.orders.filter(o => o.status === 'paid').length, paidAmount: s.orders.filter(o => o.status === 'paid').reduce((n, o) => n + o.amount, 0),
-        walletBalance: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0), 0), walletSpent: sumTx(s, t => t.type === 'spend') - sumTx(s, t => t.id.startsWith('refund:')),
+        walletBalance: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0) + Object.values(a.projects || {}).reduce((m, v) => m + v, 0), 0), walletSpent: sumTx(s, t => t.type === 'spend') - sumTx(s, t => t.id.startsWith('refund:')),
         walletEscrow: sumTx(s, t => t.type === 'escrow') - sumTx(s, t => t.id.startsWith('escrowback:')) - (s.walletTx || []).filter(t => t.id.startsWith('income:')).reduce((n, t) => n + ((s.walletTx || []).find(e => e.id === `escrow:${t.ref}`)?.cents || 0), 0) } }));
   }
   /** 运营数据用：原始订单和钱包流水（只读） */
   async raw() {
     return this.transaction(s => ({ orders: s.orders.map(o => ({ owner: o.owner, sku: o.sku, amount: o.amount, status: o.status, provider: o.provider, createdAt: o.createdAt, paidAt: o.paidAt })),
       walletTx: (s.walletTx || []).map(t => ({ id: t.id, owner: t.owner, type: t.type, cents: t.cents, ref: t.ref, at: t.at })),
-      walletBalanceCents: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0), 0) }));
+      walletBalanceCents: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0) + Object.values(a.projects || {}).reduce((m, v) => m + v, 0), 0) }));
   }
   /** 当前 AI 钱包余额（分） */
-  async walletBalance(owner) {
-    return this.transaction(s => account(s, owner).walletCents);
+  async walletBalance(owner, projectId) {
+    return this.transaction(s => balanceOf(account(s, owner), projectId));
+  }
+  /**
+   * 用户钱包 ⇄ 项目钱包划转（幂等，requestId 防重）。direction: 'in' 放进项目，'out' 收回用户钱包。
+   * 第一次放钱就等于给这个项目建了钱包；之后这个项目的花销都从项目钱包出。
+   */
+  async transferProject(owner, projectId, cents, direction, requestId, note = '') {
+    if (!projectIdOk(projectId)) throw fail('项目编号无效');
+    if (!Number.isSafeInteger(cents) || cents <= 0 || cents > 1e8) throw fail('金额无效');
+    if (!['in', 'out'].includes(direction) || !/^[a-zA-Z0-9_-]{8,100}$/.test(requestId || '')) throw fail('划转参数无效');
+    return this.transaction(s => {
+      const id = `${direction === 'in' ? 'allocate' : 'release'}:${requestId}`;
+      const done = (s.walletTx || []).find(t => t.id === id);
+      if (done) { if (done.owner !== owner || done.cents !== cents || done.projectId !== projectId) throw fail('划转编号已用于其他划转', 409); return walletTxView(done); }
+      const a = account(s, owner); a.projects ||= {};
+      if (direction === 'in') {
+        if (a.walletCents < cents) throw Object.assign(fail(`用户钱包余额不足：还剩 ¥${(a.walletCents / 100).toFixed(2)}，请先充值`, 402), { code: 'WALLET_EMPTY' });
+        a.walletCents -= cents; a.projects[projectId] = (a.projects[projectId] || 0) + cents;
+      } else {
+        if ((a.projects[projectId] || 0) < cents) throw fail(`项目钱包只剩 ¥${((a.projects[projectId] || 0) / 100).toFixed(2)}`, 402);
+        a.projects[projectId] -= cents; a.walletCents += cents;
+      }
+      const tx = { id, owner, type: direction === 'in' ? 'allocate' : 'release', cents, ref: requestId, note: String(note || (direction === 'in' ? '放进项目钱包' : '从项目钱包收回')).slice(0, 200), balanceAfter: a.projects[projectId], at: this.now(), projectId };
+      (s.walletTx ||= []).push(tx);
+      return walletTxView(tx);
+    });
   }
   /**
    * 从 AI 钱包扣钱（兑换模型额度时用）。ref 幂等：同一个 ref 只扣一次。
    * 余额不够直接拒绝，绝不透支。
    */
-  async spendWallet(owner, cents, ref, note) {
+  async spendWallet(owner, cents, ref, note, projectId) {
     if (!Number.isSafeInteger(cents) || cents <= 0 || cents > 1e8 || !/^[a-zA-Z0-9:_-]{8,120}$/.test(ref || '')) throw fail('钱包扣款参数无效');
     return this.transaction(s => {
       const done = (s.walletTx || []).find(t => t.id === `spend:${ref}`);
       if (done) { if (done.owner !== owner || done.cents !== cents) throw fail('扣款标识已用于其他扣款', 409); return walletTxView(done); }
-      const a = account(s, owner);
-      if (a.walletCents < cents) throw Object.assign(fail(`AI 钱包余额不足：还剩 ¥${(a.walletCents / 100).toFixed(2)}，这次需要 ¥${(cents / 100).toFixed(2)}。请先充值`, 402), { code: 'WALLET_EMPTY' });
-      return walletTxView(pushWalletTx(s, owner, 'spend', cents, ref, String(note || '').slice(0, 200), this.now()));
+      const a = account(s, owner), bal = balanceOf(a, projectId), inPot = hasPot(a, projectId);
+      if (bal < cents) throw Object.assign(fail(`${inPot ? '项目钱包' : 'AI 钱包'}余额不足：还剩 ¥${(bal / 100).toFixed(2)}，这次需要 ¥${(cents / 100).toFixed(2)}。${inPot ? '往项目钱包里放点钱' : '请先充值'}`, 402), { code: 'WALLET_EMPTY' });
+      return walletTxView(pushWalletTx(s, owner, 'spend', cents, ref, String(note || '').slice(0, 200), this.now(), projectId));
     });
   }
   /**
    * 服务广场用钱包付款：下单时先从买方钱包扣出、冻结在平台（escrow）。ref = 订单号，幂等。
    * 余额不够直接拒绝。
    */
-  async holdEscrow(owner, cents, ref, note) {
+  async holdEscrow(owner, cents, ref, note, projectId) {
     if (!Number.isSafeInteger(cents) || cents <= 0 || cents > 1e8 || !/^[a-zA-Z0-9:_-]{8,120}$/.test(ref || '')) throw fail('担保付款参数无效');
     return this.transaction(s => {
       const done = (s.walletTx || []).find(t => t.id === `escrow:${ref}`);
       if (done) { if (done.owner !== owner || done.cents !== cents) throw fail('订单担保金额不一致', 409); return walletTxView(done); }
-      const a = account(s, owner);
-      if (a.walletCents < cents) throw Object.assign(fail(`AI 钱包余额不足：还剩 ¥${(a.walletCents / 100).toFixed(2)}，这单需要 ¥${(cents / 100).toFixed(2)}。请先充值`, 402), { code: 'WALLET_EMPTY' });
-      return walletTxView(pushWalletTx(s, owner, 'escrow', cents, ref, String(note || '').slice(0, 200), this.now()));
+      const a = account(s, owner), bal = balanceOf(a, projectId), inPot = hasPot(a, projectId);
+      if (bal < cents) throw Object.assign(fail(`${inPot ? '项目钱包' : 'AI 钱包'}余额不足：还剩 ¥${(bal / 100).toFixed(2)}，这单需要 ¥${(cents / 100).toFixed(2)}。${inPot ? '往项目钱包里放点钱' : '请先充值'}`, 402), { code: 'WALLET_EMPTY' });
+      return walletTxView(pushWalletTx(s, owner, 'escrow', cents, ref, String(note || '').slice(0, 200), this.now(), projectId));
     });
   }
   /**
    * 担保款结算（幂等）：验收完成 → 打给卖方钱包（收入只能在平台内花，不能提现）；取消 / 拒绝 → 退回买方。
    * 没有担保过的订单什么都不做。平台抽成 MARKET_FEE_BPS（万分比，默认 0）。
    */
-  async settleEscrow(ref, outcome, seller) {
+  async settleEscrow(ref, outcome, seller, sellerProjectId) {
     return this.transaction(s => {
       const held = (s.walletTx || []).find(t => t.id === `escrow:${ref}`);
       if (!held) return null;
@@ -121,11 +157,12 @@ export class Billing {
         if (!seller) throw fail('缺少收款方');
         const bps = Math.min(5000, Math.max(0, Number(this.env.MARKET_FEE_BPS || 0) | 0));
         const fee = Math.floor(held.cents * bps / 10000);
-        const tx = pushWalletTx(s, seller, 'income', held.cents - fee, ref, `接单收入${fee ? `（平台服务费 ¥${(fee / 100).toFixed(2)}）` : ''}`, this.now());
+        // 卖方是某个项目的 AI 接的单：收入进那个项目的钱包（项目没建钱包就进用户钱包）
+        const tx = pushWalletTx(s, seller, 'income', held.cents - fee, ref, `接单收入${fee ? `（平台服务费 ¥${(fee / 100).toFixed(2)}）` : ''}`, this.now(), sellerProjectId);
         tx.id = `income:${ref}`;
         return walletTxView(tx);
       }
-      const tx = pushWalletTx(s, held.owner, 'refund', held.cents, ref, '订单取消 / 被拒，担保款退回', this.now());
+      const tx = pushWalletTx(s, held.owner, 'refund', held.cents, ref, '订单取消 / 被拒，担保款退回', this.now(), held.projectId);
       tx.id = `escrowback:${ref}`;
       return walletTxView(tx);
     });
@@ -135,7 +172,7 @@ export class Billing {
     return this.transaction(s => {
       const spent = (s.walletTx || []).find(t => t.id === `spend:${ref}` && t.owner === owner);
       if (!spent || (s.walletTx || []).some(t => t.id === `refund:${ref}`)) return null;
-      return walletTxView(pushWalletTx(s, owner, 'refund', spent.cents, ref, note, this.now()));
+      return walletTxView(pushWalletTx(s, owner, 'refund', spent.cents, ref, note, this.now(), spent.projectId));
     });
   }
   async saveArtifact(owner, body) {

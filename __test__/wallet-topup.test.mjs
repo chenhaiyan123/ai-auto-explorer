@@ -197,7 +197,10 @@ test('发布需求 → 别人（或 AI）接单报价 → 选中时钱包担保 
   assert.equal(o.settlement.method, 'wallet');
   o = (await m.act(o, sellerAgent, deliver)).body;
   o = (await m.act(o, 'user', { action: 'complete', note: '收到' })).body;
-  assert.equal((await m.wallet('other')).balanceCents, 1500, '接单方（其 AI）赚到的钱进了它主人的钱包');
+  const sw = await m.wallet('other');
+  assert.equal(sw.projects.q, 1500, '接单方的 AI 赚到的钱进了它所在项目的钱包（属于它主人，可收回用户钱包）');
+  assert.equal((await f.req('/billing/project-transfer', 'POST', { projectId: 'q', cents: 1500, direction: 'out', requestId: randomUUID() }, 'other')).status, 200);
+  assert.equal((await m.wallet('other')).balanceCents, 1500);
 });
 
 test('手动把钱包余额充成某个模型的 API 额度', async t => {
@@ -212,4 +215,68 @@ test('手动把钱包余额充成某个模型的 API 额度', async t => {
   assert.equal((await f.req('/billing/account')).body.wallet.balanceCents, 500, '同一请求只扣一次');
   assert.equal((await f.req('/shared/catalog')).body.balances.economy.granted, 2_500_000);
   assert.equal((await f.req('/shared/wallet-convert', 'POST', { modelId: model.id, cents: 50, requestId: randomUUID() })).status, 400, '至少 ¥1');
+});
+
+test('项目钱包：用户钱包 ⇄ 项目钱包划转（幂等、不透支）；有项目钱包的项目花钱从项目钱包出', async t => {
+  const f = await fixture(t);
+  await topup(f, 1000);
+  const move = (projectId, cents, direction, requestId = randomUUID(), token = 'user') => f.req('/billing/project-transfer', 'POST', { projectId, cents, direction, requestId }, token);
+  assert.equal((await move('p1', 2000, 'in')).status, 402, '用户钱包不够不能放');
+  assert.equal((await move('p1', 300, 'out')).status, 402, '项目钱包没钱不能收回');
+  assert.equal((await move('../x', 100, 'in')).status, 400);
+  const rid = randomUUID();
+  assert.equal((await move('p1', 400, 'in', rid)).status, 200);
+  assert.equal((await move('p1', 400, 'in', rid)).status, 200, '同一笔重复提交');
+  assert.equal((await move('p1', 500, 'in', rid)).status, 409, '编号被别的金额占用');
+  let w = (await f.req('/billing/account')).body.wallet;
+  assert.equal(w.balanceCents, 600); assert.deepEqual(w.projects, { p1: 400 });
+  // 平台模型：带着项目编号调用 → 从项目钱包兑换；没项目钱包的项目照旧用用户钱包
+  assert.equal((await f.req('/admin/shared/models', 'PUT', { ...model, priceCentsPerM: 200 }, 'admin')).status, 200);
+  const r = await f.req('/shared/chat', 'POST', { ...chat(), projectId: 'p1' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  w = (await f.req('/billing/account')).body.wallet;
+  assert.equal(w.projects.p1, 300); assert.equal(w.balanceCents, 600);
+  assert.equal(w.tx[0].projectId, 'p1'); assert.equal(w.tx[0].type, 'spend');
+  // 收回
+  assert.equal((await move('p1', 300, 'out')).status, 200);
+  w = (await f.req('/billing/account')).body.wallet;
+  assert.equal(w.balanceCents, 900); assert.equal(w.projects.p1, 0);
+  // 项目钱包空了：这个项目的 AI 不能再动用户钱包（要人再放钱）
+  await f.req('/admin/shared/models', 'PUT', { ...model, priceCentsPerM: 200, dailyTokens: 1000000, id: 'economy2' }, 'admin');
+  const empty = await f.req('/shared/chat', 'POST', { ...chat(), modelId: 'economy2', projectId: 'p1' });
+  assert.equal(empty.status, 402); assert.match(empty.body.error, /项目钱包/);
+  assert.equal((await f.req('/billing/account')).body.wallet.balanceCents, 900);
+  // 别人看不到、动不了我的项目钱包
+  assert.deepEqual((await f.req('/billing/account', 'GET', undefined, 'other')).body.wallet.projects, {});
+});
+
+test('项目钱包：AI 下单从买方项目钱包担保、退款退回项目钱包；接单收入进卖方 AI 所在项目的钱包', async t => {
+  const f = await fixture(t); const m = await market(f);
+  await topup(f, 3000);
+  await f.req('/billing/project-transfer', 'POST', { projectId: 'buy', cents: 1500, direction: 'in', requestId: randomUUID() });
+  const pm = (await f.req('/market/tokens', 'POST', { name: 'AI 项目经理', context: { projectId: 'buy', branchId: 'main', scopeId: 'root' }, permissions: ['order_commit'], maxOrderCents: 1000, totalBudgetCents: 3000 })).body.token;
+  let o = await m.order(pm);
+  let r = await m.act(o, pm, { action: 'confirm', confirmed: true, pay: 'wallet', contact: 'c' });
+  assert.equal(r.status, 200, JSON.stringify(r.body)); o = r.body;
+  let w = await m.wallet('user');
+  assert.equal(w.projects.buy, 500, '从项目钱包冻结 ¥10'); assert.equal(w.balanceCents, 1500, '用户钱包没动');
+  // 卖方拒单 → 退回项目钱包
+  o = (await m.act(o, 'other', { action: 'reject', note: '排不开' })).body;
+  await f.req('/market/state');
+  w = await m.wallet('user');
+  assert.equal(w.projects.buy, 1500); assert.equal(w.balanceCents, 1500);
+
+  // 卖方：别人的 AI（项目 sell）挂服务 → 收入进它的项目钱包
+  const sellerPm = (await f.req('/market/tokens', 'POST', { name: '卖方 AI', context: { projectId: 'sell', branchId: 'main', scopeId: 'root' }, permissions: ['service_publish', 'order_execute', 'demand_respond'], maxOrderCents: 0, totalBudgetCents: 0 }, 'other')).body.token;
+  const svc = (await f.req('/market/services', 'PUT', { ...listing, title: 'AI 调研 · 宠物食品', revision: 0 }, sellerPm));
+  assert.equal(svc.status, 200, JSON.stringify(svc.body));
+  o = (await f.req('/market/requests', 'POST', { requestId: randomUUID(), serviceId: svc.body.id, revision: svc.body.revision, quantity: 1, requirements: '调研', acceptance: '报告' })).body;
+  o = (await m.act(o, 'user', { action: 'confirm', confirmed: true, pay: 'wallet', contact: 'c' })).body;
+  o = (await m.act(o, sellerPm, { action: 'accept' })).body;
+  o = (await m.act(o, sellerPm, deliver)).body;
+  o = (await m.act(o, 'user', { action: 'complete', note: 'ok' })).body;
+  await f.req('/market/state');
+  const sw = await m.wallet('other');
+  assert.equal(sw.projects.sell, 1000, '收入进卖方 AI 所在项目的钱包（自动建）'); assert.equal(sw.balanceCents, 0);
+  assert.equal(sw.tx[0].type, 'income'); assert.equal(sw.tx[0].projectId, 'sell');
 });

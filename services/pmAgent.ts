@@ -28,7 +28,8 @@ export function pmGrant(c: ProjectCharter | undefined) {
   const totalBudgetCents = maxOrderCents ? Math.round((c?.monthlyCNY || (c?.autoBuyCNY || 0) * 10) * 100) : 0;
   const permissions = [
     ...(maxOrderCents > 0 ? ['order_commit', 'demand_publish'] : []),
-    ...(c?.allowJobs ? ['demand_respond', 'order_execute'] : []),
+    // 允许接单：投别人的需求、交付，以及把用户确认过的「AI 项目经理简介」挂成服务
+    ...(c?.allowJobs ? ['demand_respond', 'order_execute', 'service_publish'] : []),
   ];
   return { maxOrderCents, totalBudgetCents, permissions };
 }
@@ -124,6 +125,12 @@ ${open.map((d, i) => `${i + 1}. [${d.id}] ${d.title}（预算 ¥${(d.budgetCents
 
 /** 被选中的单：AI 自己做完，交付（摘要里就是交付内容），等买方验收 */
 export async function pmDeliver(state: MarketState, llm: LLM, as: MarketRequest): Promise<{ title: string; priceCents: number }[]> {
+  // 别人在「AI 项目经理简介」挂的服务上下了单：先接下来（服务是用户确认后才挂出去的）
+  let took = 0;
+  for (const o of state.orders.filter(o => o.side === 'seller' && o.status === 'requested').slice(0, 3)) {
+    try { await as(`/orders/${o.id}/action`, 'POST', { revision: o.revision, action: 'accept' }); took++; } catch { /* 状态变了：下一轮再看 */ }
+  }
+  if (took) state = await as<MarketState>('/state');
   const todo = state.orders.filter(o => o.side === 'seller' && o.status === 'accepted');
   const done: { title: string; priceCents: number }[] = [];
   for (const o of todo.slice(0, 2)) {

@@ -139,14 +139,14 @@ export class ServiceMarket {
   peekOrder(actor, id) {
     return this.tx(s => {
       const o = s.orders.find(o => o.id === id && o.buyer === actor.owner);
-      return o ? { id: o.id, totalCents: o.totalCents, status: o.status, title: o.quote.title } : null;
+      return o ? { id: o.id, totalCents: o.totalCents, status: o.status, title: o.quote.title, projectId: o.context?.projectId || (o.tokenId ? s.tokens.find(t => t.id === o.tokenId)?.context?.projectId : null) || null } : null;
     });
   }
   peekBid(actor, demandId, bidId) {
     return this.tx(s => {
       const d = s.demands.find(d => d.id === demandId && d.owner === actor.owner);
       const b = d?.bids.find(b => b.id === bidId);
-      return d && b ? { priceCents: b.priceCents, title: d.title, status: d.status } : null;
+      return d && b ? { priceCents: b.priceCents, title: d.title, status: d.status, projectId: d.context?.projectId || null } : null;
     });
   }
   /**
@@ -164,7 +164,8 @@ export class ServiceMarket {
         }
       }
       return { changed, due: s.orders.filter(o => o.settlement?.method === 'wallet' && !o.settlement.escrowSettled && ['completed', 'cancelled', 'rejected'].includes(o.status))
-        .map(o => ({ id: o.id, ref: o.settlement.escrowRef, outcome: o.status === 'completed' ? 'release' : 'refund', seller: o.seller })) };
+        .map(o => ({ id: o.id, ref: o.settlement.escrowRef, outcome: o.status === 'completed' ? 'release' : 'refund', seller: o.seller,
+          sellerProjectId: (o.sellerTokenId ? s.tokens.find(t => t.id === o.sellerTokenId)?.context?.projectId : null) || null })) };
     }, true);
   }
   /** 这笔担保款有没有挂到某个订单上（下单失败要退款前先确认，防止并发重试把成功订单的钱退掉） */

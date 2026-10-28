@@ -49,7 +49,7 @@ const AutonomyModal: React.FC<{
           <div className="flex gap-2 flex-wrap" role="radiogroup" aria-label="启动资金">
             {opts.map(v => <button key={v} role="radio" aria-checked={budget === v} onClick={() => setBudget(v)} className={chip(budget === v)}>¥{v}{v === suggested ? ' · 建议' : ''}</button>)}
           </div>
-          <p className="text-[11px] text-slate-500 leading-5">这是我自主运行的花钱上限（模型 + 找人做事加起来）。花到这个数我就停下来等你，不会多花一分。钱从 AI 钱包里出：</p>
+          <p className="text-[11px] text-slate-500 leading-5">这是我自主运行的花钱上限（模型 + 找人做事加起来）。花到这个数我就停下来等你，不会多花一分。点允许后，这笔钱从你的用户钱包放进这个项目的「项目钱包」，我在项目里花钱、接单赚钱都走它，用不完随时能收回：</p>
           <WalletTopup compact />
         </section>
 

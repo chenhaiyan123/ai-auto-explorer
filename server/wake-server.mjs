@@ -137,7 +137,7 @@ export async function createWakeServer(options = {}) {
    * 换成这个模型的 Token 再调用。没定价的模型、余额不够的情况都不扣，交给原来的额度检查报错。
    * 先扣钱、再加额度；加额度失败就把钱退回去。
    */
-  const autoFund = async (owner, body) => {
+  const autoFund = async (owner, body, projectId) => {
     const gap = await shared.fundingGap(owner, body);
     if (!gap || gap.need <= 0) return;
     const minCents = PLANS_TOPUP_MIN;
@@ -145,12 +145,12 @@ export async function createWakeServer(options = {}) {
     const tokens = Math.floor(cents * 1e6 / gap.priceCentsPerM);
     const ref = `conv-${randomUUID()}`;
     let balance;
-    try { await billing.spendWallet(owner, cents, ref, `兑换「${gap.label}」${tokens.toLocaleString()} Token`); }
-    catch (e) { if (e.code === 'WALLET_EMPTY') { balance = await billing.walletBalance(owner); if (balance > 0) throw e; } return; }
+    try { await billing.spendWallet(owner, cents, ref, `兑换「${gap.label}」${tokens.toLocaleString()} Token`, projectId); }
+    catch (e) { if (e.code === 'WALLET_EMPTY') { balance = await billing.walletBalance(owner, projectId); if (balance > 0 || /项目钱包/.test(e.message)) throw e; } return; }
     try { await shared.creditFromWallet(owner, gap.modelId, tokens, ref, cents); }
     catch (e) { await billing.refundWallet(owner, ref); throw e; }
   };
-  const invokeShared = async (owner, body, scope) => { await autoFund(owner, body); return shared.invoke(owner, body, scope); };
+  const invokeShared = async (owner, body, scope) => { await autoFund(owner, body, scope?.projectId || (typeof body.projectId === 'string' ? body.projectId.slice(0, 120) : undefined)); const { projectId: _p, ...clean } = body; return shared.invoke(owner, clean, scope); };
   const market = new ServiceMarket(storage);
   /** 谁、哪天来过（运营数据：用户数、活跃、留存） */
   const registry = new UserRegistry(storage);
@@ -170,7 +170,7 @@ export async function createWakeServer(options = {}) {
   const syncEscrow = async () => {
     const { due } = await market.escrowDue();
     for (const d of due) {
-      try { await billing.settleEscrow(d.ref, d.outcome, d.seller); await market.markEscrowSettled(d.id); }
+      try { await billing.settleEscrow(d.ref, d.outcome, d.seller, d.sellerProjectId); await market.markEscrowSettled(d.id); }
       catch (e) { console.error('escrow settle deferred', d.id, e.message); }
     }
   };
@@ -371,7 +371,7 @@ export async function createWakeServer(options = {}) {
             if (!bid) throw Object.assign(new Error('方案不存在'), { status: 404 });
             if (bid.status !== 'open') throw Object.assign(new Error('需求已变化，请刷新'), { status: 409 });
             const ref = `award-${demand[1]}`;
-            if (bid.priceCents > 0) await billing.holdEscrow(actor.owner, bid.priceCents, ref, `担保付款：${bid.title}`);
+            if (bid.priceCents > 0) await billing.holdEscrow(actor.owner, bid.priceCents, ref, `担保付款：${bid.title}`, bid.projectId || actor.context?.projectId);
             try { send(200, await market.demandAction(actor, demand[1], body, bid.priceCents > 0 ? { escrowRef: ref } : {})); }
             catch (e) { if (bid.priceCents > 0 && !await market.hasEscrow(ref)) await billing.settleEscrow(ref, 'refund'); throw e; }
             return;
@@ -386,7 +386,7 @@ export async function createWakeServer(options = {}) {
             const peek = await market.peekOrder(actor, action[1]);
             if (!peek) throw Object.assign(new Error('订单不存在'), { status: 404 });
             if (peek.status !== 'proposed') throw Object.assign(new Error('当前订单状态不能付款'), { status: 409 });
-            if (peek.totalCents > 0) await billing.holdEscrow(actor.owner, peek.totalCents, peek.id, `担保付款：${peek.title}`);
+            if (peek.totalCents > 0) await billing.holdEscrow(actor.owner, peek.totalCents, peek.id, `担保付款：${peek.title}`, peek.projectId || actor.context?.projectId);
             try { send(200, await market.action(actor, action[1], body, peek.totalCents > 0 ? { escrowRef: peek.id } : {})); }
             catch (e) { if (peek.totalCents > 0 && !await market.hasEscrow(peek.id)) await billing.settleEscrow(peek.id, 'refund'); throw e; }
             return;
@@ -445,6 +445,8 @@ export async function createWakeServer(options = {}) {
         if (req.method === 'GET' && url.pathname === '/billing/account') { send(200, await billing.view(owner)); return; }
         const orderMatch = url.pathname.match(/^\/billing\/orders\/(HE[a-f0-9]{30})$/);
         if (orderMatch && ['GET', 'POST'].includes(req.method)) { send(200, await billing.getOrder(owner, orderMatch[1], req.method === 'POST')); return; }
+        // 用户钱包 ⇄ 项目钱包
+        if (req.method === 'POST' && url.pathname === '/billing/project-transfer') { const b = await readBody(req); send(200, await billing.transferProject(owner, b.projectId, b.cents, b.direction, b.requestId, b.note)); return; }
         if (req.method === 'POST' && url.pathname === '/billing/orders') { send(200, await billing.createOrder(owner, await readBody(req))); return; }
         if (req.method === 'POST' && url.pathname === '/billing/artifacts') { send(200, await billing.saveArtifact(owner, await readBody(req))); return; }
         const artifactMatch = url.pathname.match(/^\/billing\/artifacts\/([a-f0-9]{64})\/download$/);

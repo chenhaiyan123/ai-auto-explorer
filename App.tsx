@@ -21,8 +21,11 @@ import { keyInfoContext, questionsFromBrief, addPending, nextPending, pendingCou
 import KeyInfoPanel from './components/KeyInfoPanel';
 import ProjectWallet from './components/ProjectWallet';
 import { ensurePmToken, pmBuyOrPost, pmWorkJobs } from './services/pmAgent';
+import { marketRequestAs } from './services/serviceMarket';
 import { money } from './services/serviceMarket';
-import { onModelUsage, meterFor, addModelSpend, reportModelUsage } from './services/projectWallet';
+import { onModelUsage, meterFor, addModelSpend, reportModelUsage, setDefaultMeterProject } from './services/projectWallet';
+import { transferProject } from './services/billingClient';
+import { profileDue, buildProfileMessages, parseProfile, solvedCount, profileSkills, profileToListing, type PmProfileState } from './services/pmProfile';
 import { briefMarkdown, charterFromText, charterLabel } from './services/projectBrief';
 import { pushFeed, answerFeed, closeAsks, openAsks, status as feedStatus, stepAsk, branchAsk, contradictedAsk, realityAsk, anchorAsk, unattendedAsk, haltedAsk, outlineAsk } from './services/agentFeed';
 import { DecisionRecordModal, DecisionTimelineModal, DecisionDraft } from './components/DecisionCenter';
@@ -1066,6 +1069,7 @@ const App: React.FC = () => {
   const realityRef = useRef<((node: ProblemNode, force?: RealityKind) => void) | null>(null);
   useEffect(() => { feedProjectRef.current = currentProjectId; }, [currentProjectId]);
   // 项目钱包：每次模型调用都记到对应项目的账上（后台醒来看一眼的记到被叫醒的那个项目）
+  useEffect(() => { setDefaultMeterProject(() => feedProjectRef.current || null); }, []);
   useEffect(() => onModelUsage((u, pid) => {
     const id = pid || feedProjectRef.current;
     if (!id) return;
@@ -2233,12 +2237,61 @@ ${plan.lead.duty}
     const pm = await syncPm(pid);
     if (!pm) return '需要先登录正式网站，AI 才能进服务广场';
     const llm = async (messages: { role: string; content: string }[], json?: boolean, task?: TaskLevel) => (await meterFor(pid, () => callLLM(messages, { jsonMode: !!json, maxTokens: 3000, timeoutMs: 120000, task }))).content;
-    const r = await pmWorkJobs(pm, llm, `${proj.name}：${(proj.metaProblem || '').slice(0, 200)}`);
-    for (const d of r.delivered) pushFeedItem(feedStatus(`📦 AI 项目经理交付了接的单「${d.title}」（${money(d.priceCents)}），等对方验收后钱进 AI 钱包`, { tone: 'good' }), pid);
+    const r = await pmWorkJobs(pm, llm, profileSkills(proj));
+    for (const d of r.delivered) pushFeedItem(feedStatus(`📦 AI 项目经理交付了接的单「${d.title}」（${money(d.priceCents)}），等对方验收后钱进${proj.pmProfile ? '项目钱包' : ' AI 钱包'}`, { tone: 'good' }), pid);
     for (const b of r.bids) pushFeedItem(feedStatus(`🙋 AI 项目经理在服务广场投了一个单，报价 ${money(b.priceCents)}，${b.deliveryDays} 天交付`, { detail: b.proposal }), pid);
     try { localStorage.setItem(`hx-pm-jobs:${pid}`, String(Date.now())); } catch { /* ignore */ }
     return r.delivered.length || r.bids.length ? `交付 ${r.delivered.length} 单，新投 ${r.bids.length} 单` : '这次没有合适的单（AI 只接自己能独立做完的调研 / 写作类需求）';
   }, [syncPm, pushFeedItem]);
+  // ===== AI 项目经理简介：AI 自己起草 / 更新，用户确认后挂到服务广场 =====
+  const [profileBusy, setProfileBusy] = useState(false);
+  const profileBusyRef = useRef(false);
+  const patchProfile = useCallback((pid: string, fn: (st: PmProfileState | undefined) => PmProfileState) => {
+    projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, pmProfile: fn(p.pmProfile) } : p));
+    setProjects(prev => prev.map(p => (p.id === pid ? { ...p, pmProfile: fn(p.pmProfile) } : p)));
+  }, []);
+  const refreshProfile = useCallback(async (pid: string, force = false): Promise<string> => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!proj || profileBusyRef.current) return '';
+    if (!force && !profileDue(proj)) return '';
+    profileBusyRef.current = true; setProfileBusy(true);
+    try {
+      const resp = await meterFor(pid, () => callLLM(buildProfileMessages(proj) as any, { jsonMode: true, maxTokens: 1200, timeoutMs: 90000, task: 'simple' }));
+      const pr = parseProfile(resp.content, solvedCount(proj));
+      if (!pr) return '这次没写成，过会儿再试';
+      patchProfile(pid, st => ({ ...(st || {}), draft: pr }));
+      pushFeedItem(feedStatus(proj.pmProfile?.published ? `📝 我又攒了些本事，更新了自己的简介草稿「${pr.title}」：在「钱包」页看一眼，确认后服务广场上的简介才会更新` : `📝 我给自己写了一份简介「${pr.title}」：能接什么活、攒下了什么、需要什么。在「钱包」页看一眼，确认后挂到服务广场接单，赚的钱进项目钱包`, { tone: 'good' }), pid);
+      return '';
+    } catch (e) { return e instanceof Error ? e.message : String(e); }
+    finally { profileBusyRef.current = false; setProfileBusy(false); }
+  }, [patchProfile, pushFeedItem]);
+  /** 用户确认：用这个项目的 AI 授权把简介挂成服务（别人下单后这个 AI 接单交付，收入进项目钱包） */
+  const publishProfile = useCallback(async (pid: string, on: boolean): Promise<string> => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    const st = proj?.pmProfile;
+    const pr = on ? st?.draft || st?.published : st?.published;
+    if (!proj || !pr) return '还没有简介';
+    if (!loggedIn()) return '需要先登录正式网站';
+    if (on && !proj.charter?.allowJobs) {
+      // 挂出去就意味着要接单：顺手打开「允许接单」（授权在下面统一换，不重复建）
+      const charter = { ...(proj.charter || { autoBuyCNY: 0, confirmedAt: Date.now() }), allowJobs: true };
+      projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, charter } : p));
+      patchProject(pid, { charter });
+    }
+    const fresh = projectsRef.current.find(p => p.id === pid)!;
+    const pm = await ensurePmToken(fresh).catch(() => null);
+    if (!pm?.permissions.includes('service_publish')) return 'AI 的服务广场授权没建成，稍后再试';
+    try {
+      const saved = await marketRequestAs(pm.token)<{ id: string; revision: number }>('/services', 'PUT', { ...profileToListing(pr, st, `AI 项目经理 · ${proj.name}`), published: on });
+      patchProfile(pid, s0 => on ? { ...(s0 || {}), published: pr, draft: undefined, serviceId: saved.id, serviceRevision: saved.revision, publishedAt: Date.now(), hidden: false } : { ...(s0 || {}), serviceId: saved.id, serviceRevision: saved.revision, hidden: true });
+      pushFeedItem(feedStatus(on ? `🏪 简介「${pr.title}」挂到服务广场了：全站都能看到，有人下单我就接单交付，收入进项目钱包` : '简介从服务广场撤下来了（已经接的单会做完）', { tone: 'good' }), pid);
+      return on ? '已发布到服务广场' : '已撤下';
+    } catch (e: any) {
+      // 授权换过之后旧服务不归新授权管：当新服务重新挂
+      if (on && e?.status === 404 && st?.serviceId) { patchProfile(pid, s0 => ({ ...(s0 || {}), serviceId: undefined, serviceRevision: undefined })); return publishProfile(pid, on); }
+      return e?.message || String(e);
+    }
+  }, [patchProfile, pushFeedItem, patchProject]);
   // ===== 让 AI 碰到真人：问卷 / 预售页 / 企业信息 =====
   const platformCatRef = useRef<{ at: number; cat: PlatformCatalog } | null>(null);
   const pendingActionsRef = useRef<Record<string, { pid: string; node: ProblemNode; action: RealityAction }>>({});
@@ -2543,6 +2596,12 @@ ${plan.lead.duty}
     if (!!proj.charter?.allowJobs !== o.allowJobs) toggleJobs(pid, o.allowJobs);
     if (o.modelPolicy && o.modelPolicy !== (proj.modelPolicy || 'balanced')) setModelPolicy(pid, o.modelPolicy);
     noteAuto('think', `你授权我自主运行：¥${o.budgetCNY} 以内，每 ${o.checkInDays} 天回来看一次`, undefined, pid);
+    // 启动资金真的放进项目钱包：之后这个项目里 AI 花的钱都从这里出，赚的钱也进这里
+    if (BILLING_API && loggedIn() && o.budgetCNY > 0) {
+      transferProject(pid, Math.round(o.budgetCNY * 100), 'in', `自主运行启动资金 · ${proj.name}`.slice(0, 200))
+        .then(() => pushFeedItem(feedStatus(`💰 已从你的用户钱包把 ¥${o.budgetCNY} 放进这个项目的钱包，我在这个项目里花钱、赚钱都走它；用不完随时能收回`, { tone: 'good' }), pid))
+        .catch((e: Error) => pushFeedItem(feedStatus(/余额不足/.test(e.message) ? `💳 你的用户钱包不够 ¥${o.budgetCNY}，启动资金没能放进项目钱包：去「个人中心 → 我的钱包」充值，或在项目钱包里放一笔少一点的` : `⚠️ 启动资金没放进项目钱包：${e.message}`, { tone: 'warn' }), pid));
+    }
     pushFeedItem(feedStatus(`⚡ 收到，我开始自主运行：¥${o.budgetCNY} 以内，小事我自己拿主意，不来打扰你。${o.checkInDays === 14 ? '两周' : '一周'}后回来看我，我把做了什么、怎么想的、卡在哪、需要你什么一起汇报给你`, { tone: 'good' }), pid);
     trackEvent('autonomy_granted', { budget: o.budgetCNY, days: o.checkInDays, jobs: o.allowJobs ? 1 : 0 });
     if (nodeId) forceNodeRef.current = nodeId;
@@ -2610,10 +2669,10 @@ ${plan.lead.duty}
   }, [pushFeedItem]);
   useEffect(() => {
     if (!currentProjectId) return;
-    const t = setTimeout(() => { void syncReality(currentProjectId).finally(() => giveDigest(currentProjectId)); }, 5000);
-    const iv = window.setInterval(() => { const pid = feedProjectRef.current; if (pid) void syncReality(pid).finally(() => giveDigest(pid)); }, 30 * 60_000);
+    const t = setTimeout(() => { void syncReality(currentProjectId).finally(() => giveDigest(currentProjectId)).finally(() => refreshProfile(currentProjectId)); }, 5000);
+    const iv = window.setInterval(() => { const pid = feedProjectRef.current; if (pid) void syncReality(pid).finally(() => giveDigest(pid)).finally(() => refreshProfile(pid)); }, 30 * 60_000);
     return () => { clearTimeout(t); clearInterval(iv); };
-  }, [currentProjectId, giveDigest, syncReality]);
+  }, [currentProjectId, giveDigest, syncReality, refreshProfile]);
 
   // 打开项目 / 切回这个页面时：离上次汇报有一阵子、又做了些事，就先汇报
   useEffect(() => {
@@ -3507,7 +3566,10 @@ ${plan.lead.duty}
       onOpenMarket={() => { setMarketSeek(null); setShowServiceMarket(true); }}
       onToggleJobs={on => toggleJobs(currentProject.id, on)}
       onWorkJobs={() => workJobs(currentProject.id)}
-      onModelPolicy={p => setModelPolicy(currentProject.id, p)} />
+      onModelPolicy={p => setModelPolicy(currentProject.id, p)}
+      profileBusy={profileBusy}
+      onRefreshProfile={() => refreshProfile(currentProject.id, true)}
+      onPublishProfile={on => publishProfile(currentProject.id, on)} />
   ) : null;
 
   const pulsePanel = currentProject ? (<div className="space-y-3">
@@ -4105,7 +4167,7 @@ ${plan.lead.duty}
       )}
 
       {/* 设置：模型接入 / IoT 设备 */}
-      {showUserMenu && user && <PersonalCenter name={user.username || ui('用户', 'User')} email={user.email} pro={isPremiumUser} model={activeModel} trial={trialQuota}
+      {showUserMenu && user && <PersonalCenter name={user.username || ui('用户', 'User')} email={user.email} pro={isPremiumUser} model={activeModel} trial={trialQuota} projectNames={Object.fromEntries(projects.map(p => [p.id, p.name]))}
         onSync={user.email ? () => setShowProjectSync(true) : undefined} syncStatus={projectSyncStatus}
         onClose={() => setShowUserMenu(false)} onBilling={() => setShowPremiumModal(true)} onUsage={() => setShowSharedModels(true)} onSettings={() => setShowSettingsModal(true)}
         onProjects={() => setShowProjectManager(true)} onHelp={() => setShowHelpModal(true)} onFeedback={() => { setShowFeedback(true); trackEvent('feedback_open'); }}

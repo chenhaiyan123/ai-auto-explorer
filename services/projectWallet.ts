@@ -17,6 +17,11 @@ type Listener = (u: ModelUsage, projectId: string | null) => void;
 const listeners = new Set<Listener>();
 let meterProject: string | null = null;
 
+/** 现在的模型调用记在哪个项目上（平台模型扣钱时，有项目钱包就从项目钱包扣） */
+let fallbackProject: () => string | null = () => null;
+/** 不在 meterFor 里的调用算到哪个项目（App 告诉它「当前打开的项目」） */
+export const setDefaultMeterProject = (fn: () => string | null) => { fallbackProject = fn; };
+export const currentMeterProject = () => meterProject || fallbackProject();
 export const onModelUsage = (fn: Listener) => { listeners.add(fn); return () => { listeners.delete(fn); }; };
 export const reportModelUsage = (u: ModelUsage) => { listeners.forEach(fn => { try { fn(u, meterProject); } catch { /* 记账失败不能影响干活 */ } }); };
 /**

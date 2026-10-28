@@ -6,8 +6,9 @@ export const BILLING_API = String(env?.VITE_BILLING_API || env?.VITE_WAKE_API ||
 export const BILLING_CHANGED = 'hiexplore-billing-changed';
 export { plans };
 export interface BillingOrder { id: string; sku: 'pro_month' | 'export' | 'topup'; artifactId: string | null; title: string; amount: number; currency: string; provider: string; status: 'pending' | 'paid'; createdAt: number; expiresAt: number; paidAt?: number; checkoutUrl?: string; codeUrl?: string; queryWarning?: string }
-export interface WalletTx { id: string; type: 'topup' | 'spend' | 'refund'; cents: number; balanceAfter: number; note: string; at: number }
-export interface BillingAccount { wallet?: { balanceCents: number; tx: WalletTx[] }; plan: 'free' | 'pro'; proUntil: number; purchaseAllowed: boolean; unlocked: string[]; orders: BillingOrder[]; artifacts: { id: string; title: string; createdAt: number; unlocked: boolean }[] }
+/** allocate = 用户钱包放进项目钱包；release = 项目钱包收回用户钱包。带 projectId 的流水发生在那个项目的钱包里 */
+export interface WalletTx { id: string; type: 'topup' | 'spend' | 'refund' | 'escrow' | 'income' | 'allocate' | 'release'; cents: number; balanceAfter: number; note: string; at: number; projectId?: string }
+export interface BillingAccount { wallet?: { balanceCents: number; projects?: Record<string, number>; tx: WalletTx[] }; plan: 'free' | 'pro'; proUntil: number; purchaseAllowed: boolean; unlocked: string[]; orders: BillingOrder[]; artifacts: { id: string; title: string; createdAt: number; unlocked: boolean }[] }
 export interface BillingCatalog { topupEnabled?: boolean; topupAmounts?: number[]; salesEnabled: boolean; proSalesEnabled: boolean; salesRestricted: boolean; providers: { id: string; ready: boolean }[]; researchBenefitsReady: boolean }
 export interface ReportSnapshot { title: string; abstract: string; sections: { title: string; content: string }[]; conclusions: string[]; openQuestions: string[]; references: string[] }
 export async function billingRequest<T>(path: string, method = 'GET', body?: unknown, publicRequest = false): Promise<T> {
@@ -29,4 +30,11 @@ export function safeCheckoutUrl(value?: string): string | undefined {
 }
 export function safeWechatCodeUrl(value?: string): string | undefined {
   if (value && /^weixin:\/\/wxpay\/bizpayurl\?[A-Za-z0-9%=&_-]{1,500}$/.test(value)) return value;
+}
+
+/** 用户钱包 ⇄ 项目钱包划转（in = 放进项目，out = 收回用户钱包）。成功后通知各处钱包刷新 */
+export async function transferProject(projectId: string, cents: number, direction: 'in' | 'out', note?: string): Promise<WalletTx> {
+  const tx = await billingRequest<WalletTx>('/billing/project-transfer', 'POST', { projectId, cents, direction, requestId: crypto.randomUUID(), note });
+  try { window.dispatchEvent(new Event(BILLING_CHANGED)); } catch { /* 非浏览器环境 */ }
+  return tx;
 }

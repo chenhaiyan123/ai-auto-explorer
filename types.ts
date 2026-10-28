@@ -661,6 +661,8 @@ export interface Project {
   digests?: import('./services/digest').Digest[];
   /** 现实验证：AI 发出去的问卷、预售页、企业查询，以及回收到的数字 */
   realityChecks?: import('./services/realityActions').RealityCheck[];
+  /** AI 项目经理简介：能接什么活、攒下了什么、需要什么（AI 起草，用户确认后挂到服务广场） */
+  pmProfile?: import('./services/pmProfile').PmProfileState;
   /** 自主运行日志 */
   autolog?: AutoLogEntry[];
   /** 用户维护的项目目标与范围，AI 摘要不得覆盖。 */
