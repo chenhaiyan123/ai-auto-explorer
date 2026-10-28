@@ -150,15 +150,38 @@ function quotaState(ident) {
   return { key, gkey, used, gUsed, remaining: Math.max(0, ident.limit - used) };
 }
 
-/** 通用发信（Resend）。未配 Key 时打印到日志，便于本地开发。 */
+/**
+ * 通用发信（Resend）。未配 Key 时打印到日志，便于本地开发。
+ *
+ * FC 在大陆（杭州），Resend 在海外：跨境连接时不时会断（Node 报 "fetch failed"）。
+ * 所以每次最多试 3 次、每次 6 秒超时；网络错误 / 超时 / 5xx / 429 才重试，
+ * 4xx（Key 不对、发件域名没验证）重试也没用，直接报错。
+ * 同一次请求重试时带同一个 Idempotency-Key，Resend 不会因为「其实发出去了只是回应丢了」而重复发信。
+ */
+const MAIL_TRIES = Number(process.env.MAIL_TRIES || 3);
+const MAIL_TIMEOUT_MS = Number(process.env.MAIL_TIMEOUT_MS || 6000);
 async function sendMail(to, subject, text) {
   if (!RESEND_API_KEY) { console.log(`[DEV] 邮件 -> ${to} | ${subject}\n${text}`); return; }
-  const r = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: MAIL_FROM, to, subject, text }),
-  });
-  if (!r.ok) throw new Error('邮件发送失败：' + (await r.text().catch(() => r.status)));
+  const idem = crypto.randomUUID();
+  let last = '';
+  for (let i = 0; i < MAIL_TRIES; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 500 * i));
+    try {
+      const r = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json', 'Idempotency-Key': idem },
+        body: JSON.stringify({ from: MAIL_FROM, to, subject, text }),
+        signal: AbortSignal.timeout(MAIL_TIMEOUT_MS),
+      });
+      if (r.ok) { if (i) console.log(`[mail] 第 ${i + 1} 次才发出去`); return; }
+      last = `HTTP ${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}`;
+      if (r.status < 500 && r.status !== 429) break;   // 配置问题：别再试
+    } catch (e) {
+      last = e?.name === 'TimeoutError' || e?.name === 'AbortError' ? '超时' : (e?.cause?.code || e?.message || '网络错误');
+    }
+    console.warn(`[mail] 第 ${i + 1} 次发信失败：${last}`);
+  }
+  throw Object.assign(new Error('邮件发送失败'), { detail: last });
 }
 
 async function sendEmail(to, code) {
@@ -223,7 +246,13 @@ const server = http.createServer(async (req, res) => {
       }
       const code = gen6();
       store.set(email, { code, exp: now + CODE_TTL, lastSent: now, attempts: 0 });
-      try { await sendEmail(email, code); } catch (e) { return send2(502, { error: e.message }); }
+      try { await sendEmail(email, code); }
+      catch (e) {
+        // 没发出去：撤掉这次记录，让用户马上能再点（不然会被「60 秒内只能发一次」挡住，以为发了其实没发）
+        if (prev) store.set(email, prev); else store.delete(email);
+        console.error('[send-code] 验证码邮件没发出去：', e?.detail || e?.message);
+        return send2(502, { code: 'MAIL_FAILED', error: '验证码邮件没发出去（邮件服务暂时连不上），请再点一次「获取验证码」' });
+      }
       return send2(200, { ok: true, devCode: RESEND_API_KEY ? undefined : code });
     }
 

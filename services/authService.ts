@@ -13,7 +13,7 @@ export const hasAuthBackend = (): boolean => !!AUTH_API;
  */
 async function authPost(path: string, body: unknown, retried = false): Promise<{ r: Response; d: any; retried: boolean }> {
   try {
-    const r = await fetch(`${AUTH_API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) });
+    const r = await fetch(`${AUTH_API}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(35000) }); // 后端发信最多重试 3 次（约 20 秒），这里要等得更久
     const d = await r.json().catch(() => ({}));
     return { r, d, retried };
   } catch (e) {
