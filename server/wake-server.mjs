@@ -158,7 +158,12 @@ export async function createWakeServer(options = {}) {
   const questions = new QuestionLog(storage);
   const passwords = new PasswordAuth(storage);
   /** 平台直连服务：问卷星、天眼查、预售页 */
-  const platform = new PlatformServices(storage, billing, externalFetch, env);
+  // 录音临时存放：给百炼一个一次性的公开地址去拉，转完就删，最多留 48 小时
+  const audioDir = path.join(storage.dir, 'audio'); await fs.mkdir(audioDir, { recursive: true });
+  const AUDIO_EXT = { 'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/m4a': 'm4a', 'audio/aac': 'aac', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav', 'audio/amr': 'amr', 'audio/ogg': 'ogg', 'audio/opus': 'opus', 'audio/webm': 'webm', 'video/mp4': 'mp4', 'audio/flac': 'flac' };
+  const removeAudio = async name => { if (/^[a-f0-9]{32}\.[a-z0-9]{2,5}$/.test(name)) await fs.unlink(path.join(audioDir, name)).catch(() => {}); };
+  const sweepAudio = async () => { for (const f of await fs.readdir(audioDir).catch(() => [])) { const st = await fs.stat(path.join(audioDir, f)).catch(() => null); if (st && Date.now() - st.mtimeMs > 48 * 3600000) await removeAudio(f); } };
+  const platform = new PlatformServices(storage, billing, externalFetch, env, { dashscopeKey: () => shared.keyForHost('dashscope.aliyuncs.com'), removeAudio });
   const flushMarket = () => market.flushDeliveries(async order => {
     const c = order.context, key = scopeKey(order.buyer, c.projectId, c.branchId, c.scopeId);
     if (!await storage.read(key)) return false;
@@ -267,7 +272,7 @@ export async function createWakeServer(options = {}) {
     finally { clearInterval(heartbeat); active.delete(key); }
   };
   let ticking = false; let closing = false;
-  const tick = async () => { if (ticking || closing) return; ticking = true; try { await registry.flush().catch(() => console.error('user registry flush deferred')); await flushMarket().catch(() => console.error('Service delivery sync deferred')); await syncEscrow().catch(() => console.error('Escrow sync deferred')); for (const key of await storage.keys()) { if (closing) break; await tickKey(key); } await notifications.process(); } finally { ticking = false; } };
+  const tick = async () => { if (ticking || closing) return; ticking = true; try { await registry.flush().catch(() => console.error('user registry flush deferred')); await flushMarket().catch(() => console.error('Service delivery sync deferred')); await syncEscrow().catch(() => console.error('Escrow sync deferred')); await billing.refundDueDeposits?.().catch(() => console.error('Deposit refund deferred')); if (Math.random() < 0.01) await sweepAudio().catch(() => {}); for (const key of await storage.keys()) { if (closing) break; await tickKey(key); } await notifications.process(); } finally { ticking = false; } };
   const interval = setInterval(() => tick().catch(e => console.error('wake tick:', e.message)), 10000);
   interval.unref();
   const authenticate = async req => {
@@ -304,8 +309,17 @@ export async function createWakeServer(options = {}) {
       }
       return;
     }
+    // 录音临时公开地址：只给百炼拉取用（随机文件名、48 小时内有效）
+    const audioMatch = new URL(req.url, 'http://wake').pathname.match(/^\/a\/([a-f0-9]{32}\.[a-z0-9]{2,5})$/);
+    if (audioMatch && req.method === 'GET') {
+      const file = path.join(audioDir, audioMatch[1]);
+      const st = await fs.stat(file).catch(() => null);
+      if (!st || Date.now() - st.mtimeMs > 48 * 3600000) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': st.size, 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' });
+      (await import('node:fs')).createReadStream(file).pipe(res); return;
+    }
     // 预售页 / 报名页：公开访问（任何人都能打开、留资），只放固定模板里的文字
-    const pageMatch = new URL(req.url, 'http://wake').pathname.match(/^\/p\/([A-Za-z0-9_-]{8,20})(\/lead)?$/);
+    const pageMatch = new URL(req.url, 'http://wake').pathname.match(/^\/p\/([A-Za-z0-9_-]{8,20})(\/lead|\/deposit(?:\/(HE[a-f0-9]{30}))?)?$/);
     if (pageMatch) {
       const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
       const visitor = createHash('sha256').update(`${ip}|${req.headers['user-agent'] || ''}`).digest('hex').slice(0, 16);
@@ -315,7 +329,20 @@ export async function createWakeServer(options = {}) {
           const page = await platform.viewPage(pageMatch[1], visitor);
           if (!page) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('这个页面已关闭或不存在'); return; }
           res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'");
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(renderPage(page)); return;
+          const cat = billing.catalog();
+          const depositOpen = !!cat.salesEnabled && !!cat.providers.find(x => x.id === 'wechat' && x.ready);
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(renderPage(page, depositOpen)); return;
+        }
+        // 意向金：访客扫码付 ¥1–9.9，到期全额退回
+        if (pageMatch[2]?.startsWith('/deposit')) {
+          const send2 = (st, v) => { res.writeHead(st, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(v)); };
+          if (req.method === 'POST' && !pageMatch[3]) {
+            const o = await platform.pageDeposit(pageMatch[1], visitor);
+            let qr = ''; try { qr = (await import('./.wake-build/qr.mjs')).qrSvg ? await (await import('./.wake-build/qr.mjs')).qrSvg(o.codeUrl) : ''; } catch { /* 没有二维码模块就只给链接 */ }
+            send2(200, { id: o.id, amount: o.amount, qr: /^<svg[\s\S]*<\/svg>\s*$/.test(qr) ? qr : '' }); return;
+          }
+          if (req.method === 'GET' && pageMatch[3]) { send2(200, await billing.depositStatus(pageMatch[1], pageMatch[3])); return; }
+          res.writeHead(405); res.end(); return;
         }
         if (pageMatch[2] && req.method === 'POST') {
           let raw = ''; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) throw Object.assign(new Error('内容太长'), { status: 413 }); }
@@ -438,6 +465,20 @@ export async function createWakeServer(options = {}) {
         }
         if (req.method === 'GET' && url.pathname === '/platform/catalog') { send(200, await platform.catalog()); return; }
         if (req.method === 'GET' && url.pathname === '/platform/mine') { send(200, await platform.mine(owner, url.searchParams.get('projectId') || '')); return; }
+        if (req.method === 'POST' && url.pathname === '/platform/audio') {
+          const ext = AUDIO_EXT[String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase()];
+          if (!ext) { send(415, { error: '只支持常见录音格式：mp3、m4a、wav、aac、amr、ogg、flac、mp4' }); return; }
+          const name = `${randomUUID().replace(/-/g, '')}.${ext}`, file = path.join(audioDir, name);
+          let size = 0; const fh = await fs.open(file, 'w');
+          try { for await (const chunk of req) { size += chunk.length; if (size > 200 * 1024 * 1024) throw Object.assign(new Error('录音太大了：最大 200MB'), { status: 413 }); await fh.write(chunk); } }
+          catch (e) { await fh.close(); await removeAudio(name); throw e; }
+          await fh.close();
+          try { send(200, await platform.audioSubmit(owner, { file: name, size, mime: req.headers['content-type'], projectId: url.searchParams.get('projectId'), nodeId: url.searchParams.get('nodeId'), name: url.searchParams.get('name') })); }
+          catch (e) { await removeAudio(name); throw e; }
+          return;
+        }
+        const audioRes = url.pathname.match(/^\/platform\/audio\/([A-Za-z0-9_-]{8,20})$/);
+        if (req.method === 'GET' && audioRes) { send(200, await platform.audioResult(owner, audioRes[1])); return; }
         if (req.method === 'GET' && url.pathname === '/platform/papers') { send(200, await platform.papers(owner, { q: url.searchParams.get('q'), n: url.searchParams.get('n') })); return; }
         if (req.method === 'POST' && url.pathname === '/platform/papers/verify') { send(200, await platform.verifyDois(owner, await readBody(req))); return; }
         if (req.method === 'POST' && url.pathname === '/platform/company/search') { send(200, await platform.companySearch(owner, await readBody(req))); return; }
@@ -670,7 +711,7 @@ export async function createWakeServer(options = {}) {
       send(404, { error: '接口不存在' });
     } catch (e) { send(e.status || 400, { error: e instanceof SyntaxError ? 'JSON 格式错误' : e.message }); }
   });
-  return { server, storage, registry, tick, close: async () => { closing = true; clearInterval(interval); await new Promise(resolve => server.close(resolve)); while (ticking || active.size) await new Promise(r => setTimeout(r, 100)); await registry.flush().catch(() => {}); await fs.unlink(lockFile); claimedDirectories.delete(storage.dir); } };
+  return { server, storage, registry, billing, tick, close: async () => { closing = true; clearInterval(interval); await new Promise(resolve => server.close(resolve)); while (ticking || active.size) await new Promise(r => setTimeout(r, 100)); await registry.flush().catch(() => {}); await fs.unlink(lockFile); claimedDirectories.delete(storage.dir); } };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const app = await createWakeServer(); const port = Number(process.env.PORT || 8790); const host = process.env.WAKE_HOST || '127.0.0.1';

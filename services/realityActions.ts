@@ -14,17 +14,18 @@ export type RealityKind = 'survey' | 'page' | 'company' | 'market';
 export interface SurveyQ { type: 'single' | 'multi' | 'text' | 'scale' | 'nps'; title: string; options?: string[] }
 export type RealityAction =
   | { type: 'survey'; why: string; title: string; intro: string; questions: SurveyQ[]; target: number }
-  | { type: 'page'; why: string; headline: string; sub: string; bullets: string[]; price: string; cta: string }
+  | { type: 'page'; why: string; headline: string; sub: string; bullets: string[]; price: string; cta: string; /** 意向金（元，1–9.9；0 = 不收）：访客真付钱表示想要，7 天后全额退回 */ deposit?: number }
   | { type: 'company'; why: string; keyword: string }
   | { type: 'market'; why: string }
   | { type: 'none'; why: string };
 
 /** 项目里记着的「现实验证」 */
 export interface RealityCheck {
-  id: string; kind: 'survey' | 'page' | 'company'; nodeId?: string; title: string; url?: string;
+  id: string; kind: 'survey' | 'page' | 'company' | 'audio'; nodeId?: string; title: string; url?: string;
+  /** 录音：转写状态和时长 */ status?: string; durationSec?: number;
   createdAt: number; target?: number;
   /** 最新数字：问卷答卷数 / 页面访客 · 点击 · 留资 */
-  count?: number; visitors?: number; clicks?: number; leads?: number; checkedAt?: number;
+  count?: number; visitors?: number; clicks?: number; leads?: number; /** 付了意向金的人数 */ deposits?: number; checkedAt?: number;
   /** 已经拿去推进过的数量（新增够多才再推进一次） */
   ingested?: number; closed?: boolean; summary?: string;
 }
@@ -34,12 +35,26 @@ export interface PlatformCatalog { services: { id: string; label: string; ready:
 export const platformRequest = <T>(path: string, method = 'GET', body?: unknown) => sharedRequest<T>(`/platform${path}`, method, body, 130000);
 export const pageUrl = (path: string) => `${SHARED_API}${path}`;
 
+/** 上传访谈 / 实验录音，后台交给百炼转文字（异步，几分钟） */
+export async function uploadAudio(file: File, projectId: string, nodeId?: string): Promise<{ id: string; name: string }> {
+  if (!SHARED_API) throw new Error('本地预览没有连后台，到正式网站登录后再传');
+  if (file.size > 200 * 1024 * 1024) throw new Error('录音太大了：最大 200MB');
+  const token = localStorage.getItem('aae-auth-token');
+  if (!token) throw new Error('请先登录');
+  const type = file.type || (/\.m4a$/i.test(file.name) ? 'audio/x-m4a' : /\.mp3$/i.test(file.name) ? 'audio/mpeg' : /\.wav$/i.test(file.name) ? 'audio/wav' : /\.amr$/i.test(file.name) ? 'audio/amr' : 'audio/mpeg');
+  const q = new URLSearchParams({ projectId, name: file.name.replace(/\.[^.]+$/, '').slice(0, 60), ...(nodeId ? { nodeId } : {}) });
+  const r = await fetch(`${SHARED_API}/platform/audio?${q}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': type }, body: file, signal: AbortSignal.timeout(600000) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `上传失败（${r.status}）`);
+  return d;
+}
+
 const clip = (s: unknown, n: number) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 export function buildActionMessages(project: Project, node: ProblemNode, ready: Record<string, boolean>, prices: Record<string, number>, force?: RealityKind) {
   const avail = [
     ready.survey && `survey：发问卷（每份问卷 ¥${((prices.survey_create || 0) / 100).toFixed(2)}，链接要发给目标人群；适合了解现状、痛点、偏好、优先级）`,
-    ready.page && `page：做预售页 / 报名页（免费，挂出去看多少人点「我想要」、留联系方式；适合验证「会不会真的要 / 愿不愿意付钱」）`,
+    ready.page && `page：做预售页 / 报名页（免费，挂出去看多少人点「我想要」、留联系方式；还可以开「意向金」：访客用微信付 ¥1–9.9 表示真想要，7 天后全额退回——验证「愿不愿意真掏钱」最有说服力）`,
     ready.company && `company：查企业工商信息（每次 ¥${((prices.company_info || 0) / 100).toFixed(2)}；适合核实竞品、合作方、供应商是否存在、规模和风险）`,
     'market：去服务广场找真人 / 机构做（访谈、实验、测量、打样、拿真实数据）',
   ].filter(Boolean).join('\n');
@@ -56,7 +71,7 @@ ${force ? `\n用户指定用：${force}\n` : ''}
 
 返回 JSON 之一：
 {"type":"survey","why":"为什么选它（≤40字）","title":"问卷标题","intro":"一句开场白","target":30,"questions":[{"type":"single|multi|text|scale|nps","title":"题目","options":["选项"]}]}
-{"type":"page","why":"…","headline":"一句话卖点","sub":"两句说明","bullets":["卖点1","卖点2","卖点3"],"price":"预售价 ¥xx","cta":"我想要"}
+{"type":"page","why":"…","headline":"一句话卖点","sub":"两句说明","bullets":["卖点1","卖点2","卖点3"],"price":"预售价 ¥xx","cta":"我想要","deposit":意向金元数（验证付费意愿时填 1–9.9，只看兴趣填 0）}
 {"type":"company","why":"…","keyword":"企业名或关键词"}
 {"type":"market","why":"…"}
 {"type":"none","why":"为什么现在不需要"}` },
@@ -80,7 +95,8 @@ export function parseAction(text: string, ready: Record<string, boolean>): Reali
     case 'page': {
       if (!ready.page) return null;
       const headline = clip(raw.headline, 60);
-      return headline.length >= 4 ? { type: 'page', why, headline, sub: clip(raw.sub, 200), bullets: (Array.isArray(raw.bullets) ? raw.bullets : []).map((b: unknown) => clip(b, 80)).filter(Boolean).slice(0, 5), price: clip(raw.price, 40), cta: clip(raw.cta, 16) || '我想要' } : null;
+      const dep = Math.round(Number(raw.deposit) * 10) / 10;
+      return headline.length >= 4 ? { type: 'page', why, headline, sub: clip(raw.sub, 200), bullets: (Array.isArray(raw.bullets) ? raw.bullets : []).map((b: unknown) => clip(b, 80)).filter(Boolean).slice(0, 5), price: clip(raw.price, 40), cta: clip(raw.cta, 16) || '我想要', deposit: dep >= 1 && dep <= 9.9 ? dep : 0 } : null;
     }
     case 'company': { const keyword = clip(raw.keyword, 60); return ready.company && keyword.length >= 2 ? { type: 'company', why, keyword } : null; }
     case 'market': return { type: 'market', why };
@@ -96,8 +112,9 @@ export const actionCost = (a: RealityAction, prices: Record<string, number>) =>
 /** 什么时候把新回来的结果拿去推进：问卷新增 ≥ 10 份或到了目标数；页面新增 ≥ 20 个访客或有新留资 */
 export function shouldIngest(c: RealityCheck): boolean {
   if (c.closed) return false;
-  const now = c.kind === 'survey' ? c.count || 0 : (c.visitors || 0) + (c.leads || 0) * 10;
+  const now = c.kind === 'survey' ? c.count || 0 : (c.visitors || 0) + (c.leads || 0) * 10 + (c.deposits || 0) * 30;
   const done = c.ingested || 0;
+  if (c.kind === 'audio') return (c.count || 0) > done;
   if (c.kind === 'survey') return now > done && (now - done >= 10 || (!!c.target && now >= c.target && done < c.target));
   return now - done >= 20;
 }
@@ -107,7 +124,7 @@ export function buildIngestMessages(project: Project, node: ProblemNode | undefi
     { role: 'system', content: '把一份真实回收的数据总结成证据。只说数据说明了什么、样本多大、有什么偏差；不夸大、不下数据撑不起的结论。只返回 JSON。' },
     { role: 'user', content: `项目：${clip(project.metaProblem || project.name, 200)}
 这一步：${clip(node?.title || c.title, 120)}
-数据来源：${c.kind === 'survey' ? `问卷「${c.title}」，有效答卷 ${c.count || 0} 份` : `预售页「${c.title}」：访客 ${c.visitors || 0}，点「我想要」${c.clicks || 0}，留联系方式 ${c.leads || 0}`}
+数据来源：${c.kind === 'audio' ? `访谈 / 实验录音「${c.title}」转写的原话（时长 ${Math.round((c.durationSec || 0) / 60)} 分钟；只总结受访者真实说了什么，不替他们下结论）` : c.kind === 'survey' ? `问卷「${c.title}」，有效答卷 ${c.count || 0} 份` : `预售页「${c.title}」：访客 ${c.visitors || 0}，点「我想要」${c.clicks || 0}，留联系方式 ${c.leads || 0}，付意向金 ${c.deposits || 0} 人（真掏钱的信号最强，比留资更可信）`}
 原始统计：
 ${clip(raw, 6000)}
 

@@ -30,7 +30,7 @@
     "mobile:android": "npm run mobile:sync && npx cap open android",
     "mobile:ios": "npm run ios:open",
     "mobile:apk": "npm run mobile:sync && cd android && ./gradlew assembleDebug",
-    "wake:build": "esbuild services/wakeRunner.ts --bundle --platform=node --format=esm --outfile=server/.wake-build/runner.mjs",
+    "wake:build": "esbuild services/wakeRunner.ts --bundle --platform=node --format=esm --outfile=server/.wake-build/runner.mjs && esbuild services/qr.ts --bundle --platform=node --format=esm --outfile=server/.wake-build/qr.mjs",
     "test:wake": "npm run wake:build && esbuild __test__/awakening.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/hiexplore-wake-test.mjs && node node_modules/.cache/hiexplore-wake-test.mjs && node --test __test__/wake-server.test.mjs",
     "wake": "npm run wake:build && node server/wake-server.mjs",
     "test:shared": "npm run wake:build && node --test __test__/shared-models.test.mjs",

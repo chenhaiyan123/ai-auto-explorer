@@ -78,6 +78,12 @@ export async function createWechatProvider(env, fetcher = fetch) {
       if (!validWechatCodeUrl(data.code_url)) throw new Error('微信支付二维码链接无效');
       return { codeUrl: data.code_url };
     },
+    /** 原路全额退款（意向金到期用）。返回微信的退款状态：SUCCESS / PROCESSING / ABNORMAL / CLOSED */
+    async refund(order, reason = '全额退回') {
+      const data = await request('POST', '/v3/refund/domestic/refunds', { out_trade_no: order.id, out_refund_no: `R${order.id.slice(2)}`, reason: String(reason).slice(0, 80),
+        amount: { refund: order.amount, total: order.amount, currency: 'CNY' } });
+      return { status: String(data?.status || 'PROCESSING') };
+    },
     async query(order) { return payment(await request('GET', `/v3/pay/transactions/out-trade-no/${encodeURIComponent(order.id)}?mchid=${env.WECHAT_MCH_ID}`)); },
     async verifyNotification(raw, headers) {
       await verifyMessage(raw, headers);

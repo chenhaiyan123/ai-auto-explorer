@@ -240,6 +240,55 @@ export class Billing {
     });
     return this.prepareCheckout(order);
   }
+  /**
+   * 预售页「意向金」：访客用微信付 ¥1–9.9 表示「我真的想要」，到期后全额原路退回。
+   * 钱不进任何用户的钱包、也不转给页面作者（避免替人代收款），只用来验证付费意愿。
+   */
+  async createDeposit({ pageId, amount, title, visitor, provider = 'wechat', days = 7 }) {
+    if (this.env.BILLING_SALES_ENABLED !== 'true') throw fail('支付尚未开放', 503);
+    if (!/^[A-Za-z0-9_-]{8,20}$/.test(pageId || '') || !Number.isSafeInteger(amount) || amount < 100 || amount > 990) throw fail('意向金参数无效');
+    if (!this.providers[provider]) throw fail('微信支付暂不可用', 503);
+    const owner = `page:${pageId}`;
+    const order = await this.transaction(s => {
+      const pending = s.orders.find(o => o.owner === owner && o.sku === 'deposit' && o.visitor === visitor && o.status === 'pending' && o.expiresAt > this.now());
+      if (pending) return orderView(pending);
+      if (s.orders.filter(o => o.sku === 'deposit' && o.visitor === visitor && o.createdAt > this.now() - 86400000).length >= 5) throw fail('今天已经付过几次了，谢谢', 429);
+      if (s.orders.length >= 20000) throw fail('订单数量达到上限，请稍后再试', 429);
+      const o = { id: `HE${randomBytes(15).toString('hex')}`, owner, visitor, requestId: `dep-${randomBytes(8).toString('hex')}`, sku: 'deposit', artifactId: null,
+        title: String(`意向金（${days} 天后全额退回）· ${title || ''}`).slice(0, 120), amount, currency: 'CNY', provider, status: 'pending',
+        refundDays: Math.min(30, Math.max(1, days | 0)), createdAt: this.now(), expiresAt: this.now() + 15 * 60000 };
+      s.orders.push(o); return orderView(o);
+    });
+    return this.prepareCheckout(order);
+  }
+  /** 访客页面轮询：付了没有（顺手去微信查一下） */
+  async depositStatus(pageId, id) {
+    const o = await this.transaction(s => s.orders.find(x => x.id === id && x.owner === `page:${pageId}` && x.sku === 'deposit'), false);
+    if (!o) throw fail('订单不存在', 404);
+    if (o.status !== 'paid' && o.expiresAt > this.now() - 60000 && this.providers[o.provider]) { try { await this.settle(o.provider, await this.providers[o.provider].query(o), o.id); } catch { /* 下次再查 */ } }
+    const now = await this.transaction(s => s.orders.find(x => x.id === id), false);
+    return { paid: now.status === 'paid', refundAt: now.refundAt || null };
+  }
+  /** 页面作者看：多少人付了意向金、退了多少 */
+  async depositStats(pageId) {
+    return this.transaction(s => {
+      const list = s.orders.filter(o => o.owner === `page:${pageId}` && o.sku === 'deposit' && o.status === 'paid');
+      return { count: list.length, cents: list.reduce((n, o) => n + o.amount, 0), refunded: list.filter(o => o.refundStatus === 'SUCCESS' || o.refundStatus === 'PROCESSING').length };
+    }, false);
+  }
+  /** 到期的意向金原路退回（定时跑） */
+  async refundDueDeposits() {
+    const due = await this.transaction(s => s.orders.filter(o => o.sku === 'deposit' && o.status === 'paid' && !o.refundStatus && o.refundAt <= this.now()).slice(0, 20).map(o => ({ ...o })), false);
+    for (const o of due) {
+      const p = this.providers[o.provider];
+      if (!p?.refund) continue;
+      let status;
+      try { status = (await p.refund(o, '意向验证结束，全额退回')).status; }
+      catch (e) { status = null; console.error('deposit refund failed', o.id, e.message); }
+      await this.transaction(s => { const x = s.orders.find(y => y.id === o.id); if (x) { x.refundTries = (x.refundTries || 0) + 1; if (status) { x.refundStatus = status; x.refundedAt = this.now(); } } });
+    }
+    return due.length;
+  }
   async prepareCheckout(order) {
     if (order.status === 'paid' || order.checkoutUrl || order.codeUrl || order.expiresAt <= this.now()) return order;
     if (this.checkouts.has(order.id)) return this.checkouts.get(order.id);
@@ -263,6 +312,7 @@ export class Billing {
       if (result.currency !== o.currency || result.amount !== o.amount) throw fail('付款金额或币种不匹配');
       if (s.orders.some(other => other.id !== o.id && other.provider === provider && other.transactionId === result.transactionId)) throw fail('交易号已用于另一订单');
       if (o.status === 'paid') { if (o.transactionId !== result.transactionId) throw fail('交易号不匹配'); return; }
+      if (o.sku === 'deposit') { o.status = 'paid'; o.transactionId = result.transactionId; o.paidAt = this.now(); o.refundAt = this.now() + (o.refundDays || 7) * 86400000; delete o.codeUrl; return; }
       const a = account(s, o.owner);
       if (o.sku === 'pro_month') a.proUntil = addCalendarMonth(Math.max(a.proUntil, this.now()));
       else if (o.sku === 'topup') pushWalletTx(s, o.owner, 'topup', o.amount, o.id, `充值 ¥${o.amount / 100}（${o.provider === 'wechat' ? '微信支付' : '支付宝'}）`, this.now());

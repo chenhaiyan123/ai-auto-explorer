@@ -97,6 +97,8 @@ export class SharedModels {
     return this.transaction(s => { checkMandate(s, owner, projectId, options); });
   }
   /** 运营数据用：模型调用记录（只读，不含内容） */
+  /** 某个供应商域名下第一个开着的模型的 Key（比如录音转文字借用百炼 / 通义千问的 Key）。只给后台内部用，不对外返回 */
+  async keyForHost(host) { return this.transaction(s => Object.values(s.models).find(m => m.enabled && m.apiKey && new URL(m.baseUrl).hostname === host)?.apiKey || ''); }
   async raw() { return this.transaction(s => ({ calls: s.calls.map(c => ({ owner: c.owner, modelId: c.modelId, status: c.status, at: c.at })) })); }
   async view(owner, admin = false) {
     return this.transaction(s => ({

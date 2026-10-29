@@ -26,6 +26,9 @@ const fakeFetch = async (url, opts = {}) => {
   }
   if (u.startsWith('https://api.openalex.org/works?')) return Response.json({ results: [{ id: 'https://openalex.org/W1', doi: 'https://doi.org/10.1000/xyz123', title: 'Solar-powered UAV endurance', publication_year: 2021, primary_location: { source: { display_name: 'Aerospace Journal' } }, authorships: [{ author: { display_name: 'A. Li' } }], cited_by_count: 42, abstract_inverted_index: { Solar: [0], power: [1], extends: [2], flight: [3] } }] });
   if (u.startsWith('https://api.crossref.org/works/')) return u.includes('10.1000%2Fxyz123') ? Response.json({ message: { title: ['Solar-powered UAV endurance'], issued: { 'date-parts': [[2021]] } } }) : new Response('not found', { status: 404 });
+  if (u === 'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription') { globalThis.__asrSubmit = JSON.parse(opts.body); return Response.json({ output: { task_status: 'PENDING', task_id: 'task-1' } }); }
+  if (u === 'https://dashscope.aliyuncs.com/api/v1/tasks/task-1') return Response.json(globalThis.__asrDone ? { output: { task_status: 'SUCCEEDED', results: [{ subtask_status: 'SUCCEEDED', transcription_url: 'https://dashscope-result.example.test/t.json' }] } } : { output: { task_status: 'RUNNING' } });
+  if (u === 'https://dashscope-result.example.test/t.json') return Response.json({ transcripts: [{ text: '你好 我想买', content_duration_in_milliseconds: 61000, sentences: [{ text: '你好，请问你会买吗？', speaker_id: 0 }, { text: '会，如果价格合适。', speaker_id: 1 }] }] });
   throw new Error('unexpected ' + u);
 };
 
@@ -48,7 +51,7 @@ test('not configured → honest 503, nothing charged', async t => {
   const { call, topup } = await boot(t);
   await topup('u@x.cn', 1000);
   const cat = (await call('u@x.cn', '/platform/catalog')).body;
-  assert.deepEqual(cat.services.map(s => [s.id, s.ready]), [['survey', false], ['company', false], ['page', true], ['papers', true]]);
+  assert.deepEqual(cat.services.map(s => [s.id, s.ready]), [['survey', false], ['company', false], ['page', true], ['papers', true], ['asr', false]]);
   const r = await call('u@x.cn', '/platform/company/search', 'POST', { keyword: '嘉立创' });
   assert.equal(r.status, 503);
   assert.equal((await call('u@x.cn', '/billing/account')).body.wallet.balanceCents, 1000, 'refunded / not charged');
@@ -129,4 +132,56 @@ test('学术文献检索：免费、返回真论文（标题、年份、DOI、�
   const v = await call('u@x.cn', '/platform/papers/verify', 'POST', { dois: ['10.1000/xyz123', '10.9999/fake-made-up', 'not-a-doi'] });
   assert.deepEqual(v.body.results.map(x => x.exists), [true, false]);
   assert.equal((await call(null, '/platform/papers?q=solar')).status, 401, '要登录');
+});
+
+test('预售页意向金：访客微信付 → 作者看到人数 → 到期全额原路退回；不进任何人钱包、不算收入', async t => {
+  const refunds = [];
+  const wechat = { create: async o => ({ codeUrl: 'weixin://wxpay/bizpayurl?pr=DEP123' }), query: async o => ({ orderId: o.id, amount: o.amount, currency: 'CNY', transactionId: `W${o.id}` }), verifyNotification: async () => null, refund: async (o, why) => { refunds.push([o.id, o.amount, why]); return { status: 'SUCCESS' }; } };
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'deposit-'));
+  const app = await createWakeServer({ env: { WAKE_DATA_DIR: dir, WAKE_MASTER_KEY: randomBytes(32).toString('base64'), WAKE_AUTH_API: 'https://auth.example.test', WAKE_HOST: '127.0.0.1', BILLING_SALES_ENABLED: 'true' }, fetch: fakeFetch, paymentProviders: { wechat } });
+  await new Promise(r => app.server.listen(0, '127.0.0.1', r));
+  t.after(async () => { await app.close(); await fs.rm(dir, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const call = async (who, route, method = 'GET', body) => { const r = await fetch(base + route, { method, headers: { ...(who ? { Authorization: `Bearer ${who}` } : {}), 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) }); return { status: r.status, body: await r.json() }; };
+  const pg = (await call('maker@x.cn', '/platform/pages', 'POST', { headline: '太阳能无人机预售', deposit: 500 })).body;
+  const html = await (await fetch(`${base}/p/${pg.id}`)).text();
+  assert.match(html, /微信付 ¥5\.00 意向金/); assert.match(html, /7 天后全额原路退回/);
+  const d = await (await fetch(`${base}/p/${pg.id}/deposit`, { method: 'POST' })).json();
+  assert.match(d.id, /^HE[a-f0-9]{30}$/); assert.equal(d.amount, 500); assert.match(d.qr, /^<svg/, '二维码');
+  const st = await (await fetch(`${base}/p/${pg.id}/deposit/${d.id}`)).json();
+  assert.equal(st.paid, true);
+  const stats = (await call('maker@x.cn', `/platform/pages/${pg.id}`)).body;
+  assert.deepEqual(stats.deposits, { count: 1, cents: 500, refunded: 0 });
+  assert.equal((await call('maker@x.cn', '/billing/account')).body.wallet.balanceCents, 0, '钱不进作者钱包');
+  // 没开意向金的页面不能付
+  const pg2 = (await call('maker@x.cn', '/platform/pages', 'POST', { headline: '只看兴趣的页面' })).body;
+  assert.equal((await fetch(`${base}/p/${pg2.id}/deposit`, { method: 'POST' })).status, 404);
+  // 到期退款
+  assert.equal(await app.billing.refundDueDeposits(), 0, '没到期不退');
+  app.billing.now = () => Date.now() + 8 * 86400000;
+  assert.equal(await app.billing.refundDueDeposits(), 1);
+  assert.deepEqual(refunds.map(r => r[1]), [500]);
+  assert.equal(await app.billing.refundDueDeposits(), 0, '只退一次');
+  assert.equal((await call('maker@x.cn', `/platform/pages/${pg.id}`)).body.deposits.refunded, 1);
+});
+
+test('访谈录音转文字：上传 → 百炼拉取公开地址 → 转好后拿到分说话人的文字、录音删掉；按次扣钱', async t => {
+  const { call, topup, base } = await boot(t, { DASHSCOPE_API_KEY: 'ds-test', WAKE_PUBLIC_URL: 'https://pay.example.test' });
+  await topup('u@x.cn', 1000);
+  assert.ok((await call('u@x.cn', '/platform/catalog')).body.services.find(x => x.id === 'asr').ready);
+  const up = await fetch(base + '/platform/audio?name=' + encodeURIComponent('访谈1'), { method: 'POST', headers: { Authorization: 'Bearer u@x.cn', 'Content-Type': 'audio/mpeg' }, body: Buffer.alloc(2048, 1) });
+  const rec = await up.json(); assert.equal(up.status, 200, JSON.stringify(rec));
+  const fileUrl = globalThis.__asrSubmit.input.file_urls[0];
+  assert.match(fileUrl, /^https:\/\/pay\.example\.test\/a\/[a-f0-9]{32}\.mp3$/);
+  const local = fileUrl.replace('https://pay.example.test', base);
+  assert.equal((await fetch(local)).status, 200, '百炼能拉到录音');
+  assert.equal((await call('u@x.cn', `/platform/audio/${rec.id}`)).body.status, 'RUNNING');
+  globalThis.__asrDone = true;
+  const done = (await call('u@x.cn', `/platform/audio/${rec.id}`)).body;
+  assert.equal(done.status, 'SUCCEEDED'); assert.match(done.text, /【说话人1】你好，请问你会买吗？\n【说话人2】会/); assert.equal(done.durationSec, 61);
+  assert.equal((await fetch(local)).status, 404, '转完删掉录音');
+  assert.equal((await call('u@x.cn', '/billing/account')).body.wallet.balanceCents, 900, '按次扣 ¥1');
+  assert.equal((await call('other@x.cn', `/platform/audio/${rec.id}`)).status, 404, '别人看不到');
+  const bad = await fetch(base + '/platform/audio', { method: 'POST', headers: { Authorization: 'Bearer u@x.cn', 'Content-Type': 'text/plain' }, body: 'x' });
+  assert.equal(bad.status, 415);
 });

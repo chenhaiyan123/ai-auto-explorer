@@ -17,13 +17,14 @@ const id = () => randomBytes(9).toString('base64url');
 const day = at => new Date(at + 8 * 3600000).toISOString().slice(0, 10);
 
 /** 默认价格（分）；管理员可改 */
-export const DEFAULT_PRICES = { company_search: 20, company_info: 50, survey_create: 200, page_create: 0 };
+export const DEFAULT_PRICES = { company_search: 20, company_info: 50, survey_create: 200, page_create: 0, asr_file: 100 };
 export const DAILY_CAP_CENTS = 5000;
 const SERVICES = {
   survey: { label: '问卷调查（问卷星）', needs: 'wjxKey' },
   company: { label: '企业信息（天眼查）', needs: 'tycKey' },
   page: { label: '预售页 / 报名页（平台自建）', needs: null },
   papers: { label: '学术文献检索（OpenAlex / Crossref，免费）', needs: null },
+  asr: { label: '访谈录音转文字（阿里云百炼 Paraformer）', needs: 'asrKey' },
 };
 /** OpenAlex 把摘要存成「词 → 位置」的倒排表，拼回原文 */
 const abstractOf = inv => {
@@ -36,8 +37,9 @@ const DOI_RE = /^10\.\d{4,9}\/[^\s]+$/;
 const QTYPES = { single: '单选', multi: '多选', text: '简答题', scale: '量表题', nps: 'NPS量表' };
 
 export class PlatformServices {
-  constructor(storage, billing, fetchImpl = fetch, env = {}) {
-    this.storage = storage; this.billing = billing; this.fetch = fetchImpl; this.env = env; this.queue = Promise.resolve();
+  /** opts.dashscopeKey：没单独填语音密钥时，借用平台已开通的通义千问（百炼）Key；opts.audioDir：录音临时存放处 */
+  constructor(storage, billing, fetchImpl = fetch, env = {}, opts = {}) {
+    this.storage = storage; this.billing = billing; this.fetch = fetchImpl; this.env = env; this.queue = Promise.resolve(); this.opts = opts;
   }
   tx(fn, write = true) {
     const next = this.queue.catch(() => {}).then(async () => {
@@ -48,11 +50,13 @@ export class PlatformServices {
     });
     this.queue = next; return next;
   }
-  keys(s) { return { wjxKey: s.config.wjxKey || this.env.WJX_API_KEY || '', tycKey: s.config.tycKey || this.env.TYC_AUTHORIZATION || '' }; }
+  keys(s) { return { wjxKey: s.config.wjxKey || this.env.WJX_API_KEY || '', tycKey: s.config.tycKey || this.env.TYC_AUTHORIZATION || '', asrKey: s.config.asrKey || this.env.DASHSCOPE_API_KEY || this.dsKey || '' }; }
+  async refreshDsKey() { try { this.dsKey = (await this.opts.dashscopeKey?.()) || ''; } catch { this.dsKey = ''; } }
   prices(s) { return { ...DEFAULT_PRICES, ...(s.config.prices || {}) }; }
 
   /** 给用户 / AI 看：哪些服务开通了、多少钱 */
   async catalog() {
+    await this.refreshDsKey();
     return this.tx(s => {
       const k = this.keys(s), p = this.prices(s);
       return { services: Object.entries(SERVICES).map(([sid, x]) => ({ id: sid, label: x.label, ready: !x.needs || !!k[x.needs] })), prices: p, dailyCapCents: DAILY_CAP_CENTS };
@@ -60,15 +64,17 @@ export class PlatformServices {
   }
   /** 管理员：填密钥、改价格（密钥只写不读） */
   async configure(body) {
+    await this.refreshDsKey();
     return this.tx(s => {
       if (typeof body.wjxKey === 'string') s.config.wjxKey = body.wjxKey.trim().slice(0, 500);
       if (typeof body.tycKey === 'string') s.config.tycKey = body.tycKey.trim().slice(0, 4000);
+      if (typeof body.asrKey === 'string') s.config.asrKey = body.asrKey.trim().slice(0, 500);
       if (body.prices && typeof body.prices === 'object') {
         s.config.prices = { ...(s.config.prices || {}) };
         for (const [k, v] of Object.entries(body.prices)) if (k in DEFAULT_PRICES && Number.isSafeInteger(v) && v >= 0 && v <= 100000) s.config.prices[k] = v;
       }
       const k = this.keys(s);
-      return { wjx: !!k.wjxKey, tyc: !!k.tycKey, prices: this.prices(s) };
+      return { wjx: !!k.wjxKey, tyc: !!k.tycKey, asr: !!k.asrKey, asrOwn: !!s.config.asrKey, prices: this.prices(s) };
     });
   }
 
@@ -132,6 +138,58 @@ export class PlatformServices {
       out.push({ doi, exists: !!m, title: String(m?.title?.[0] || '').slice(0, 300), year: m?.issued?.['date-parts']?.[0]?.[0] || null });
     }
     return { results: out };
+  }
+
+  // ===== 访谈录音转文字（百炼 Paraformer，异步） =====
+  /** 录音文件存进临时目录，给百炼一个一次性的公开地址去拉；转完就删 */
+  async audioSubmit(owner, input) {
+    const { file, size, mime } = input;
+    if (!file || !size) throw fail('没收到录音文件');
+    await this.refreshDsKey();
+    const key = (await this.tx(s => this.keys(s), false)).asrKey;
+    if (!key) throw fail('录音转文字还没开通（管理员要先开通阿里云百炼）', 503);
+    const base = String(this.env.WAKE_PUBLIC_URL || this.env.BILLING_PUBLIC_URL || '').replace(/\/+$/, '');
+    if (!/^https:\/\//.test(base)) throw fail('后台没配置公开地址，转不了', 503);
+    const rec = { id: id(), owner, projectId: clean(input.projectId, 120) || null, nodeId: clean(input.nodeId, 120) || null, name: clean(input.name, 80) || '访谈录音', file, size, mime: clean(mime, 60), createdAt: Date.now(), status: 'PENDING', taskId: null, text: '', durationSec: 0 };
+    return this.charged(owner, 'asr_file', rec.id, `录音转文字：${rec.name}`, async () => {
+      const r = await this.fetch('https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription', {
+        method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-DashScope-Async': 'enable' },
+        body: JSON.stringify({ model: 'paraformer-v2', input: { file_urls: [`${base}/a/${file}`] }, parameters: { language_hints: ['zh', 'en'], diarization_enabled: true } }),
+        signal: AbortSignal.timeout(30000), redirect: 'error',
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body.output?.task_id) throw fail(`录音转文字没提交成功：${body.message || r.status}`, 502);
+      rec.taskId = body.output.task_id;
+      await this.tx(s => { (s.audios ||= []).push(rec); if (s.audios.length > 2000) s.audios = s.audios.slice(-2000); });
+      return { id: rec.id, name: rec.name, status: 'PENDING' };
+    }, rec.projectId);
+  }
+  /** 查进度；转好了就把文字存下来、删掉录音 */
+  async audioResult(owner, aid) {
+    const rec = await this.tx(s => (s.audios || []).find(x => x.id === aid && x.owner === owner), false);
+    if (!rec) throw fail('录音不存在', 404);
+    if (rec.status === 'SUCCEEDED' || rec.status === 'FAILED') return { id: rec.id, name: rec.name, status: rec.status, text: rec.text, durationSec: rec.durationSec, error: rec.error };
+    const key = (await this.tx(s => this.keys(s), false)).asrKey;
+    const r = await this.fetch(`https://dashscope.aliyuncs.com/api/v1/tasks/${encodeURIComponent(rec.taskId)}`, { method: 'POST', headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(20000), redirect: 'error' });
+    const body = await r.json().catch(() => ({}));
+    const st = body.output?.task_status;
+    let patch = null;
+    if (st === 'SUCCEEDED') {
+      const sub = (body.output.results || [])[0] || {};
+      if (sub.subtask_status === 'SUCCEEDED' && sub.transcription_url) {
+        const tr = await (await this.fetch(sub.transcription_url, { signal: AbortSignal.timeout(30000) })).json();
+        const t = (tr.transcripts || [])[0] || {};
+        const lines = (t.sentences || []).map(x => `${x.speaker_id !== undefined ? `【说话人${Number(x.speaker_id) + 1}】` : ''}${x.text}`);
+        patch = { status: 'SUCCEEDED', text: (lines.length ? lines.join('\n') : String(t.text || '')).slice(0, 200000), durationSec: Math.round((t.content_duration_in_milliseconds || 0) / 1000) };
+      } else patch = { status: 'FAILED', error: String(sub.message || sub.code || '识别失败').slice(0, 200) };
+    } else if (st === 'FAILED' || st === 'UNKNOWN') patch = { status: 'FAILED', error: String(body.output?.message || '识别失败').slice(0, 200) };
+    if (patch) {
+      await this.tx(s => { const x = (s.audios || []).find(y => y.id === aid); if (x) Object.assign(x, patch); });
+      await this.opts.removeAudio?.(rec.file).catch(() => {});
+      if (patch.status === 'FAILED') await this.billing.refundWallet(owner, `svc-asr_file-${rec.id}`, '录音转文字没成功，退回').catch(() => {});
+      return { id: rec.id, name: rec.name, ...patch };
+    }
+    return { id: rec.id, name: rec.name, status: st || 'RUNNING' };
   }
 
   // ===== 天眼查 =====
@@ -242,6 +300,8 @@ export class PlatformServices {
       price: clean(input.price, 40), cta: clean(input.cta, 16) || '我想要',
       ask: clean(input.ask, 40) || '留个联系方式，有消息第一时间告诉你',
       maker: clean(input.maker, 40), createdAt: Date.now(), views: 0, uniques: [], clicks: 0, leads: [], closed: false,
+      // 意向金（分）：0 = 不收；100–990 = 访客可付 ¥1–9.9 表示真想要，7 天后全额退回
+      deposit: Number.isSafeInteger(input.deposit) && input.deposit >= 100 && input.deposit <= 990 ? input.deposit : 0,
     };
     if (page.headline.length < 4) throw fail('预售页需要一句清楚的标题');
     const n = await this.tx(s => s.pages.filter(p => p.owner === owner && !p.closed).length, false);
@@ -254,8 +314,16 @@ export class PlatformServices {
   async pageStats(owner, pid) {
     return this.tx(s => {
       const p = s.pages.find(x => x.id === pid && x.owner === owner); if (!p) throw fail('页面不存在', 404);
-      return { id: p.id, headline: p.headline, views: p.views, visitors: p.uniques.length, clicks: p.clicks, leads: p.leads.map(l => ({ at: l.at, contact: l.contact, note: l.note })), closed: p.closed };
-    }, false);
+      return { id: p.id, headline: p.headline, views: p.views, visitors: p.uniques.length, clicks: p.clicks, leads: p.leads.map(l => ({ at: l.at, contact: l.contact, note: l.note })), closed: p.closed, deposit: p.deposit || 0 };
+    }, false).then(async r => ({ ...r, deposits: r.deposit && this.billing.depositStats ? await this.billing.depositStats(pid) : { count: 0, cents: 0, refunded: 0 } }));
+  }
+  /** 访客付意向金：只在作者开了意向金、页面没关时 */
+  async pageDeposit(pid, visitor) {
+    const p = await this.tx(s => s.pages.find(x => x.id === pid), false);
+    if (!p || p.closed || !p.deposit) throw fail('这个页面没有开意向金', 404);
+    const o = await this.billing.createDeposit({ pageId: pid, amount: p.deposit, title: p.headline, visitor });
+    if (!o.codeUrl) throw fail('微信支付暂时不可用，过一会儿再试', 503);
+    return { id: o.id, codeUrl: o.codeUrl, amount: o.amount };
   }
   async closePage(owner, pid) {
     return this.tx(s => { const p = s.pages.find(x => x.id === pid && x.owner === owner); if (!p) throw fail('页面不存在', 404); p.closed = true; return { closed: true }; });
@@ -263,7 +331,7 @@ export class PlatformServices {
   async mine(owner, projectId) {
     return this.tx(s => ({
       surveys: s.surveys.filter(x => x.owner === owner && (!projectId || x.projectId === projectId)).slice(-50).map(({ owner: _o, ...x }) => x),
-      pages: s.pages.filter(x => x.owner === owner && (!projectId || x.projectId === projectId)).slice(-50).map(p => ({ id: p.id, headline: p.headline, projectId: p.projectId, nodeId: p.nodeId, createdAt: p.createdAt, views: p.views, visitors: p.uniques.length, clicks: p.clicks, leads: p.leads.length, closed: p.closed })),
+      pages: s.pages.filter(x => x.owner === owner && (!projectId || x.projectId === projectId)).slice(-50).map(p => ({ id: p.id, headline: p.headline, projectId: p.projectId, nodeId: p.nodeId, createdAt: p.createdAt, views: p.views, visitors: p.uniques.length, clicks: p.clicks, leads: p.leads.length, closed: p.closed, deposit: p.deposit || 0 })),
     }), false);
   }
   /** 公开访问：记一次浏览（同一访客一天只算一个访客） */
@@ -292,13 +360,15 @@ export class PlatformServices {
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /** 预售页的固定模板：只放转义过的文字，不放任何外链 / 脚本以外的东西；页脚写明是谁做的 */
-export function renderPage(p) {
+export function renderPage(p, depositOpen = false) {
+  const dep = depositOpen && p.deposit ? p.deposit : 0;
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${esc(p.headline)}</title>
-<style>body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f7f7f4;color:#1f2a27}main{max-width:560px;margin:0 auto;padding:40px 20px 28px}h1{font-size:28px;line-height:1.3;margin:0 0 12px}p.sub{font-size:16px;color:#4a5753;line-height:1.7;margin:0 0 20px}ul{padding-left:20px;line-height:1.9;margin:0 0 20px}.price{font-size:20px;font-weight:700;color:#295c4d;margin:0 0 20px}button{width:100%;padding:14px;border:0;border-radius:12px;background:#295c4d;color:#fff;font-size:17px;font-weight:700}form{display:none;margin-top:16px}form.on{display:block}input,textarea{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cfd6d2;border-radius:10px;font-size:15px;margin-bottom:10px;font-family:inherit}.ok{display:none;padding:16px;background:#e4ede7;border-radius:12px;margin-top:16px}.ok.on{display:block}footer{max-width:560px;margin:0 auto;padding:0 20px 32px;font-size:12px;color:#8a9590;line-height:1.7}</style></head>
+<style>body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f7f7f4;color:#1f2a27}main{max-width:560px;margin:0 auto;padding:40px 20px 28px}h1{font-size:28px;line-height:1.3;margin:0 0 12px}p.sub{font-size:16px;color:#4a5753;line-height:1.7;margin:0 0 20px}ul{padding-left:20px;line-height:1.9;margin:0 0 20px}.price{font-size:20px;font-weight:700;color:#295c4d;margin:0 0 20px}button{width:100%;padding:14px;border:0;border-radius:12px;background:#295c4d;color:#fff;font-size:17px;font-weight:700}form{display:none;margin-top:16px}form.on{display:block}input,textarea{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cfd6d2;border-radius:10px;font-size:15px;margin-bottom:10px;font-family:inherit}.ok{display:none;padding:16px;background:#e4ede7;border-radius:12px;margin-top:16px}.ok.on{display:block}footer{max-width:560px;margin:0 auto;padding:0 20px 32px;font-size:12px;color:#8a9590;line-height:1.7}.dep{margin-top:24px;padding:16px;border:1px dashed #9db5aa;border-radius:12px}.dt{font-weight:700;margin:0 0 6px}.dn{font-size:13px;color:#4a5753;line-height:1.6;margin:0 0 10px}button.sec{background:#07a35a}#qr svg{display:block;width:200px;height:200px;margin:12px auto 0}</style></head>
 <body><main><h1>${esc(p.headline)}</h1>${p.sub ? `<p class="sub">${esc(p.sub)}</p>` : ''}${p.bullets.length ? `<ul>${p.bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}${p.price ? `<p class="price">${esc(p.price)}</p>` : ''}
 <button id="go">${esc(p.cta)}</button>
 <form id="f"><p>${esc(p.ask)}</p><input name="contact" required maxlength="80" placeholder="手机号 / 微信 / 邮箱"><textarea name="note" maxlength="200" rows="2" placeholder="想说的话（选填）"></textarea><button type="submit">提交</button></form>
-<div class="ok" id="ok">收到了，谢谢！有进展会联系你。</div></main>
-<footer>这个页面由 HiExplore 用户${p.maker ? `「${esc(p.maker)}」` : ''}创建，用来了解大家是否需要这个产品，产品可能还没做出来；不收任何费用。你留下的联系方式只给创建者用于联系你。</footer>
-<script>var f=document.getElementById('f'),go=document.getElementById('go'),ok=document.getElementById('ok');go.onclick=function(){go.style.display='none';f.className='on';fetch(location.pathname+'/lead',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({click:true})}).catch(function(){})};f.onsubmit=function(e){e.preventDefault();var d=new FormData(f);fetch(location.pathname+'/lead',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:d.get('contact'),note:d.get('note')})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'提交失败');f.className='';ok.className='ok on'})}).catch(function(err){alert(err.message)})};</script></body></html>`;
+<div class="ok" id="ok">收到了，谢谢！有进展会联系你。</div>
+${dep ? `<div class="dep"><p class="dt">真的想要？付 ¥${(dep / 100).toFixed(2)} 意向金</p><p class="dn">只是表示你真心想要，<b>${7} 天后全额原路退回</b>，不是购买、不会发货。</p><button id="pay" class="sec">微信付 ¥${(dep / 100).toFixed(2)} 意向金</button><div id="qr"></div><p id="ps" class="dn"></p></div>` : ''}</main>
+<footer>这个页面由 HiExplore 用户${p.maker ? `「${esc(p.maker)}」` : ''}创建，用来了解大家是否需要这个产品，产品可能还没做出来；${dep ? '意向金由 HiExplore 平台代收，到期全额原路退回，不会转给创建者' : '不收任何费用'}。你留下的联系方式只给创建者用于联系你。</footer>
+<script>var f=document.getElementById('f'),go=document.getElementById('go'),ok=document.getElementById('ok');go.onclick=function(){go.style.display='none';f.className='on';fetch(location.pathname+'/lead',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({click:true})}).catch(function(){})};f.onsubmit=function(e){e.preventDefault();var d=new FormData(f);fetch(location.pathname+'/lead',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contact:d.get('contact'),note:d.get('note')})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'提交失败');f.className='';ok.className='ok on'})}).catch(function(err){alert(err.message)})};var pay=document.getElementById('pay');if(pay){pay.onclick=function(){pay.disabled=true;var ps=document.getElementById('ps');fetch(location.pathname+'/deposit',{method:'POST'}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'暂时付不了');document.getElementById('qr').innerHTML=j.qr||'';ps.textContent=j.qr?'用微信扫码付款（手机上可长按识别二维码）':'';var n=0,t=setInterval(function(){if(++n>120){clearInterval(t);return}fetch(location.pathname+'/deposit/'+j.id).then(function(r){return r.json()}).then(function(s){if(s.paid){clearInterval(t);document.getElementById('qr').innerHTML='';ps.textContent='付好了，谢谢你的支持！到期会全额原路退回。'}}).catch(function(){})},3000)})}).catch(function(err){pay.disabled=false;ps.textContent=err.message})}}</script></body></html>`;
 }

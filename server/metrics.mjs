@@ -52,7 +52,8 @@ const internalTest = (owner, internal) => internal.has(owner) || /@(example\.(te
  * raw: { users, billing, shared, market }，都是各模块的原始状态。
  */
 export function computeMetrics(raw, { internal = new Set(), includeInternal = false, now = Date.now(), days = 30 } = {}) {
-  const keep = owner => !!owner && (includeInternal || !internalTest(owner, internal));
+  // 预售页意向金的订单挂在 page:xxx 名下（访客付、到期退回），不是用户，也不算收入
+  const keep = owner => !!owner && !String(owner).startsWith('page:') && (includeInternal || !internalTest(owner, internal));
   const billing = raw.billing || { orders: [], walletTx: [] };
   const shared = raw.shared || { calls: [] };
   const market = raw.market || { services: [], orders: [], demands: [] };
@@ -77,7 +78,7 @@ export function computeMetrics(raw, { internal = new Set(), includeInternal = fa
   const since = d => now - d * DAY;
   const activeIn = d => [...people.values()].filter(p => [...p.days].some(x => x >= cnDay(since(d)))).length;
   const usedAI = new Set((shared.calls || []).filter(c => keep(c.owner) && c.status !== 'failed').map(c => c.owner));
-  const paidOrders = (billing.orders || []).filter(o => o.status === 'paid' && keep(o.owner));
+  const paidOrders = (billing.orders || []).filter(o => o.status === 'paid' && o.sku !== 'deposit' && keep(o.owner));
   const payers = new Map();
   for (const o of paidOrders) payers.set(o.owner, (payers.get(o.owner) || 0) + 1);
   const marketUsers = new Set([...(market.services || []).map(s => s.owner), ...(market.demands || []).map(d => d.owner), ...(market.orders || []).flatMap(o => [o.buyer, o.seller])].filter(keep));

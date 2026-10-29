@@ -27,6 +27,7 @@ import { onModelUsage, meterFor, addModelSpend, reportModelUsage, setDefaultMete
 import { transferProject } from './services/billingClient';
 import { logQuestions } from './services/questionLog';
 import { paperNoteFor } from './services/papers';
+import { uploadAudio } from './services/realityActions';
 import LandingHero from './components/LandingHero';
 import { profileDue, buildProfileMessages, parseProfile, solvedCount, profileSkills, profileToListing, type PmProfileState } from './services/pmProfile';
 import { briefMarkdown, charterFromText, charterLabel } from './services/projectBrief';
@@ -2370,7 +2371,7 @@ ${plan.lead.duty}
         noteAuto('need', `问卷链接要发到目标人群手里才有回答：${r.url}（目标 ${a.target} 份）`, node.id, pid);
         pushFeedItem(feedStatus(`📋 为「${node.title}」发了问卷：${r.url}`, { tone: 'good', nodeId: node.id, detail: `${a.why}。把链接发到目标人群（群聊、朋友圈、客户群），回收够 ${a.target} 份我会自动总结并接着推进。${r.chargedCents ? `花了 ¥${(r.chargedCents / 100).toFixed(2)}` : ''}` }), pid);
       } else if (a.type === 'page') {
-        const r = await platformRequest<{ id: string; path: string; headline: string }>('/pages', 'POST', { projectId: pid, nodeId: node.id, headline: a.headline, sub: a.sub, bullets: a.bullets, price: a.price, cta: a.cta, maker: proj?.name });
+        const r = await platformRequest<{ id: string; path: string; headline: string }>('/pages', 'POST', { projectId: pid, nodeId: node.id, headline: a.headline, sub: a.sub, bullets: a.bullets, price: a.price, cta: a.cta, maker: proj?.name, deposit: a.deposit ? Math.round(a.deposit * 100) : 0 });
         const url = pageUrl(r.path);
         patchChecks(pid, l => addCheck(l, { id: r.id, kind: 'page', nodeId: node.id, title: r.headline, url, createdAt: Date.now(), visitors: 0, clicks: 0, leads: 0, ingested: 0 }));
         noteAuto('did', `为「${node.title}」做了预售页「${r.headline}」`, node.id, pid);
@@ -2420,7 +2421,7 @@ ${plan.lead.duty}
         id: `rp${Date.now().toString(36)}`, ts: Date.now(), kind: 'ask', nodeId: node.id, key: `realityPlan:${node.id}`,
         text: a.type === 'survey' ? `📋 「${node.title}」要问真人：发一份问卷「${a.title}」？` : a.type === 'page' ? `🧪 「${node.title}」要看真需求：做一个预售页「${a.headline}」？` : `🔎 「${node.title}」要核实：查一下「${a.keyword}」的企业信息？`,
         detail: `${a.why}${cost ? ` · 花费 ¥${(cost / 100).toFixed(2)}（从 AI 钱包扣）` : ' · 免费'}`,
-        list: a.type === 'survey' ? a.questions.map((q, i) => ({ title: `${i + 1}. ${q.title}`, sub: q.options?.join(' / ') })) : a.type === 'page' ? [{ title: a.headline, sub: a.sub }, ...a.bullets.map(b => ({ title: `· ${b}` })), ...(a.price ? [{ title: a.price }] : [])] : undefined,
+        list: a.type === 'survey' ? a.questions.map((q, i) => ({ title: `${i + 1}. ${q.title}`, sub: q.options?.join(' / ') })) : a.type === 'page' ? [{ title: a.headline, sub: a.sub }, ...a.bullets.map(b => ({ title: `· ${b}` })), ...(a.price ? [{ title: a.price }] : []), ...(a.deposit ? [{ title: `💰 开意向金 ¥${a.deposit}：访客真付钱表示想要，7 天后全额退回` }] : [])] : undefined,
         ask: { type: 'realityPlan', options: [{ id: 'go', label: a.type === 'survey' ? '发吧' : a.type === 'page' ? '做吧' : '查吧', primary: true }, { id: 'market', label: '改成去服务广场找人' }, { id: 'skip', label: '先不用' }] },
       };
       pendingActionsRef.current[card.id] = { pid, node, action: a };
@@ -2443,6 +2444,26 @@ ${plan.lead.duty}
     if (!node) return '还没有可以验证的步骤：先说清楚问题，让我拆出步骤';
     return realityAct({ ...node, notes: `${node.notes || ''}\n用户在对话里刚说：${userText.slice(0, 600)}` }, kind);
   }, [realityAct, selectedNodeId]);
+  /** 上传访谈 / 实验录音：后台转文字（几分钟），转好后自动提炼成证据、带回这一步 */
+  const audioPollRef = useRef<Record<string, number>>({});
+  const uploadRecording = useCallback(async (file: File) => {
+    const pid = feedProjectRef.current;
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!pid || !proj) return;
+    const nodes0 = (proj.nodes || []).filter(n => n.noteType !== 'simulation' && n.noteType !== 'readme');
+    const node = (selectedNodeId ? nodes0.find(n => n.id === selectedNodeId) : undefined) || nodes0.find(n => n.status === NodeStatus.VALIDATING) || nodes0.find(n => n.status === NodeStatus.EXPLORING) || nodes0.find(n => n.noteType === 'overview');
+    const r = await uploadAudio(file, pid, node?.id);
+    patchChecks(pid, l => addCheck(l, { id: r.id, kind: 'audio', nodeId: node?.id, title: r.name || file.name, createdAt: Date.now(), count: 0, ingested: 0, status: 'PENDING' }));
+    pushFeedItem(feedStatus(`🎙 录音「${r.name || file.name}」传上来了，正在转文字（一般几分钟）。转好后我会提炼成证据${node ? `，带回「${node.title}」这一步` : ''}`, { nodeId: node?.id }), pid);
+    // 转写一般几分钟：每 30 秒看一眼，最多看 40 分钟
+    let n = 0; window.clearInterval(audioPollRef.current[pid]);
+    audioPollRef.current[pid] = window.setInterval(() => {
+      const still = projectsRef.current.find(p => p.id === pid)?.realityChecks?.some(c => c.kind === 'audio' && !c.closed);
+      if (!still || ++n > 80) { window.clearInterval(audioPollRef.current[pid]); return; }
+      void syncRealityRef.current?.(pid);
+    }, 30000);
+  }, [selectedNodeId, patchChecks, pushFeedItem]);
+  const syncRealityRef = useRef<((pid: string) => Promise<void>) | null>(null);
   /** 去问卷星 / 预售页拿最新数字；新增够多就总结成证据、拿去推进 */
   const realitySyncRef = useRef(false);
   const syncReality = useCallback(async (pid: string) => {
@@ -2454,28 +2475,42 @@ ${plan.lead.duty}
       for (const c of live) {
         try {
           let raw = '';
-          if (c.kind === 'survey') {
+          if (c.kind === 'audio') {
+            const r = await platformRequest<{ status: string; text?: string; durationSec?: number; error?: string }>(`/audio/${c.id}`);
+            if (r.status === 'FAILED') { patchChecks(pid, l => patchCheck(l, c.id, { status: 'FAILED', closed: true, summary: r.error ? `没转成功：${r.error}` : undefined })); continue; }
+            if (r.status !== 'SUCCEEDED') continue;
+            patchChecks(pid, l => patchCheck(l, c.id, { status: 'SUCCEEDED', count: 1, durationSec: r.durationSec, checkedAt: Date.now() }));
+            Object.assign(c, { status: 'SUCCEEDED', count: 1, durationSec: r.durationSec });
+            raw = r.text || '';
+            // 原文也存一份到这一步的笔记里（转写全文，方便回看）
+            if (c.nodeId && raw) {
+              const n = projectsRef.current.find(p => p.id === pid)?.nodes?.find(x => x.id === c.nodeId);
+              if (n && pid === feedProjectRef.current) updateNode(c.nodeId, { fullNote: `${n.fullNote || n.notes || ''}\n\n## 🎙 录音转写：${c.title}\n\n${raw.slice(0, 20000)}`, noteUpdatedAt: Date.now() });
+            }
+          } else if (c.kind === 'survey') {
             const r = await platformRequest<{ count: number; report: string | null }>(`/surveys/${c.id}/results`);
             patchChecks(pid, l => patchCheck(l, c.id, { count: r.count, checkedAt: Date.now() }));
             raw = r.report || `有效答卷 ${r.count} 份（报告还没生成）`;
             c.count = r.count;
           } else {
-            const r = await platformRequest<{ views: number; visitors: number; clicks: number; leads: { at: number; note: string }[]; closed: boolean }>(`/pages/${c.id}`);
-            patchChecks(pid, l => patchCheck(l, c.id, { visitors: r.visitors, clicks: r.clicks, leads: r.leads.length, closed: r.closed, checkedAt: Date.now() }));
-            raw = `浏览 ${r.views} 次，独立访客 ${r.visitors}，点按钮 ${r.clicks}，留联系方式 ${r.leads.length}；留言：${r.leads.map(l => l.note).filter(Boolean).slice(0, 20).join(' | ')}`;
-            Object.assign(c, { visitors: r.visitors, clicks: r.clicks, leads: r.leads.length });
+            const r = await platformRequest<{ views: number; visitors: number; clicks: number; leads: { at: number; note: string }[]; closed: boolean; deposit?: number; deposits?: { count: number; cents: number } }>(`/pages/${c.id}`);
+            const deps = r.deposits?.count || 0;
+            patchChecks(pid, l => patchCheck(l, c.id, { visitors: r.visitors, clicks: r.clicks, leads: r.leads.length, deposits: deps, closed: r.closed, checkedAt: Date.now() }));
+            raw = `浏览 ${r.views} 次，独立访客 ${r.visitors}，点按钮 ${r.clicks}，留联系方式 ${r.leads.length}${r.deposit ? `，真的付了 ¥${(r.deposit / 100).toFixed(2)} 意向金的 ${deps} 人（到期全额退回）` : ''}；留言：${r.leads.map(l => l.note).filter(Boolean).slice(0, 20).join(' | ')}`;
+            Object.assign(c, { visitors: r.visitors, clicks: r.clicks, leads: r.leads.length, deposits: deps });
           }
           if (!shouldIngest(c)) continue;
           const node = proj.nodes?.find(n => n.id === c.nodeId);
           const resp = await meterFor(pid, () => callLLM(buildIngestMessages(proj, node, c, raw) as any, { jsonMode: true, maxTokens: 600, timeoutMs: 60000, task: 'simple' }));
           const sum = parseIngest(resp.content);
-          const now = c.kind === 'survey' ? c.count || 0 : (c.visitors || 0) + (c.leads || 0) * 10;
-          patchChecks(pid, l => patchCheck(l, c.id, { ingested: now, summary: sum?.claim }));
-          if (sum) applyReality(pid, c.nodeId, sum.claim, sum.detail, c.kind === 'survey' ? `问卷「${c.title}」${c.count} 份真实回答` : `预售页「${c.title}」的真实访问`);
+          const now = c.kind === 'survey' || c.kind === 'audio' ? c.count || 0 : (c.visitors || 0) + (c.leads || 0) * 10 + (c.deposits || 0) * 30;
+          patchChecks(pid, l => patchCheck(l, c.id, { ingested: c.kind === 'audio' ? 1 : now, summary: sum?.claim, ...(c.kind === 'audio' ? { closed: true } : {}) }));
+          if (sum) applyReality(pid, c.nodeId, sum.claim, sum.detail, c.kind === 'audio' ? `录音「${c.title}」里受访者的原话` : c.kind === 'survey' ? `问卷「${c.title}」${c.count} 份真实回答` : `预售页「${c.title}」的真实访问`);
         } catch (e) { console.warn('[reality] 同步失败', c.id, e); }
       }
     } finally { realitySyncRef.current = false; }
-  }, [patchChecks, applyReality]);
+  }, [patchChecks, applyReality, updateNode]);
+  useEffect(() => { syncRealityRef.current = syncReality; }, [syncReality]);
 
   const toggleJobs = useCallback((pid: string, on: boolean) => {
     const proj = projectsRef.current.find(p => p.id === pid); if (!proj) return;
@@ -3626,7 +3661,7 @@ ${plan.lead.duty}
 
   const pulsePanel = currentProject ? (<div className="space-y-3">
     <DigestPanel digests={currentProject.digests} busy={digestBusy} onNow={() => void giveDigest(currentProject.id, true)} />
-    <RealityPanel checks={currentProject.realityChecks} onSync={() => syncReality(currentProject.id)} onClose={async (id: string) => { try { await platformRequest(`/pages/${id}/close`, 'POST'); patchChecks(currentProject.id, l => patchCheck(l, id, { closed: true })); } catch (e) { addNotification('warning', '没能关闭页面', e instanceof Error ? e.message : String(e)); } }} onOpenNode={(id: string) => setSelectedNodeId(id)} />
+    <RealityPanel checks={currentProject.realityChecks} onUpload={loggedIn() ? uploadRecording : undefined} onSync={() => syncReality(currentProject.id)} onClose={async (id: string) => { try { await platformRequest(`/pages/${id}/close`, 'POST'); patchChecks(currentProject.id, l => patchCheck(l, id, { closed: true })); } catch (e) { addNotification('warning', '没能关闭页面', e instanceof Error ? e.message : String(e)); } }} onOpenNode={(id: string) => setSelectedNodeId(id)} />
     <ProjectPulse
       life={lifeOf(currentProject, Date.now(), projects.indexOf(currentProject))}
       waking={wakingId === currentProject.id}
