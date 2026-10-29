@@ -2390,24 +2390,25 @@ ${plan.lead.duty}
     }
   }, [patchChecks, noteAuto, pushFeedItem, patchAutonomy, applyReality]);
 
-  const realityAct = useCallback(async (node: ProblemNode, force?: RealityKind) => {
+  const realityAct = useCallback(async (node: ProblemNode, force?: RealityKind): Promise<string> => {
     const pid = feedProjectRef.current;
     const proj = projectsRef.current.find(p => p.id === pid);
-    if (!pid || !proj || realityBusyRef.current.has(node.id)) return;
-    if (!loggedIn()) { pmActRef.current?.(node); return; }
+    if (!pid || !proj || realityBusyRef.current.has(node.id)) return '这一步已经在准备现实验证了';
+    if (!loggedIn()) { pmActRef.current?.(node); return '这台电脑没登录正式网站，平台服务用不了：请用户先登录'; }
     realityBusyRef.current.add(node.id);
     try {
       let cat: PlatformCatalog;
-      try { cat = await loadPlatformCatalog(); } catch { pmActRef.current?.(node); return; }
+      try { cat = await loadPlatformCatalog(); } catch { pmActRef.current?.(node); return '平台服务暂时连不上，改去服务广场找人'; }
       const ready = Object.fromEntries(cat.services.map(s => [s.id, s.ready]));
-      if (force && force !== 'market' && !ready[force]) { pushFeedItem(feedStatus(`「${force === 'survey' ? '问卷' : force === 'page' ? '预售页' : '企业信息'}」服务还没开通（管理员要先在后台填密钥）`, { tone: 'warn' }), pid); return; }
+      if (force && force !== 'market' && !ready[force]) { const m = `「${force === 'survey' ? '问卷' : force === 'page' ? '预售页' : '企业信息'}」服务还没开通（管理员要先在后台填密钥）`; pushFeedItem(feedStatus(m, { tone: 'warn' }), pid); return m; }
       const resp = await meterFor(pid, () => callLLM(buildActionMessages(proj, node, ready, cat.prices, force) as any, { jsonMode: true, maxTokens: 1500, timeoutMs: 90000 }));
       const a = parseAction(resp.content, ready) || { type: 'market' as const, why: '' };
-      if (a.type === 'market') { pmActRef.current?.(node); return; }
-      if (a.type === 'none') { noteAuto('think', `「${node.title}」暂时不需要去现实里验证：${a.why}`, node.id, pid); return; }
+      if (a.type === 'market') { pmActRef.current?.(node); return `这件事平台服务做不了，改去服务广场找人：${a.why}`; }
+      if (a.type === 'none') { noteAuto('think', `「${node.title}」暂时不需要去现实里验证：${a.why}`, node.id, pid); return `判断现在还不用去现实里验证：${a.why}`; }
       const cost = actionCost(a, cat.prices);
       const auto = isRunningAutonomously(proj) && cost <= (proj.charter?.autoBuyCNY || 0) * 100 && budgetLeftCNY(proj, modelPricesRef.current) * 100 >= cost;
-      if (auto) { await executeReality(pid, node, a); return; }
+      const what = a.type === 'survey' ? `问卷「${a.title}」（${a.questions.length} 题，目标回收 ${a.target} 份）` : a.type === 'page' ? `预售页「${a.headline}」` : `「${a.keyword}」的企业信息查询`;
+      if (auto) { await executeReality(pid, node, a); return `已经直接发出${what}（在自主运行的花钱权限内）`; }
       // 不在自主运行（或超出花钱权限）：把方案摆出来，你点头才做
       const card: FeedItem = {
         id: `rp${Date.now().toString(36)}`, ts: Date.now(), kind: 'ask', nodeId: node.id, key: `realityPlan:${node.id}`,
@@ -2418,11 +2419,24 @@ ${plan.lead.duty}
       };
       pendingActionsRef.current[card.id] = { pid, node, action: a };
       pushFeedItem(card, pid);
-    } catch (e) { console.warn('[reality] 没想好怎么验证', e); pmActRef.current?.(node); }
+      return `设计好了${what}，确认卡已经放在对话里（${cost ? `花 ¥${(cost / 100).toFixed(2)}，从钱包扣` : '免费'}）：用户点「${a.type === 'survey' ? '发吧' : a.type === 'page' ? '做吧' : '查吧'}」就真的发出去，答卷会自动回收、够数后自动总结成证据`;
+    } catch (e) { console.warn('[reality] 没想好怎么验证', e); pmActRef.current?.(node); return '没设计成，改去服务广场找人'; }
     finally { realityBusyRef.current.delete(node.id); }
   }, [loadPlatformCatalog, executeReality, noteAuto, pushFeedItem]);
   useEffect(() => { realityRef.current = (n, f) => void realityAct(n, f); }, [realityAct]);
 
+  /** 对话里说「发问卷 / 做预售页 / 查企业」：挑当前这一步，把用户刚说的话带上，设计好方案放确认卡 */
+  const realityFromChat = useCallback(async (kind: RealityKind, userText: string): Promise<string> => {
+    const proj = projectsRef.current.find(p => p.id === feedProjectRef.current);
+    const nodes0 = (proj?.nodes || []).filter(n => n.noteType !== 'simulation');
+    const sel = selectedNodeId ? nodes0.find(n => n.id === selectedNodeId) : undefined;
+    const node = (sel && sel.noteType !== 'readme' ? sel : undefined)
+      || nodes0.find(n => n.status === NodeStatus.VALIDATING) || nodes0.find(n => n.status === NodeStatus.EXPLORING)
+      || nodes0.find(n => n.status === NodeStatus.UNEXPLORED && n.noteType !== 'readme' && n.noteType !== 'overview')
+      || nodes0.find(n => n.noteType === 'overview') || nodes0[0];
+    if (!node) return '还没有可以验证的步骤：先说清楚问题，让我拆出步骤';
+    return realityAct({ ...node, notes: `${node.notes || ''}\n用户在对话里刚说：${userText.slice(0, 600)}` }, kind);
+  }, [realityAct, selectedNodeId]);
   /** 去问卷星 / 预售页拿最新数字；新增够多就总结成证据、拿去推进 */
   const realitySyncRef = useRef(false);
   const syncReality = useCallback(async (pid: string) => {
@@ -4050,8 +4064,9 @@ ${plan.lead.duty}
           </div>
           <div className="flex-1 overflow-hidden">
             <TeamChat key={`${currentProjectId || 'none'}:${currentProject?.worktree?.activeBranchId || 'main'}`} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} feed={visibleFeed} onAnswerFeed={handleAnswerFeed} feedBusy={outlineBusy}
-              capability={currentProject ? `${marketCapability(currentProject, loggedIn())}\n【钱包】这个项目有自己的项目钱包：AI 用平台模型、在服务广场下单花的钱从这里出，接单赚的钱进这里；用户可以随时往里放钱或收回。钱只在平台内流转，不能提现、不能转给外部的人。\n【接单】用户允许后，你可以在服务广场挑自己能独立做完的需求（调研、整理、写作、方案）报价、交付，买方验收后收入进项目钱包；也可以把你的「AI 项目经理简介」挂成服务，等人下单。用户说「先接单赚钱」时，系统会真的去做，你照实汇报结果。` : ''}
-              onEarn={currentProject ? () => earnNow(currentProject.id) : undefined} />
+              capability={currentProject ? `${marketCapability(currentProject, loggedIn())}\n【钱包】这个项目有自己的项目钱包：AI 用平台模型、在服务广场下单花的钱从这里出，接单赚的钱进这里；用户可以随时往里放钱或收回。钱只在平台内流转，不能提现、不能转给外部的人。\n【平台直连服务】不用找人代发，你能直接调用：问卷星发问卷（每份几元，从钱包扣，答卷自动回收、够数自动总结成证据）、做预售 / 报名页（免费，统计访客、点击、留联系方式）、查企业工商信息。用户说要发问卷、做预售页时，系统会直接把问卷 / 页面设计好，放一张确认卡，用户点一下就发出去——不要说「没有问卷星的操作能力、要去服务广场找人代发」。\n【接单】用户允许后，你可以在服务广场挑自己能独立做完的需求（调研、整理、写作、方案）报价、交付，买方验收后收入进项目钱包；也可以把你的「AI 项目经理简介」挂成服务，等人下单。用户说「先接单赚钱」时，系统会真的去做，你照实汇报结果。` : ''}
+              onEarn={currentProject ? () => earnNow(currentProject.id) : undefined}
+              onReality={currentProject ? (k, txt) => realityFromChat(k, txt) : undefined} />
           </div>
         </div>
 

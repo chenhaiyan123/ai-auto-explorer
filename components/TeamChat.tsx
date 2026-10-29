@@ -56,7 +56,9 @@ const TeamChat: React.FC<{
   capability?: string;
   /** 用户在对话里说「先去接单赚钱」：系统真的去做（打开接单、写简介、去服务广场挑单），返回做了什么 */
   onEarn?: () => Promise<string>;
-}> = ({ project, nodes, selectedNode, onAppendToNote, onOpenNode, chatHistory, onUpdateChatHistory, prefill, feed, onAnswerFeed, feedBusy, capability, onEarn }) => {
+  /** 用户说「发问卷 / 做预售页 / 查企业」：系统直接设计好方案、放确认卡，返回做了什么 */
+  onReality?: (kind: 'survey' | 'page' | 'company', userText: string) => Promise<string>;
+}> = ({ project, nodes, selectedNode, onAppendToNote, onOpenNode, chatHistory, onUpdateChatHistory, prefill, feed, onAnswerFeed, feedBusy, capability, onEarn, onReality }) => {
   const [msgs, setMsgs] = useState<ChatMsg[]>(() => (chatHistory || []).map(parse));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -136,7 +138,10 @@ const TeamChat: React.FC<{
       const responder = mentioned || lead;
       // 「先去接单赚钱」：真的去做，再让负责人照实汇报
       const earn = !mentioned && onEarn && /接单|接活|赚钱|挣钱|回血|变现/.test(text) ? await onEarn().catch((e: any) => `没做成：${e?.message || e}`) : '';
-      const reply = await speak(responder, text, base, earn);
+      // 「发问卷 / 做预售页 / 查企业」：平台直连服务，系统直接设计好方案放确认卡（不用去服务广场找人代发）
+      const kind = /问卷|调研|调查/.test(text) ? 'survey' : /预售|落地页|报名页|定金/.test(text) ? 'page' : /企业|工商|公司信息|天眼查/.test(text) ? 'company' : null;
+      const real = !mentioned && onReality && kind && /发|做|搞|开始|来|吧|查|放钱了|充值了/.test(text) ? await onReality(kind, text).catch((e: any) => `没做成：${e?.message || e}`) : '';
+      const reply = await speak(responder, text, base, [earn, real].filter(Boolean).join('\n'));
       setMsgs(prev => [...prev, { role: 'model', agent: responder, text: reply, ts: Date.now() }]);
     } catch (e: any) {
       setMsgs(prev => [...prev, { role: 'model', agent: lead, text: '（出错了：' + (e?.message || e) + '）请检查右上角模型设置。', ts: Date.now() }]);
