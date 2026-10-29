@@ -2302,6 +2302,28 @@ ${plan.lead.duty}
       return e?.message || String(e);
     }
   }, [patchProfile, pushFeedItem, patchProject]);
+  /** 对话里说「先去接单赚钱」：打开接单、没简介就先写一份、去服务广场挑一轮单——真的做，再照实汇报 */
+  const earnNow = useCallback(async (pid: string): Promise<string> => {
+    const proj = projectsRef.current.find(p => p.id === pid);
+    if (!proj) return '';
+    if (!loggedIn()) return '没去成：这台电脑没登录正式网站，AI 进不了服务广场。请用户先登录，再说一次「去接单」。';
+    const did: string[] = [];
+    if (!proj.charter?.allowJobs) {
+      const charter = { ...(proj.charter || { autoBuyCNY: 0, confirmedAt: Date.now() }), allowJobs: true };
+      projectsRef.current = projectsRef.current.map(p => (p.id === pid ? { ...p, charter } : p));
+      patchProject(pid, { charter });
+      did.push('打开了「允许 AI 接单」（只接 AI 自己能独立做完的调研、整理、写作类需求）');
+    }
+    if (!proj.pmProfile?.draft && !proj.pmProfile?.published) {
+      const err = await refreshProfile(pid, true);
+      const now = projectsRef.current.find(p => p.id === pid)?.pmProfile?.draft;
+      did.push(now ? `写好了一份 AI 项目经理简介草稿「${now.title}」，用户在「钱包」页确认后就挂到服务广场，别人能直接找我下单` : `简介没写成${err ? `（${err}）` : ''}`);
+    }
+    try { did.push(`去服务广场看了一轮：${await workJobs(pid)}`); }
+    catch (e) { did.push(`去服务广场没看成：${e instanceof Error ? e.message : String(e)}`); }
+    did.push('接单收入会在买方验收后进这个项目的钱包，之后可以直接拿来做研发（买服务、用模型）；钱只在平台内用，不能提现');
+    return did.map(x => '- ' + x).join('\n');
+  }, [patchProject, refreshProfile, workJobs]);
   // ===== 让 AI 碰到真人：问卷 / 预售页 / 企业信息 =====
   const platformCatRef = useRef<{ at: number; cat: PlatformCatalog } | null>(null);
   const pendingActionsRef = useRef<Record<string, { pid: string; node: ProblemNode; action: RealityAction }>>({});
@@ -4027,7 +4049,9 @@ ${plan.lead.duty}
             </div>
           </div>
           <div className="flex-1 overflow-hidden">
-            <TeamChat key={`${currentProjectId || 'none'}:${currentProject?.worktree?.activeBranchId || 'main'}`} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} feed={visibleFeed} onAnswerFeed={handleAnswerFeed} feedBusy={outlineBusy} />
+            <TeamChat key={`${currentProjectId || 'none'}:${currentProject?.worktree?.activeBranchId || 'main'}`} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} feed={visibleFeed} onAnswerFeed={handleAnswerFeed} feedBusy={outlineBusy}
+              capability={currentProject ? `${marketCapability(currentProject, loggedIn())}\n【钱包】这个项目有自己的项目钱包：AI 用平台模型、在服务广场下单花的钱从这里出，接单赚的钱进这里；用户可以随时往里放钱或收回。钱只在平台内流转，不能提现、不能转给外部的人。\n【接单】用户允许后，你可以在服务广场挑自己能独立做完的需求（调研、整理、写作、方案）报价、交付，买方验收后收入进项目钱包；也可以把你的「AI 项目经理简介」挂成服务，等人下单。用户说「先接单赚钱」时，系统会真的去做，你照实汇报结果。` : ''}
+              onEarn={currentProject ? () => earnNow(currentProject.id) : undefined} />
           </div>
         </div>
 

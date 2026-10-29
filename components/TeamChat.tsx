@@ -52,7 +52,11 @@ const TeamChat: React.FC<{
   feed?: FeedItem[];
   onAnswerFeed?: (item: FeedItem, optionId: string, text?: string) => void;
   feedBusy?: boolean;
-}> = ({ project, nodes, selectedNode, onAppendToNote, onOpenNode, chatHistory, onUpdateChatHistory, prefill, feed, onAnswerFeed, feedBusy }) => {
+  /** 这个项目的 AI 在平台上真实能做什么（服务广场、钱包、接单）——写进对话提示词，不让模型按常识以为「做不到」 */
+  capability?: string;
+  /** 用户在对话里说「先去接单赚钱」：系统真的去做（打开接单、写简介、去服务广场挑单），返回做了什么 */
+  onEarn?: () => Promise<string>;
+}> = ({ project, nodes, selectedNode, onAppendToNote, onOpenNode, chatHistory, onUpdateChatHistory, prefill, feed, onAnswerFeed, feedBusy, capability, onEarn }) => {
   const [msgs, setMsgs] = useState<ChatMsg[]>(() => (chatHistory || []).map(parse));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -106,8 +110,8 @@ const TeamChat: React.FC<{
   const projectCtx = () => project ? [`项目：${project.name}\n目标：${project.metaProblem || project.name}`, keyInfoContext(project.keyInfo)].filter(Boolean).join('\n') : '';
 
   // 让某个成员发言
-  const speak = async (agent: string, userText: string, history: ChatMsg[]): Promise<string> => {
-    const sys = `你是 AI 项目团队里的「${agent}」。请以该角色的专业视角，简明但有干货地回应（200-400字，可用要点）。如果信息不足，提出你需要的输入。\n${projectCtx()}`;
+  const speak = async (agent: string, userText: string, history: ChatMsg[], done = ''): Promise<string> => {
+    const sys = `你是 AI 项目团队里的「${agent}」。请以该角色的专业视角，简明但有干货地回应（200-400字，可用要点）。如果信息不足，提出你需要的输入。\n${projectCtx()}${capability ? `\n\n你在这个平台上真实拥有的能力（以这个为准，不要按常识说自己「做不到」「没有资金操作能力」）：\n${capability}` : ''}${done ? `\n\n系统刚刚按用户的要求真实做了这些事（照实告诉用户，接着说下一步）：\n${done}` : ''}`;
     const ctx = refNotesContext(userText);
     const recent = history.slice(-4).map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: (h.agent ? `${h.agent}：` : '') + h.text }));
     return await callGemini([
@@ -130,7 +134,9 @@ const TeamChat: React.FC<{
       // @某成员 → 仅 ta 回应；否则总协调回应
       const mentioned = members.find(m => text.includes('@' + m));
       const responder = mentioned || lead;
-      const reply = await speak(responder, text, base);
+      // 「先去接单赚钱」：真的去做，再让负责人照实汇报
+      const earn = !mentioned && onEarn && /接单|接活|赚钱|挣钱|回血|变现/.test(text) ? await onEarn().catch((e: any) => `没做成：${e?.message || e}`) : '';
+      const reply = await speak(responder, text, base, earn);
       setMsgs(prev => [...prev, { role: 'model', agent: responder, text: reply, ts: Date.now() }]);
     } catch (e: any) {
       setMsgs(prev => [...prev, { role: 'model', agent: lead, text: '（出错了：' + (e?.message || e) + '）请检查右上角模型设置。', ts: Date.now() }]);
