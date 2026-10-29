@@ -5,7 +5,7 @@ import type { RealityCheck } from '../services/realityActions';
  * 现实验证：AI 发出去的问卷、预售页、查过的企业，以及回来的真实数字。
  * 链接要发到目标人群手里才有回答——这里一键复制。
  */
-const ICON: Record<RealityCheck['kind'], string> = { survey: '📋', page: '🧪', company: '🔎', audio: '🎙' };
+const ICON: Record<RealityCheck['kind'], string> = { survey: '📋', page: '🧪', company: '🔎', audio: '🎙', poi: '📍', stats: '📊' };
 
 const RealityPanel: React.FC<{ checks?: RealityCheck[]; onSync: () => Promise<void>; onClose: (id: string) => void; onOpenNode: (id: string) => void; onUpload?: (f: File) => Promise<void> }> = ({ checks = [], onSync, onClose, onOpenNode, onUpload }) => {
   const [busy, setBusy] = useState(false);
@@ -34,7 +34,7 @@ const RealityPanel: React.FC<{ checks?: RealityCheck[]; onSync: () => Promise<vo
             <div className="flex items-center gap-2 flex-wrap">
               <span>{ICON[c.kind]}</span>
               <span className="text-slate-200 font-medium">{c.title}</span>
-              {c.closed && c.kind !== 'company' && <span className="text-[10px] text-slate-500">已关闭</span>}
+              {c.closed && !['company', 'poi', 'stats'].includes(c.kind) && <span className="text-[10px] text-slate-500">已关闭</span>}
               {c.nodeId && <button onClick={() => onOpenNode(c.nodeId!)} className="text-[11px] text-blue-300 hover:underline">看这一步</button>}
             </div>
             {c.kind === 'audio' && <div className="text-slate-400">{c.status === 'SUCCEEDED' ? `转好了 · ${Math.round((c.durationSec || 0) / 60)} 分钟` : c.status === 'FAILED' ? '没转成功（钱已退回）' : '正在转文字，一般几分钟…'}</div>}

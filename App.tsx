@@ -27,7 +27,7 @@ import { onModelUsage, meterFor, addModelSpend, reportModelUsage, setDefaultMete
 import { transferProject } from './services/billingClient';
 import { logQuestions } from './services/questionLog';
 import { paperNoteFor } from './services/papers';
-import { uploadAudio } from './services/realityActions';
+import { uploadAudio, STAT_INDICATORS } from './services/realityActions';
 import LandingHero from './components/LandingHero';
 import { profileDue, buildProfileMessages, parseProfile, solvedCount, profileSkills, profileToListing, type PmProfileState } from './services/pmProfile';
 import { briefMarkdown, charterFromText, charterLabel } from './services/projectBrief';
@@ -2388,6 +2388,17 @@ ${plan.lead.duty}
         const sum = parseIngest(await llm(buildIngestMessages(proj!, node, check, raw)));
         patchChecks(pid, l => addCheck(l, { ...check, summary: sum?.claim }));
         applyReality(pid, node.id, sum?.claim || `查到企业「${top}」的工商信息`, sum?.detail || '', '天眼查企业信息');
+      } else if (a.type === 'poi' || a.type === 'stats') {
+        const r = a.type === 'poi'
+          ? await platformRequest<{ total: number; sampled: number; byDistrict: Record<string, number>; pois: { name: string; district: string }[]; chargedCents?: number; note: string }>('/poi', 'POST', { keyword: a.keyword, city: a.city, around: a.around, radius: a.radius, projectId: pid, requestId: crypto.randomUUID() })
+          : await platformRequest<{ results: { code: string; name: string; values: { year: number; value: number }[] }[]; source: string }>('/stats', 'POST', { indicators: a.indicators, country: a.country });
+        spent((r as { chargedCents?: number }).chargedCents || 0);
+        const title = a.type === 'poi' ? `门店统计：${a.city}${a.around ? ` ${a.around}周边` : ''}「${a.keyword}」` : `宏观数据：${a.indicators.map(c => STAT_INDICATORS[c] || c).join('、')}`;
+        const raw = JSON.stringify(r).slice(0, 8000);
+        const check: RealityCheck = { id: crypto.randomUUID().slice(0, 12), kind: a.type, nodeId: node.id, title, createdAt: Date.now(), ingested: 1, closed: true };
+        const sum = parseIngest(await llm(buildIngestMessages(proj!, node, check, raw)));
+        patchChecks(pid, l => addCheck(l, { ...check, summary: sum?.claim }));
+        applyReality(pid, node.id, sum?.claim || title, sum?.detail || '', a.type === 'poi' ? '高德地图兴趣点' : '世界银行公开数据');
       }
     } catch (e: any) {
       const msg = e?.message || String(e);
@@ -2407,19 +2418,21 @@ ${plan.lead.duty}
       let cat: PlatformCatalog;
       try { cat = await loadPlatformCatalog(); } catch { pmActRef.current?.(node); return '平台服务暂时连不上，改去服务广场找人'; }
       const ready = Object.fromEntries(cat.services.map(s => [s.id, s.ready]));
-      if (force && force !== 'market' && !ready[force]) { const m = `「${force === 'survey' ? '问卷' : force === 'page' ? '预售页' : '企业信息'}」服务还没开通（管理员要先在后台填密钥）`; pushFeedItem(feedStatus(m, { tone: 'warn' }), pid); return m; }
+      if (force && force !== 'market' && !ready[force]) { const m = `「${force === 'survey' ? '问卷' : force === 'page' ? '预售页' : force === 'poi' ? '门店统计' : force === 'stats' ? '宏观数据' : '企业信息'}」服务还没开通（管理员要先在后台填密钥）`; pushFeedItem(feedStatus(m, { tone: 'warn' }), pid); return m; }
       const resp = await meterFor(pid, () => callLLM(buildActionMessages(proj, node, ready, cat.prices, force) as any, { jsonMode: true, maxTokens: 1500, timeoutMs: 90000 }));
       const a = parseAction(resp.content, ready) || { type: 'market' as const, why: '' };
       if (a.type === 'market') { pmActRef.current?.(node); return `这件事平台服务做不了，改去服务广场找人：${a.why}`; }
       if (a.type === 'none') { noteAuto('think', `「${node.title}」暂时不需要去现实里验证：${a.why}`, node.id, pid); return `判断现在还不用去现实里验证：${a.why}`; }
       const cost = actionCost(a, cat.prices);
       const auto = isRunningAutonomously(proj) && cost <= (proj.charter?.autoBuyCNY || 0) * 100 && budgetLeftCNY(proj, modelPricesRef.current) * 100 >= cost;
-      const what = a.type === 'survey' ? `问卷「${a.title}」（${a.questions.length} 题，目标回收 ${a.target} 份）` : a.type === 'page' ? `预售页「${a.headline}」` : `「${a.keyword}」的企业信息查询`;
+      const what = a.type === 'survey' ? `问卷「${a.title}」（${a.questions.length} 题，目标回收 ${a.target} 份）` : a.type === 'page' ? `预售页「${a.headline}」` : a.type === 'poi' ? `${a.city}${a.around ? ` ${a.around}周边` : ''}「${a.keyword}」的门店统计` : a.type === 'stats' ? `宏观数据查询（${a.indicators.map(c => STAT_INDICATORS[c] || c).join('、')}）` : `「${a.keyword}」的企业信息查询`;
+      // 免费又只是查数据的（宏观数据）：直接查，不用问
+      if (a.type === 'stats') { await executeReality(pid, node, a); return `已经查了${what}，结果记进了事实看板`; }
       if (auto) { await executeReality(pid, node, a); return `已经直接发出${what}（在自主运行的花钱权限内）`; }
       // 不在自主运行（或超出花钱权限）：把方案摆出来，你点头才做
       const card: FeedItem = {
         id: `rp${Date.now().toString(36)}`, ts: Date.now(), kind: 'ask', nodeId: node.id, key: `realityPlan:${node.id}`,
-        text: a.type === 'survey' ? `📋 「${node.title}」要问真人：发一份问卷「${a.title}」？` : a.type === 'page' ? `🧪 「${node.title}」要看真需求：做一个预售页「${a.headline}」？` : `🔎 「${node.title}」要核实：查一下「${a.keyword}」的企业信息？`,
+        text: a.type === 'survey' ? `📋 「${node.title}」要问真人：发一份问卷「${a.title}」？` : a.type === 'page' ? `🧪 「${node.title}」要看真需求：做一个预售页「${a.headline}」？` : a.type === 'poi' ? `📍 「${node.title}」要数真实门店：查 ${a.city}${a.around ? ` ${a.around}周边` : ''}有多少家「${a.keyword}」？` : `🔎 「${node.title}」要核实：查一下「${(a as { keyword: string }).keyword}」的企业信息？`,
         detail: `${a.why}${cost ? ` · 花费 ¥${(cost / 100).toFixed(2)}（从 AI 钱包扣）` : ' · 免费'}`,
         list: a.type === 'survey' ? a.questions.map((q, i) => ({ title: `${i + 1}. ${q.title}`, sub: q.options?.join(' / ') })) : a.type === 'page' ? [{ title: a.headline, sub: a.sub }, ...a.bullets.map(b => ({ title: `· ${b}` })), ...(a.price ? [{ title: a.price }] : []), ...(a.deposit ? [{ title: `💰 开意向金 ¥${a.deposit}：访客真付钱表示想要，7 天后全额退回` }] : [])] : undefined,
         ask: { type: 'realityPlan', options: [{ id: 'go', label: a.type === 'survey' ? '发吧' : a.type === 'page' ? '做吧' : '查吧', primary: true }, { id: 'market', label: '改成去服务广场找人' }, { id: 'skip', label: '先不用' }] },
@@ -4105,7 +4118,7 @@ ${plan.lead.duty}
           </div>
           <div className="flex-1 overflow-hidden">
             <TeamChat key={`${currentProjectId || 'none'}:${currentProject?.worktree?.activeBranchId || 'main'}`} project={currentProject} nodes={nodes} selectedNode={selectedNode} onAppendToNote={(nodeId, text) => { const nn = nodes.find(n => n.id === nodeId); updateNode(nodeId, { fullNote: ((nn?.fullNote || nn?.notes || '') + text), noteUpdatedAt: Date.now() }); setSelectedNodeId(nodeId); }} onOpenNode={(id) => setSelectedNodeId(id)} chatHistory={((currentProject as any)?.butlerChatHistory) || []} onUpdateChatHistory={handleUpdateButlerChat} prefill={chatPrefill} feed={visibleFeed} onAnswerFeed={handleAnswerFeed} feedBusy={outlineBusy}
-              capability={currentProject ? `${marketCapability(currentProject, loggedIn())}\n【钱包】这个项目有自己的项目钱包：AI 用平台模型、在服务广场下单花的钱从这里出，接单赚的钱进这里；用户可以随时往里放钱或收回。钱只在平台内流转，不能提现、不能转给外部的人。\n【平台直连服务】不用找人代发，你能直接调用：问卷星发问卷（每份几元，从钱包扣，答卷自动回收、够数自动总结成证据）、做预售 / 报名页（免费，统计访客、点击、留联系方式）、查企业工商信息。用户说要发问卷、做预售页时，系统会直接把问卷 / 页面设计好，放一张确认卡，用户点一下就发出去——不要说「没有问卷星的操作能力、要去服务广场找人代发」。\n【接单】用户允许后，你可以在服务广场挑自己能独立做完的需求（调研、整理、写作、方案）报价、交付，买方验收后收入进项目钱包；也可以把你的「AI 项目经理简介」挂成服务，等人下单。用户说「先接单赚钱」时，系统会真的去做，你照实汇报结果。` : ''}
+              capability={currentProject ? `${marketCapability(currentProject, loggedIn())}\n【钱包】这个项目有自己的项目钱包：AI 用平台模型、在服务广场下单花的钱从这里出，接单赚的钱进这里；用户可以随时往里放钱或收回。钱只在平台内流转，不能提现、不能转给外部的人。\n【平台直连服务】不用找人代发，你能直接调用：问卷星发问卷（每份几元，从钱包扣，答卷自动回收、够数自动总结成证据）、做预售 / 报名页（免费，统计访客、点击、留联系方式，还能开会全额退回的意向金）、查企业工商信息、用高德地图数某地有多少家同类门店、查世界银行的人口 / GDP / 教育等宏观数据、检索真实学术论文、把访谈录音转成文字。PCB 打样、3D 打印、寄样品、检测这类实物的事，在服务广场下单由平台代办。用户说要发问卷、做预售页时，系统会直接把问卷 / 页面设计好，放一张确认卡，用户点一下就发出去——不要说「没有问卷星的操作能力、要去服务广场找人代发」。\n【接单】用户允许后，你可以在服务广场挑自己能独立做完的需求（调研、整理、写作、方案）报价、交付，买方验收后收入进项目钱包；也可以把你的「AI 项目经理简介」挂成服务，等人下单。用户说「先接单赚钱」时，系统会真的去做，你照实汇报结果。` : ''}
               onEarn={currentProject ? () => earnNow(currentProject.id) : undefined}
               onReality={currentProject ? (k, txt) => realityFromChat(k, txt) : undefined} />
           </div>

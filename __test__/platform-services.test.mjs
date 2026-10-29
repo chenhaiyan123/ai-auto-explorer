@@ -26,6 +26,9 @@ const fakeFetch = async (url, opts = {}) => {
   }
   if (u.startsWith('https://api.openalex.org/works?')) return Response.json({ results: [{ id: 'https://openalex.org/W1', doi: 'https://doi.org/10.1000/xyz123', title: 'Solar-powered UAV endurance', publication_year: 2021, primary_location: { source: { display_name: 'Aerospace Journal' } }, authorships: [{ author: { display_name: 'A. Li' } }], cited_by_count: 42, abstract_inverted_index: { Solar: [0], power: [1], extends: [2], flight: [3] } }] });
   if (u.startsWith('https://api.crossref.org/works/')) return u.includes('10.1000%2Fxyz123') ? Response.json({ message: { title: ['Solar-powered UAV endurance'], issued: { 'date-parts': [[2021]] } } }) : new Response('not found', { status: 404 });
+  if (u.startsWith('https://restapi.amap.com/v3/geocode/geo')) return Response.json({ status: '1', geocodes: [{ location: '113.94,22.53' }] });
+  if (u.startsWith('https://restapi.amap.com/v5/place/')) { const pg = Number(new URL(u).searchParams.get('page_num')); const n = pg === 1 ? 25 : pg === 2 ? 7 : 0; return Response.json({ status: '1', count: '32', pois: Array.from({ length: n }, (_, i) => ({ name: `编程机构${pg}-${i}`, address: '某路', adname: i % 2 ? '南山区' : '福田区', type: '教育;培训机构' })) }); }
+  if (u.startsWith('https://api.worldbank.org/v2/country/CHN/indicator/SP.POP.0014.TO')) return Response.json([{ page: 1 }, [{ indicator: { value: 'Population ages 0-14, total' }, country: { value: 'China' }, date: '2024', value: 240000000 }, { indicator: {}, country: { value: 'China' }, date: '2023', value: null }, { indicator: {}, country: {}, date: '2022', value: 246000000 }]]);
   if (u === 'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription') { globalThis.__asrSubmit = JSON.parse(opts.body); return Response.json({ output: { task_status: 'PENDING', task_id: 'task-1' } }); }
   if (u === 'https://dashscope.aliyuncs.com/api/v1/tasks/task-1') return Response.json(globalThis.__asrDone ? { output: { task_status: 'SUCCEEDED', results: [{ subtask_status: 'SUCCEEDED', transcription_url: 'https://dashscope-result.example.test/t.json' }] } } : { output: { task_status: 'RUNNING' } });
   if (u === 'https://dashscope-result.example.test/t.json') return Response.json({ transcripts: [{ text: '你好 我想买', content_duration_in_milliseconds: 61000, sentences: [{ text: '你好，请问你会买吗？', speaker_id: 0 }, { text: '会，如果价格合适。', speaker_id: 1 }] }] });
@@ -51,7 +54,7 @@ test('not configured → honest 503, nothing charged', async t => {
   const { call, topup } = await boot(t);
   await topup('u@x.cn', 1000);
   const cat = (await call('u@x.cn', '/platform/catalog')).body;
-  assert.deepEqual(cat.services.map(s => [s.id, s.ready]), [['survey', false], ['company', false], ['page', true], ['papers', true], ['asr', false]]);
+  assert.deepEqual(cat.services.map(s => [s.id, s.ready]), [['survey', false], ['company', false], ['page', true], ['papers', true], ['asr', false], ['poi', false], ['stats', true]]);
   const r = await call('u@x.cn', '/platform/company/search', 'POST', { keyword: '嘉立创' });
   assert.equal(r.status, 503);
   assert.equal((await call('u@x.cn', '/billing/account')).body.wallet.balanceCents, 1000, 'refunded / not charged');
@@ -184,4 +187,19 @@ test('访谈录音转文字：上传 → 百炼拉取公开地址 → 转好后�
   assert.equal((await call('other@x.cn', `/platform/audio/${rec.id}`)).status, 404, '别人看不到');
   const bad = await fetch(base + '/platform/audio', { method: 'POST', headers: { Authorization: 'Bearer u@x.cn', 'Content-Type': 'text/plain' }, body: 'x' });
   assert.equal(bad.status, 415);
+});
+
+test('高德门店统计：按城市 / 地址周边数门店，按区分布；世界银行宏观数据免费', async t => {
+  const { call, topup } = await boot(t, { AMAP_KEY: 'amap-test' });
+  await topup('u@x.cn', 1000);
+  const cat = (await call('u@x.cn', '/platform/catalog')).body;
+  assert.ok(cat.services.find(x => x.id === 'poi').ready); assert.ok(cat.services.find(x => x.id === 'stats').ready);
+  const r = await call('u@x.cn', '/platform/poi', 'POST', { keyword: '少儿编程', city: '深圳' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.total, 32); assert.equal(r.body.sampled, 32); assert.deepEqual(r.body.byDistrict, { 福田区: 17, 南山区: 15 });
+  const near = await call('u@x.cn', '/platform/poi', 'POST', { keyword: '少儿编程', city: '深圳', around: '深圳湾公园', radius: 2000 });
+  assert.equal(near.body.radius, 2000);
+  assert.equal((await call('u@x.cn', '/billing/account')).body.wallet.balanceCents, 980, '每次 ¥0.1');
+  const st = await call('u@x.cn', '/platform/stats', 'POST', { indicators: ['SP.POP.0014.TO'] });
+  assert.equal(st.status, 200); assert.equal(st.body.results[0].name, '0–14 岁人口'); assert.deepEqual(st.body.results[0].values.map(v => v.year), [2024, 2022]);
 });

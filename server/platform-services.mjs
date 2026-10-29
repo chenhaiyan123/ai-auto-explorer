@@ -17,7 +17,7 @@ const id = () => randomBytes(9).toString('base64url');
 const day = at => new Date(at + 8 * 3600000).toISOString().slice(0, 10);
 
 /** 默认价格（分）；管理员可改 */
-export const DEFAULT_PRICES = { company_search: 20, company_info: 50, survey_create: 200, page_create: 0, asr_file: 100 };
+export const DEFAULT_PRICES = { company_search: 20, company_info: 50, survey_create: 200, page_create: 0, asr_file: 100, poi_search: 10, stats_query: 0 };
 export const DAILY_CAP_CENTS = 5000;
 const SERVICES = {
   survey: { label: '问卷调查（问卷星）', needs: 'wjxKey' },
@@ -25,6 +25,8 @@ const SERVICES = {
   page: { label: '预售页 / 报名页（平台自建）', needs: null },
   papers: { label: '学术文献检索（OpenAlex / Crossref，免费）', needs: null },
   asr: { label: '访谈录音转文字（阿里云百炼 Paraformer）', needs: 'asrKey' },
+  poi: { label: '周边门店 / 兴趣点统计（高德地图）', needs: 'amapKey' },
+  stats: { label: '宏观统计数据（世界银行公开数据，免费）', needs: null },
 };
 /** OpenAlex 把摘要存成「词 → 位置」的倒排表，拼回原文 */
 const abstractOf = inv => {
@@ -34,6 +36,15 @@ const abstractOf = inv => {
   return words.filter(Boolean).join(' ').slice(0, 900);
 };
 const DOI_RE = /^10\.\d{4,9}\/[^\s]+$/;
+/** 世界银行常用指标（中国及各国，按年）：AI 从这里挑，也可以直接给指标代码 */
+export const WB_INDICATORS = {
+  'SP.POP.TOTL': '总人口', 'SP.POP.0014.TO': '0–14 岁人口', 'SP.POP.1564.TO': '15–64 岁人口', 'SP.POP.65UP.TO': '65 岁及以上人口',
+  'SP.URB.TOTL.IN.ZS': '城镇人口占比（%）', 'SP.DYN.TFRT.IN': '总和生育率', 'SP.DYN.CBRT.IN': '粗出生率（每千人）',
+  'NY.GDP.MKTP.CD': 'GDP（现价美元）', 'NY.GDP.PCAP.CD': '人均 GDP（现价美元）', 'NY.GDP.MKTP.KD.ZG': 'GDP 实际增速（%）',
+  'NE.CON.PRVT.CD': '居民最终消费（现价美元）', 'FP.CPI.TOTL.ZG': '通胀率（CPI，%）', 'SL.UEM.TOTL.ZS': '失业率（%）', 'SL.UEM.1524.ZS': '青年失业率（15–24 岁，%）',
+  'SE.TER.ENRR': '高等教育毛入学率（%）', 'SE.PRM.ENRL': '小学在校生人数', 'SE.SEC.ENRL': '中学在校生人数', 'GB.XPD.RSDV.GD.ZS': '研发支出占 GDP（%）',
+  'IT.NET.USER.ZS': '互联网用户占比（%）', 'IT.CEL.SETS.P2': '手机签约数（每百人）', 'EG.ELC.RNEW.ZS': '可再生能源发电占比（%）', 'SH.XPD.CHEX.PC.CD': '人均医疗支出（美元）',
+};
 const QTYPES = { single: '单选', multi: '多选', text: '简答题', scale: '量表题', nps: 'NPS量表' };
 
 export class PlatformServices {
@@ -50,7 +61,7 @@ export class PlatformServices {
     });
     this.queue = next; return next;
   }
-  keys(s) { return { wjxKey: s.config.wjxKey || this.env.WJX_API_KEY || '', tycKey: s.config.tycKey || this.env.TYC_AUTHORIZATION || '', asrKey: s.config.asrKey || this.env.DASHSCOPE_API_KEY || this.dsKey || '' }; }
+  keys(s) { return { wjxKey: s.config.wjxKey || this.env.WJX_API_KEY || '', tycKey: s.config.tycKey || this.env.TYC_AUTHORIZATION || '', asrKey: s.config.asrKey || this.env.DASHSCOPE_API_KEY || this.dsKey || '', amapKey: s.config.amapKey || this.env.AMAP_KEY || '' }; }
   async refreshDsKey() { try { this.dsKey = (await this.opts.dashscopeKey?.()) || ''; } catch { this.dsKey = ''; } }
   prices(s) { return { ...DEFAULT_PRICES, ...(s.config.prices || {}) }; }
 
@@ -69,12 +80,13 @@ export class PlatformServices {
       if (typeof body.wjxKey === 'string') s.config.wjxKey = body.wjxKey.trim().slice(0, 500);
       if (typeof body.tycKey === 'string') s.config.tycKey = body.tycKey.trim().slice(0, 4000);
       if (typeof body.asrKey === 'string') s.config.asrKey = body.asrKey.trim().slice(0, 500);
+      if (typeof body.amapKey === 'string') s.config.amapKey = body.amapKey.trim().slice(0, 200);
       if (body.prices && typeof body.prices === 'object') {
         s.config.prices = { ...(s.config.prices || {}) };
         for (const [k, v] of Object.entries(body.prices)) if (k in DEFAULT_PRICES && Number.isSafeInteger(v) && v >= 0 && v <= 100000) s.config.prices[k] = v;
       }
       const k = this.keys(s);
-      return { wjx: !!k.wjxKey, tyc: !!k.tycKey, asr: !!k.asrKey, asrOwn: !!s.config.asrKey, prices: this.prices(s) };
+      return { wjx: !!k.wjxKey, tyc: !!k.tycKey, asr: !!k.asrKey, asrOwn: !!s.config.asrKey, amap: !!k.amapKey, prices: this.prices(s) };
     });
   }
 
@@ -190,6 +202,56 @@ export class PlatformServices {
       return { id: rec.id, name: rec.name, ...patch };
     }
     return { id: rec.id, name: rec.name, status: st || 'RUNNING' };
+  }
+
+  // ===== 高德地图：某个城市 / 片区有多少家某类店（比 AI 估算可靠） =====
+  async poi(owner, input) {
+    const keyword = clean(input.keyword, 40), city = clean(input.city, 30), around = clean(input.around, 40);
+    if (keyword.length < 2) throw fail('请写要找的店或地点类型，比如「少儿编程」');
+    const key = (await this.tx(s => this.keys(s), false)).amapKey;
+    if (!key) throw fail('门店统计还没开通（管理员要先填高德 Web 服务 Key）', 503);
+    return this.charged(owner, 'poi_search', input.requestId || id(), `门店统计：${city}${around ? ' ' + around : ''} ${keyword}`, async () => {
+      const get = async u => { const r = await this.fetch(u, { signal: AbortSignal.timeout(15000), redirect: 'error' }); const b = await r.json().catch(() => ({})); if (b.status !== '1') throw fail(`高德查询失败：${b.info || r.status}`, 502); return b; };
+      let center = '';
+      if (around) { // 「某个地址周边 3 公里」：先把地址变成坐标
+        const g = await get(`https://restapi.amap.com/v3/geocode/geo?address=${encodeURIComponent(around)}&city=${encodeURIComponent(city)}&key=${key}`);
+        center = g.geocodes?.[0]?.location || '';
+        if (!center) throw fail(`找不到「${around}」这个位置`, 400);
+      }
+      const radius = Math.min(50000, Math.max(500, Number(input.radius) || 3000));
+      const pois = []; let total = 0;
+      for (let page = 1; page <= 4; page++) {
+        const u = center
+          ? `https://restapi.amap.com/v5/place/around?keywords=${encodeURIComponent(keyword)}&location=${center}&radius=${radius}&page_size=25&page_num=${page}&key=${key}`
+          : `https://restapi.amap.com/v5/place/text?keywords=${encodeURIComponent(keyword)}&region=${encodeURIComponent(city)}&city_limit=true&page_size=25&page_num=${page}&key=${key}`;
+        const b = await get(u);
+        total = Math.max(total, Number(b.count) || 0);
+        const got = (b.pois || []).map(x => ({ name: String(x.name || '').slice(0, 60), address: String(x.address || '').slice(0, 80), district: String(x.adname || ''), type: String(x.type || '').split(';').pop() }));
+        pois.push(...got);
+        if (got.length < 25) break;
+      }
+      const byDistrict = {};
+      for (const p of pois) byDistrict[p.district || '未知'] = (byDistrict[p.district || '未知'] || 0) + 1;
+      return { keyword, city, around: around || null, radius: center ? radius : null, total: Math.max(total, pois.length), sampled: pois.length, byDistrict, pois: pois.slice(0, 100),
+        note: '高德收录的兴趣点，可能漏掉没登记的小店，也可能包含已关门的；当作量级参考，关键结论要实地核实。' };
+    }, clean(input.projectId, 120));
+  }
+
+  // ===== 世界银行公开数据：人口、GDP、教育等宏观数字（免费） =====
+  async stats(owner, input) {
+    const codes = (Array.isArray(input.indicators) ? input.indicators : [input.indicator]).map(c => String(c || '').trim().toUpperCase()).filter(c => /^[A-Z0-9.]{3,40}$/.test(c)).slice(0, 5);
+    const country = /^[A-Z]{3}$/.test(String(input.country || '').toUpperCase()) ? String(input.country).toUpperCase() : 'CHN';
+    if (!codes.length) throw fail('请指定要查的指标');
+    if (this.limited(owner)) throw fail('查询太频繁了，过一会儿再试', 429);
+    const out = [];
+    for (const code of codes) {
+      const r = await this.fetch(`https://api.worldbank.org/v2/country/${country}/indicator/${encodeURIComponent(code)}?format=json&per_page=12&mrv=12`, { signal: AbortSignal.timeout(20000), redirect: 'error' }).catch(() => null);
+      const b = r?.ok ? await r.json().catch(() => null) : null;
+      const rows = Array.isArray(b?.[1]) ? b[1] : [];
+      out.push({ code, name: WB_INDICATORS[code] || rows[0]?.indicator?.value || code, country: rows[0]?.country?.value || country,
+        values: rows.filter(x => x.value !== null).map(x => ({ year: Number(x.date), value: x.value })).slice(0, 10) });
+    }
+    return { source: '世界银行公开数据（World Bank Open Data）', results: out };
   }
 
   // ===== 天眼查 =====

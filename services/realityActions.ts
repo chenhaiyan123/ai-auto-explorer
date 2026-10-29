@@ -10,18 +10,22 @@ import { sharedRequest, SHARED_API } from './sharedModelsClient';
  * 结果回来先记成「待核实的现实证据」，再拿它重新推进这一步。
  */
 
-export type RealityKind = 'survey' | 'page' | 'company' | 'market';
+export type RealityKind = 'survey' | 'page' | 'company' | 'poi' | 'stats' | 'market';
+/** 世界银行常用指标（和后台 WB_INDICATORS 一致） */
+export const STAT_INDICATORS: Record<string, string> = { 'SP.POP.TOTL': '总人口', 'SP.POP.0014.TO': '0–14 岁人口', 'SP.POP.1564.TO': '15–64 岁人口', 'SP.POP.65UP.TO': '65 岁及以上人口', 'SP.URB.TOTL.IN.ZS': '城镇人口占比', 'SP.DYN.TFRT.IN': '总和生育率', 'SP.DYN.CBRT.IN': '出生率', 'NY.GDP.MKTP.CD': 'GDP', 'NY.GDP.PCAP.CD': '人均 GDP', 'NY.GDP.MKTP.KD.ZG': 'GDP 增速', 'NE.CON.PRVT.CD': '居民消费', 'FP.CPI.TOTL.ZG': '通胀率', 'SL.UEM.TOTL.ZS': '失业率', 'SL.UEM.1524.ZS': '青年失业率', 'SE.TER.ENRR': '高等教育毛入学率', 'SE.PRM.ENRL': '小学在校生', 'SE.SEC.ENRL': '中学在校生', 'GB.XPD.RSDV.GD.ZS': '研发支出占 GDP', 'IT.NET.USER.ZS': '互联网普及率', 'IT.CEL.SETS.P2': '手机签约数', 'EG.ELC.RNEW.ZS': '可再生能源发电占比', 'SH.XPD.CHEX.PC.CD': '人均医疗支出' };
 export interface SurveyQ { type: 'single' | 'multi' | 'text' | 'scale' | 'nps'; title: string; options?: string[] }
 export type RealityAction =
   | { type: 'survey'; why: string; title: string; intro: string; questions: SurveyQ[]; target: number }
   | { type: 'page'; why: string; headline: string; sub: string; bullets: string[]; price: string; cta: string; /** 意向金（元，1–9.9；0 = 不收）：访客真付钱表示想要，7 天后全额退回 */ deposit?: number }
   | { type: 'company'; why: string; keyword: string }
+  | { type: 'poi'; why: string; keyword: string; city: string; around?: string; radius?: number }
+  | { type: 'stats'; why: string; indicators: string[]; country?: string }
   | { type: 'market'; why: string }
   | { type: 'none'; why: string };
 
 /** 项目里记着的「现实验证」 */
 export interface RealityCheck {
-  id: string; kind: 'survey' | 'page' | 'company' | 'audio'; nodeId?: string; title: string; url?: string;
+  id: string; kind: 'survey' | 'page' | 'company' | 'audio' | 'poi' | 'stats'; nodeId?: string; title: string; url?: string;
   /** 录音：转写状态和时长 */ status?: string; durationSec?: number;
   createdAt: number; target?: number;
   /** 最新数字：问卷答卷数 / 页面访客 · 点击 · 留资 */
@@ -56,7 +60,9 @@ export function buildActionMessages(project: Project, node: ProblemNode, ready: 
     ready.survey && `survey：发问卷（每份问卷 ¥${((prices.survey_create || 0) / 100).toFixed(2)}，链接要发给目标人群；适合了解现状、痛点、偏好、优先级）`,
     ready.page && `page：做预售页 / 报名页（免费，挂出去看多少人点「我想要」、留联系方式；还可以开「意向金」：访客用微信付 ¥1–9.9 表示真想要，7 天后全额退回——验证「愿不愿意真掏钱」最有说服力）`,
     ready.company && `company：查企业工商信息（每次 ¥${((prices.company_info || 0) / 100).toFixed(2)}；适合核实竞品、合作方、供应商是否存在、规模和风险）`,
-    'market：去服务广场找真人 / 机构做（访谈、实验、测量、打样、拿真实数据）',
+    ready.poi && `poi：用高德地图数门店 / 兴趣点（每次 ¥${((prices.poi_search || 0) / 100).toFixed(2)}；适合「某城市 / 某地址周边有多少家同类店、分布在哪」的选址和竞争判断）`,
+    ready.stats && `stats：查宏观统计数据（世界银行公开数据，免费；可用指标：${Object.entries(STAT_INDICATORS).map(([k, v]) => `${k}=${v}`).join('，')}）`,
+    'market：去服务广场找真人 / 机构做（访谈、实验、测量、检测、PCB 打样、3D 打印、寄样品、拿真实数据）',
   ].filter(Boolean).join('\n');
   return [
     { role: 'system', content: '你是项目的 AI 负责人。这一步需要到现实里验证。选一种最便宜、最快、最能拿到真实证据的办法，并把它设计好。只返回 JSON。' },
@@ -73,6 +79,8 @@ ${force ? `\n用户指定用：${force}\n` : ''}
 {"type":"survey","why":"为什么选它（≤40字）","title":"问卷标题","intro":"一句开场白","target":30,"questions":[{"type":"single|multi|text|scale|nps","title":"题目","options":["选项"]}]}
 {"type":"page","why":"…","headline":"一句话卖点","sub":"两句说明","bullets":["卖点1","卖点2","卖点3"],"price":"预售价 ¥xx","cta":"我想要","deposit":意向金元数（验证付费意愿时填 1–9.9，只看兴趣填 0）}
 {"type":"company","why":"…","keyword":"企业名或关键词"}
+{"type":"poi","why":"…","keyword":"店的类型，如 少儿编程","city":"城市，如 深圳","around":"（选填）某个地址，查它周边","radius":3000}
+{"type":"stats","why":"…","indicators":["指标代码，最多 5 个"],"country":"CHN"}
 {"type":"market","why":"…"}
 {"type":"none","why":"为什么现在不需要"}` },
   ];
@@ -99,6 +107,8 @@ export function parseAction(text: string, ready: Record<string, boolean>): Reali
       return headline.length >= 4 ? { type: 'page', why, headline, sub: clip(raw.sub, 200), bullets: (Array.isArray(raw.bullets) ? raw.bullets : []).map((b: unknown) => clip(b, 80)).filter(Boolean).slice(0, 5), price: clip(raw.price, 40), cta: clip(raw.cta, 16) || '我想要', deposit: dep >= 1 && dep <= 9.9 ? dep : 0 } : null;
     }
     case 'company': { const keyword = clip(raw.keyword, 60); return ready.company && keyword.length >= 2 ? { type: 'company', why, keyword } : null; }
+    case 'poi': { const keyword = clip(raw.keyword, 40), city = clip(raw.city, 30); return ready.poi && keyword.length >= 2 && city.length >= 2 ? { type: 'poi', why, keyword, city, around: clip(raw.around, 40) || undefined, radius: Math.min(50000, Math.max(500, Number(raw.radius) || 3000)) } : null; }
+    case 'stats': { const indicators = (Array.isArray(raw.indicators) ? raw.indicators : []).map((c: unknown) => String(c).trim().toUpperCase()).filter((c: string) => /^[A-Z0-9.]{3,40}$/.test(c)).slice(0, 5); return ready.stats && indicators.length ? { type: 'stats', why, indicators, country: /^[A-Z]{3}$/.test(String(raw.country || '').toUpperCase()) ? String(raw.country).toUpperCase() : 'CHN' } : null; }
     case 'market': return { type: 'market', why };
     case 'none': return { type: 'none', why };
     default: return null;
@@ -107,7 +117,7 @@ export function parseAction(text: string, ready: Record<string, boolean>): Reali
 
 /** 这次动作要花多少钱（分） */
 export const actionCost = (a: RealityAction, prices: Record<string, number>) =>
-  a.type === 'survey' ? prices.survey_create || 0 : a.type === 'company' ? prices.company_info || 0 : 0;
+  a.type === 'survey' ? prices.survey_create || 0 : a.type === 'company' ? prices.company_info || 0 : a.type === 'poi' ? prices.poi_search || 0 : 0;
 
 /** 什么时候把新回来的结果拿去推进：问卷新增 ≥ 10 份或到了目标数；页面新增 ≥ 20 个访客或有新留资 */
 export function shouldIngest(c: RealityCheck): boolean {
