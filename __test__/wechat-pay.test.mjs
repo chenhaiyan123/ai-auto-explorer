@@ -89,7 +89,7 @@ test('微信 Pro 固定收取 6900 分；签名回调开通日历月、重放与
   let now = Date.now();
   const billing = new Billing(storage, { wechat: provider }, f.env, () => now);
   const artifact = await billing.saveArtifact('buyer', { report: { title: 'Pro export', abstract: '', sections: [], conclusions: [], openQuestions: [], references: [] } });
-  await assert.rejects(billing.download('buyer', artifact.id), e => e.status === 402);
+  assert.ok((await billing.download('buyer', artifact.id)).report, '成果包免费');
   const order = await billing.createOrder('buyer', { sku: 'pro_month', provider: 'wechat', requestId: randomUUID(), amount: 1 });
   assert.equal(order.amount, 6900);
   assert.equal(f.seen.find(v => v.route.endsWith('/native')).body.amount.total, 6900);
@@ -109,7 +109,7 @@ test('微信 Pro 固定收取 6900 分；签名回调开通日历月、重放与
   assert.equal((await reopened.view('buyer')).plan, 'free');
   assert.equal((await reopened.download('buyer', artifact.id)).title, 'Pro export');
   const next = await reopened.saveArtifact('buyer', { report: { title: 'Next version', abstract: '', sections: [], conclusions: [], openQuestions: [], references: [] } });
-  await assert.rejects(reopened.download('buyer', next.id), e => e.status === 402);
+  assert.equal((await reopened.download('buyer', next.id)).title, 'Next version', '成果包免费');
 });
 test('远端下单前持久化；超时重试和重启沿用同一订单；重复回调只解锁一次', async t => {
   const f = await fixture(t); const store = new WakeStorage(path.join(f.dir, 'data'), randomBytes(32)); await store.initialize();
@@ -118,15 +118,15 @@ test('远端下单前持久化；超时重试和重启沿用同一订单；重�
   let billing = new Billing(store, { wechat: provider }, f.env);
   const report = { title: 'Test', abstract: '', sections: [], conclusions: [], openQuestions: [], references: [] };
   const artifact = await billing.saveArtifact('owner', { report });
-  const body = { sku: 'export', provider: 'wechat', artifactId: artifact.id, requestId: randomUUID() };
+  const body = { sku: 'pro_month', provider: 'wechat', requestId: randomUUID() };
   await assert.rejects(billing.createOrder('owner', body), /timeout/);
   assert.equal((await billing.view('owner')).orders.length, 1);
   billing = new Billing(store, { wechat: provider }, f.env); fail = false;
   const [a, b] = await Promise.all([billing.createOrder('owner', body), billing.createOrder('owner', body)]);
   assert.equal(a.id, b.id); assert.equal(new Set(ids).size, 1);
   await assert.rejects(billing.settle('wechat', { orderId: a.id, transactionId: 'WX_TEST', amount: 1, currency: 'CNY' }), /金额/);
-  await Promise.all(Array.from({ length: 3 }, () => billing.settle('wechat', { orderId: a.id, transactionId: 'WX_TEST', amount: 399, currency: 'CNY' })));
-  assert.deepEqual((await billing.view('owner')).unlocked, [artifact.id]);
+  await Promise.all(Array.from({ length: 3 }, () => billing.settle('wechat', { orderId: a.id, transactionId: 'WX_TEST', amount: 6900, currency: 'CNY' })));
+  const v = await billing.view('owner'); assert.equal(v.orders.filter(o => o.status === 'paid').length, 1); assert.ok(v.proUntil > Date.now() && v.proUntil < Date.now() + 32 * 864e5, '重复回调只开通一次');
   assert.equal((await billing.view('owner')).orders[0].codeUrl, undefined);
   await assert.rejects(billing.getOrder('other', a.id), /不存在/);
 });

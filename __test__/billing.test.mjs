@@ -90,7 +90,7 @@ test('验收名单仅授权真实登录身份，公开接口不泄露名单，�
 test('验收名单收紧不阻断旧订单回调、查单及已购下载，支付总开关仍优先关闭', async t => {
   const f = await fixture(t);
   const artifact = (await f.req('/billing/artifacts', 'POST', { report })).body;
-  const order = (await f.req('/billing/orders', 'POST', { sku: 'export', provider: 'alipay', requestId: randomUUID(), artifactId: artifact.id })).body;
+  const order = (await f.req('/billing/orders', 'POST', pro())).body;
   f.env.BILLING_ALLOWED_IDENTITIES = 'other@example.test'; await f.restart();
   assert.equal((await f.req('/billing/account')).body.purchaseAllowed, false);
   assert.equal((await f.notify(f.callbackBody(order))).status, 200);
@@ -143,18 +143,16 @@ test('丢失回调可经验签查单恢复，其他订单的结果不能错配',
   assert.ok((await f.req(`/billing/orders/${other.id}`, 'POST', {}, 'other')).body.queryWarning);
   assert.equal((await f.req('/billing/account', 'GET', undefined, 'other')).body.plan, 'free');
 });
-test('成果内容固定版本，399 分付款只解锁对应用户对应版本', async t => {
+test('成果包免费：内容固定版本、只能下载自己的、不再能下单付款', async t => {
   const f = await fixture(t);
   const a = (await f.req('/billing/artifacts', 'POST', { report })).body;
+  assert.equal(a.amount, 0);
   assert.equal((await f.req('/billing/artifacts', 'POST', { report: { ...report } })).body.id, a.id);
-  assert.equal((await f.req(`/billing/artifacts/${a.id}/download`, 'POST')).status, 402);
+  const downloaded = await f.req(`/billing/artifacts/${a.id}/download`, 'POST'); assert.equal(downloaded.status, 200); assert.deepEqual(downloaded.body.report, report);
   assert.equal((await f.req(`/billing/artifacts/${a.id}/download`, 'POST', {}, 'other')).status, 404);
-  const o = (await f.req('/billing/orders', 'POST', { sku: 'export', artifactId: a.id, provider: 'alipay', requestId: randomUUID() })).body;
-  assert.equal(o.amount, 399); await f.notify(f.callbackBody(o));
-  const downloaded = await f.req(`/billing/artifacts/${a.id}/download`, 'POST'); assert.deepEqual(downloaded.body.report, report);
-  assert.equal((await f.req('/billing/orders', 'POST', { sku: 'export', artifactId: a.id, provider: 'alipay', requestId: randomUUID() })).status, 409);
+  assert.equal((await f.req('/billing/orders', 'POST', { sku: 'export', artifactId: a.id, provider: 'alipay', requestId: randomUUID() })).status, 410);
   const b = (await f.req('/billing/artifacts', 'POST', { report: { ...report, abstract: 'new version' } })).body;
-  assert.notEqual(b.id, a.id); assert.equal((await f.req(`/billing/artifacts/${b.id}/download`, 'POST')).status, 402);
+  assert.notEqual(b.id, a.id); assert.equal((await f.req(`/billing/artifacts/${b.id}/download`, 'POST')).status, 200);
   await f.restart(); assert.equal((await f.req(`/billing/artifacts/${a.id}/download`, 'POST')).status, 200);
 });
 test('Pro 下载版本永久解锁，到期的新版本仍需购买；续费按日历月', async t => {
@@ -166,7 +164,7 @@ test('Pro 下载版本永久解锁，到期的新版本仍需购买；续费按�
   assert.equal(new Date((await b.view('user')).proUntil).toISOString(), '2026-02-28T10:00:00.000Z');
   const a = await b.saveArtifact('user', { report }); await b.download('user', a.id);
   now = Date.UTC(2026, 2, 1); assert.equal((await b.view('user')).plan, 'free'); await b.download('user', a.id);
-  const other = await b.saveArtifact('user', { report: { ...report, title: 'other' } }); await assert.rejects(() => b.download('user', other.id), e => e.status === 402);
+  const other = await b.saveArtifact('user', { report: { ...report, title: 'other' } }); assert.equal((await b.download('user', other.id)).report.title, 'other', '成果包免费，过期后新版本也能下');
   assert.equal(new Date(addCalendarMonth(Date.UTC(2028, 0, 31))).toISOString(), '2028-02-29T00:00:00.000Z');
 });
 test('支付响应原文验签保留转义与空白，金额解析拒绝模糊格式', () => {

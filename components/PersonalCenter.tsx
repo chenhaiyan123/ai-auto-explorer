@@ -79,7 +79,7 @@ export default function PersonalCenter(p: Props) {
         <p className="mt-1.5 text-[11px] leading-5 text-slate-500">{ui('充值进用户钱包；在项目的「钱包」页把一部分放进项目钱包，那个项目的 AI 就用它自己决定怎么花、怎么赚，赚的也进项目钱包，随时能收回。', 'Top up here, then move money into a project wallet from the project page.')}</p></div>
       {p.email && hasPasswordLogin() && <PasswordSetting />}
       <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {tile(ui('充值与订单', 'Top-ups & orders'), ui('充值记录、支付订单、已解锁的成果包', 'Top-ups, payment orders and unlocked exports'), p.onBilling)}
+        {tile(ui('充值与订单', 'Top-ups & orders'), ui('充值记录、支付订单、导出过的成果包', 'Top-ups, payment orders and exports'), p.onBilling)}
         {tile(ui('用量与额度', 'Usage & credits'), ui('查看各模型剩余额度与使用记录', 'Check model balances and usage history'), p.onUsage)}
         {p.onSync && tile(ui('项目同步', 'Project sync'), p.syncStatus || ui('同步网页与 iPhone 上的项目、笔记和事实', 'Sync web and iPhone projects, notes and facts'), p.onSync)}
       </div>

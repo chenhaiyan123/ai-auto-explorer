@@ -189,17 +189,15 @@ export class Billing {
         if (s.artifacts.length >= 500 || s.artifacts.filter(a => a.owner === owner).length >= 100) throw fail('成果存储额度已满，请联系管理员');
         s.artifacts.push({ id, owner, report, createdAt: this.now(), contentHash: digest(serialized) });
       }
-      return { id, title: report.title, unlocked: account(s, owner).unlocked.includes(id), amount: PLANS.export.amount };
+      return { id, title: report.title, unlocked: true, amount: 0 };
     });
   }
   async download(owner, id) {
     return this.transaction(s => {
       const artifact = s.artifacts.find(a => a.id === id && a.owner === owner); if (!artifact) throw fail('成果不存在', 404);
       const a = account(s, owner);
-      if (!a.unlocked.includes(id)) {
-        if (a.proUntil <= this.now()) throw fail('请购买此成果包或开通 Pro', 402);
-        a.unlocked.push(id);
-      }
+      // 成果包导出免费（以前每份 ¥3.99 / Pro 内免费）
+      if (!a.unlocked.includes(id)) a.unlocked.push(id);
       return { version: 1, title: artifact.report.title, report: artifact.report, contentHash: artifact.contentHash, createdAt: artifact.createdAt,
         notice: 'AI 研究记录，不代表已完成独立专家核验；请结合原始证据判断。' };
     });
@@ -226,7 +224,7 @@ export class Billing {
       if (body.sku === 'pro_month' && this.env.BILLING_PRO_RETIRED !== 'false') throw fail('会员套餐已停止售卖：现在只需给钱包充值，按用量付费', 410);
       if (body.sku === 'pro_month' && this.env.BILLING_PRO_ENABLED !== 'true') throw fail('Pro 权益仍在接入，暂不收取会员费用', 503);
       if (body.sku === 'export') {
-        if (!s.artifacts.some(a => a.id === body.artifactId && a.owner === owner)) throw fail('成果不存在', 404);
+        throw fail('成果包已经免费，直接下载就行，不用付款', 410);
         const a = account(s, owner);
         if (a.proUntil > this.now() || a.unlocked.includes(body.artifactId)) throw fail('此成果已可直接下载，无需重复付款', 409);
       } else if (body.sku === 'pro_month' && body.artifactId) throw fail('会员订单不能绑定成果');
