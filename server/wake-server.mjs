@@ -438,6 +438,8 @@ export async function createWakeServer(options = {}) {
         }
         if (req.method === 'GET' && url.pathname === '/platform/catalog') { send(200, await platform.catalog()); return; }
         if (req.method === 'GET' && url.pathname === '/platform/mine') { send(200, await platform.mine(owner, url.searchParams.get('projectId') || '')); return; }
+        if (req.method === 'GET' && url.pathname === '/platform/papers') { send(200, await platform.papers(owner, { q: url.searchParams.get('q'), n: url.searchParams.get('n') })); return; }
+        if (req.method === 'POST' && url.pathname === '/platform/papers/verify') { send(200, await platform.verifyDois(owner, await readBody(req))); return; }
         if (req.method === 'POST' && url.pathname === '/platform/company/search') { send(200, await platform.companySearch(owner, await readBody(req))); return; }
         if (req.method === 'POST' && url.pathname === '/platform/company/info') { send(200, await platform.companyInfo(owner, await readBody(req))); return; }
         if (req.method === 'POST' && url.pathname === '/platform/surveys') { send(200, await platform.createSurvey(owner, await readBody(req))); return; }

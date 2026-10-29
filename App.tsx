@@ -26,6 +26,7 @@ import { money } from './services/serviceMarket';
 import { onModelUsage, meterFor, addModelSpend, reportModelUsage, setDefaultMeterProject } from './services/projectWallet';
 import { transferProject } from './services/billingClient';
 import { logQuestions } from './services/questionLog';
+import { paperNoteFor } from './services/papers';
 import LandingHero from './components/LandingHero';
 import { profileDue, buildProfileMessages, parseProfile, solvedCount, profileSkills, profileToListing, type PmProfileState } from './services/pmProfile';
 import { briefMarkdown, charterFromText, charterLabel } from './services/projectBrief';
@@ -1503,7 +1504,12 @@ const App: React.FC = () => {
     const memo = keyInfoContext(memoProj?.keyInfo, 1200);
     // 告诉模型它在服务广场真实能做什么，不然它会以为自己「登录不了、只能模拟」
     const marketNote = memoProj ? marketCapability(memoProj, (() => { try { return !!WAKE_API && !!localStorage.getItem('aae-auth-token'); } catch { return false; } })()) : '';
-    const extra = [unexplored.userAsk ? `用户要求：${unexplored.userAsk}` : '', memo, marketNote].filter(Boolean).join('\n');
+    // 研究型项目：先找几篇真论文给它引用（OpenAlex，免费），减少编造文献
+    const logged = (() => { try { return !!WAKE_API && !!localStorage.getItem('aae-auth-token'); } catch { return false; } })();
+    const papersNote = memoProj && logged && memoProj.explorationMode === 'research' && unexplored.noteType !== 'simulation'
+      ? await meterFor(memoProj.id, () => paperNoteFor(memoProj.metaProblem || memoProj.name, unexplored.title, async m => (await callLLM(m as any, { maxTokens: 60, timeoutMs: 30000, task: 'simple' })).content))
+      : '';
+    const extra = [unexplored.userAsk ? `用户要求：${unexplored.userAsk}` : '', memo, marketNote, papersNote].filter(Boolean).join('\n');
     const target: ProblemNode = extra
       ? { ...unexplored, notes: `${unexplored.notes ? unexplored.notes + '\n' : ''}${extra}` }
       : unexplored;

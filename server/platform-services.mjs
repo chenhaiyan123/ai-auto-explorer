@@ -23,7 +23,16 @@ const SERVICES = {
   survey: { label: '问卷调查（问卷星）', needs: 'wjxKey' },
   company: { label: '企业信息（天眼查）', needs: 'tycKey' },
   page: { label: '预售页 / 报名页（平台自建）', needs: null },
+  papers: { label: '学术文献检索（OpenAlex / Crossref，免费）', needs: null },
 };
+/** OpenAlex 把摘要存成「词 → 位置」的倒排表，拼回原文 */
+const abstractOf = inv => {
+  if (!inv || typeof inv !== 'object') return '';
+  const words = [];
+  for (const [w, pos] of Object.entries(inv)) for (const i of pos) if (i < 400) words[i] = w;
+  return words.filter(Boolean).join(' ').slice(0, 900);
+};
+const DOI_RE = /^10\.\d{4,9}\/[^\s]+$/;
 const QTYPES = { single: '单选', multi: '多选', text: '简答题', scale: '量表题', nps: 'NPS量表' };
 
 export class PlatformServices {
@@ -82,6 +91,47 @@ export class PlatformServices {
       }
       throw e;
     }
+  }
+
+  // ===== 学术文献（免费）：真论文，减少 AI 编造引用 =====
+  limited(owner) {
+    const now = Date.now(); this.paperHits ||= new Map();
+    const h = this.paperHits.get(owner);
+    if (!h || now - h.at > 3600000) { this.paperHits.set(owner, { at: now, n: 1 }); return false; }
+    return ++h.n > 120;
+  }
+  async papers(owner, input) {
+    const q = clean(input.q, 200);
+    if (q.length < 2) throw fail('请写检索关键词');
+    if (this.limited(owner)) throw fail('检索太频繁了，过一会儿再试', 429);
+    const n = Math.min(10, Math.max(1, Number(input.n) || 6));
+    const mail = encodeURIComponent(this.env.OPENALEX_MAILTO || 'service@hiexplore.com');
+    const url = `https://api.openalex.org/works?search=${encodeURIComponent(q)}&per_page=${n}&mailto=${mail}&select=id,doi,title,publication_year,primary_location,authorships,cited_by_count,abstract_inverted_index,open_access`;
+    const r = await this.fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20000), redirect: 'error' });
+    if (!r.ok) throw fail(`文献检索暂时不可用（HTTP ${r.status}）`, 502);
+    const body = await r.json();
+    return { q, results: (body.results || []).map(w => ({
+      title: String(w.title || '').slice(0, 300), year: w.publication_year || null,
+      venue: String(w.primary_location?.source?.display_name || '').slice(0, 160),
+      authors: (w.authorships || []).slice(0, 4).map(a => a.author?.display_name).filter(Boolean),
+      doi: w.doi ? String(w.doi).replace(/^https?:\/\/doi\.org\//i, '') : null,
+      url: w.doi || w.open_access?.oa_url || w.id, cited: w.cited_by_count || 0,
+      abstract: abstractOf(w.abstract_inverted_index),
+    })).filter(x => x.title) };
+  }
+  /** 核对 AI 写出来的 DOI 是不是真的存在（Crossref） */
+  async verifyDois(owner, input) {
+    const dois = (Array.isArray(input.dois) ? input.dois : []).map(d => String(d).trim().replace(/^https?:\/\/doi\.org\//i, '')).filter(d => DOI_RE.test(d)).slice(0, 10);
+    if (this.limited(owner)) throw fail('核对太频繁了，过一会儿再试', 429);
+    const out = [];
+    for (const doi of dois) {
+      const r = await this.fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000), redirect: 'error' }).catch(() => null);
+      if (!r) { out.push({ doi, exists: null }); continue; }
+      if (r.status === 404) { out.push({ doi, exists: false }); continue; }
+      const m = r.ok ? (await r.json()).message : null;
+      out.push({ doi, exists: !!m, title: String(m?.title?.[0] || '').slice(0, 300), year: m?.issued?.['date-parts']?.[0]?.[0] || null });
+    }
+    return { results: out };
   }
 
   // ===== 天眼查 =====

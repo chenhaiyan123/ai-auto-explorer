@@ -24,6 +24,8 @@ const fakeFetch = async (url, opts = {}) => {
     if (b.arguments.searchKey === '失败公司') return new Response('{"error":"quota_exceeded"}', { status: 429 });
     return Response.json({ content: JSON.stringify({ tool: b.tool_name, items: [{ name: b.arguments.searchKey + '有限公司' }] }) });
   }
+  if (u.startsWith('https://api.openalex.org/works?')) return Response.json({ results: [{ id: 'https://openalex.org/W1', doi: 'https://doi.org/10.1000/xyz123', title: 'Solar-powered UAV endurance', publication_year: 2021, primary_location: { source: { display_name: 'Aerospace Journal' } }, authorships: [{ author: { display_name: 'A. Li' } }], cited_by_count: 42, abstract_inverted_index: { Solar: [0], power: [1], extends: [2], flight: [3] } }] });
+  if (u.startsWith('https://api.crossref.org/works/')) return u.includes('10.1000%2Fxyz123') ? Response.json({ message: { title: ['Solar-powered UAV endurance'], issued: { 'date-parts': [[2021]] } } }) : new Response('not found', { status: 404 });
   throw new Error('unexpected ' + u);
 };
 
@@ -46,7 +48,7 @@ test('not configured → honest 503, nothing charged', async t => {
   const { call, topup } = await boot(t);
   await topup('u@x.cn', 1000);
   const cat = (await call('u@x.cn', '/platform/catalog')).body;
-  assert.deepEqual(cat.services.map(s => [s.id, s.ready]), [['survey', false], ['company', false], ['page', true]]);
+  assert.deepEqual(cat.services.map(s => [s.id, s.ready]), [['survey', false], ['company', false], ['page', true], ['papers', true]]);
   const r = await call('u@x.cn', '/platform/company/search', 'POST', { keyword: '嘉立创' });
   assert.equal(r.status, 503);
   assert.equal((await call('u@x.cn', '/billing/account')).body.wallet.balanceCents, 1000, 'refunded / not charged');
@@ -113,4 +115,18 @@ test('surveyJsonl keeps structure', () => {
   const j = PlatformServices.surveyJsonl('T', '', [{ type: 'multi', title: 'Q', options: ['a', 'b'] }]).split('\n').map(x => JSON.parse(x));
   assert.equal(j[1].qtype, '多选'); assert.equal(j.length, 3);
   assert.ok(renderPage({ headline: 'x', sub: '', bullets: [], price: '', cta: 'go', ask: 'a', maker: '' }).includes('不收任何费用'));
+});
+
+test('学术文献检索：免费、返回真论文（标题、年份、DOI、摘要），DOI 可核对真假', async t => {
+  const { call } = await boot(t);
+  const cat = (await call('u@x.cn', '/platform/catalog')).body;
+  assert.ok(cat.services.find(x => x.id === 'papers').ready);
+  const r = await call('u@x.cn', '/platform/papers?q=' + encodeURIComponent('solar UAV endurance'));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const p = r.body.results[0];
+  assert.equal(p.doi, '10.1000/xyz123'); assert.equal(p.year, 2021); assert.equal(p.venue, 'Aerospace Journal'); assert.equal(p.abstract, 'Solar power extends flight');
+  assert.equal((await call('u@x.cn', '/platform/papers?q=a')).status, 400);
+  const v = await call('u@x.cn', '/platform/papers/verify', 'POST', { dois: ['10.1000/xyz123', '10.9999/fake-made-up', 'not-a-doi'] });
+  assert.deepEqual(v.body.results.map(x => x.exists), [true, false]);
+  assert.equal((await call(null, '/platform/papers?q=solar')).status, 401, '要登录');
 });
