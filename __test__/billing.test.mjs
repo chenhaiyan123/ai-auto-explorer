@@ -17,7 +17,7 @@ async function fixture(t, overrides = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'billing-test-'));
   await fs.writeFile(path.join(dir, 'merchant.pem'), merchant.privateKey); await fs.writeFile(path.join(dir, 'platform.pem'), alipay.publicKey);
   const env = { WAKE_DATA_DIR: path.join(dir, 'data'), WAKE_MASTER_KEY: randomBytes(32).toString('base64'), WAKE_AUTH_API: 'https://auth.example.test', WAKE_ADMIN_IDENTITIES: 'admin@example.test',
-    BILLING_SALES_ENABLED: 'true', BILLING_PRO_ENABLED: 'true', BILLING_PUBLIC_URL: 'https://billing.example.test', ALIPAY_APP_ID: '2026000000000001', ALIPAY_SELLER_ID: '2088000000000001',
+    BILLING_SALES_ENABLED: 'true', BILLING_PRO_ENABLED: 'true', BILLING_PRO_RETIRED: 'false', BILLING_PUBLIC_URL: 'https://billing.example.test', ALIPAY_APP_ID: '2026000000000001', ALIPAY_SELLER_ID: '2088000000000001',
     ALIPAY_PRIVATE_KEY_FILE: path.join(dir, 'merchant.pem'), ALIPAY_PUBLIC_KEY_FILE: path.join(dir, 'platform.pem'), ...overrides };
   let queryReply;
   const fetcher = async (url, options) => {
@@ -161,7 +161,7 @@ test('Pro 下载版本永久解锁，到期的新版本仍需购买；续费按�
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'billing-expiry-')); const storage = new WakeStorage(dir, randomBytes(32)); await storage.initialize();
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   let now = Date.UTC(2026, 0, 31, 10);
-  const b = new Billing(storage, { alipay: { create: () => ({ checkoutUrl: 'test' }) } }, { BILLING_SALES_ENABLED: 'true', BILLING_PRO_ENABLED: 'true' }, () => now);
+  const b = new Billing(storage, { alipay: { create: () => ({ checkoutUrl: 'test' }) } }, { BILLING_SALES_ENABLED: 'true', BILLING_PRO_ENABLED: 'true', BILLING_PRO_RETIRED: 'false' }, () => now);
   const o = await b.createOrder('user', pro()); await b.settle('alipay', { orderId: o.id, amount: 6900, currency: 'CNY', transactionId: 't1' });
   assert.equal(new Date((await b.view('user')).proUntil).toISOString(), '2026-02-28T10:00:00.000Z');
   const a = await b.saveArtifact('user', { report }); await b.download('user', a.id);
@@ -177,4 +177,12 @@ test('支付响应原文验签保留转义与空白，金额解析拒绝模糊�
   assert.throws(() => signedResponse(response.replace('10000', '10001'), 'alipay_trade_query_response', alipay.publicKey));
   assert.equal(amountInFen('3.99'), 399); assert.equal(amountInFen('69.0'), 6900);
   for (const bad of ['3.990', '-1', '3e2', ' 69', 69, 'NaN']) assert.throws(() => amountInFen(bad));
+});
+
+test('会员套餐已停售：默认不能买 Pro，充值照常', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'billing-retired-')); const storage = new WakeStorage(dir, randomBytes(32)); await storage.initialize();
+  const b = new Billing(storage, { alipay: { create: () => ({ checkoutUrl: 'test' }) } }, { BILLING_SALES_ENABLED: 'true', BILLING_PRO_ENABLED: 'true' });
+  assert.equal(b.catalog().proSalesEnabled, false);
+  await assert.rejects(b.createOrder('user', pro()), e => e.status === 410);
+  await fs.rm(dir, { recursive: true, force: true });
 });

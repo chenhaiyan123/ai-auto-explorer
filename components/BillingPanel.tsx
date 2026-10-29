@@ -4,6 +4,7 @@ import { useLanguage, displayDate } from '../services/language';
 import { billingRequest, BILLING_API, BILLING_CHANGED, BillingAccount, BillingCatalog, BillingOrder, plans, safeCheckoutUrl, safeWechatCodeUrl } from '../services/billingClient';
 import QRCode from 'qrcode';
 import { downloadResearchExport } from '../services/researchExport';
+import WalletTopup from './WalletTopup';
 
 export function Checkout({ order: initial, onPaid, onClose }: { order: BillingOrder; onPaid: () => void; onClose: () => void }) {
   const { t } = useLanguage(); const [order, setOrder] = useState(initial); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
@@ -53,33 +54,10 @@ function WebBillingPanel() {
   useEffect(() => { void load(); window.addEventListener(BILLING_CHANGED, load); return () => window.removeEventListener(BILLING_CHANGED, load); }, []);
   useEffect(() => { if (catalog && !catalog.providers.find(p => p.id === provider)?.ready) setProvider(catalog.providers.find(p => p.ready)?.id || 'wechat'); }, [catalog]);
   const purchasesAvailable = !!catalog?.salesEnabled && (!catalog.salesRestricted || !!account?.purchaseAllowed);
-  const canPay = !!catalog?.salesEnabled && !!catalog.proSalesEnabled && !!account?.purchaseAllowed && !!catalog.providers.find(p => p.id === provider)?.ready;
-  const start = async () => {
-    if (busy) return; setBusy(true); setError('');
-    try { setOrder(await billingRequest<BillingOrder>('/billing/orders', 'POST', { sku: 'pro_month', provider, requestId: requestId.current })); }
-    catch (e) { setError((e as Error).message); } finally { setBusy(false); }
-  };
-  const shared = t('支持', 'Included');
-  const rows = [
-    [t('项目总览与事实看板', 'Overview & fact board'), shared, shared],
-    [t('AI 团队与角色编辑', 'AI team & editable roles'), shared, shared],
-    [t('自带模型 API Key', 'Bring your own API key'), shared, shared],
-    [t('记忆、判断版本与探索树', 'Memory, judgment history & branches'), shared, shared],
-    [t('在线查看结论与依据', 'Read findings & evidence online'), t('免费', 'Free'), shared],
-    [t('笔记与原始资料导出', 'Export notes & original data'), t('免费', 'Free'), t('免费', 'Free')],
-    [t('研究成果包', 'Research export packages'), `¥${(plans.export.amount / 100).toFixed(2)}${t('／份', ' each')}`, t('有效期内导出不另收费', 'Exports included while active')],
-    [t('已解锁的同一成果版本', 'Already unlocked versions'), t('可重复下载', 'Download again'), t('到期后仍可下载', 'Keep download access after expiry')],
-    [t('模型调用额度', 'Model usage credits'), t('按已分配额度或自有 API 计费', 'Allocated credits or your API billing'), t('按已分配额度或自有 API 计费', 'Allocated credits or your API billing')],
-  ];
-  return <section className="text-slate-200 space-y-5" aria-label={t('收费与套餐', 'Plans & billing')}>
-    <div><h2 className="text-2xl font-bold">{t('让值得关心的问题，持续生长', 'Give worthwhile questions time to grow')}</h2><p className="text-sm text-slate-400 mt-2">{t('先免费探索，有需要时再为成果付费。Pro 按月购买，不自动续费。', 'Explore for free. Pay for useful exports when needed. Pro is purchased monthly, with no automatic renewal.')}</p></div>
-    <label className="flex items-center gap-3 text-sm">{t('支付方式', 'Payment method')}<select aria-label={t('支付方式', 'Payment method')} className="bg-slate-800 rounded-lg p-2" value={provider} disabled={busy || !!order} onChange={e => { setProvider(e.target.value); requestId.current = crypto.randomUUID(); }}><option value="wechat" disabled={!catalog?.providers.find(p => p.id === 'wechat')?.ready}>{t('微信支付', 'WeChat Pay')}</option><option value="alipay" disabled={!catalog?.providers.find(p => p.id === 'alipay')?.ready}>{t('支付宝', 'Alipay')}</option></select></label>
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <div className="p-5 rounded-2xl bg-slate-800/50 border border-slate-700"><h3 className="font-bold text-xl">Free</h3><p className="text-3xl font-bold mt-3">¥0</p><p className="text-sm text-slate-400 mt-2">{t('把好奇心留下来', 'Keep your curiosity alive')}</p><div className="mt-4 px-4 py-2 rounded-lg bg-slate-700 text-center text-sm">{account?.plan === 'free' ? t('当前套餐', 'Current plan') : t('免费开始', 'Start free')}</div></div>
-      <div className="p-5 rounded-2xl bg-blue-600/10 border border-blue-500/50"><h3 className="font-bold text-xl text-blue-300">Pro</h3><p className="text-3xl font-bold mt-3">¥{plans.pro.amount / 100}<span className="text-sm text-slate-400 font-normal">{t('／月', '/month')}</span></p><p className="text-sm text-slate-400 mt-2">{t('有效期内，研究成果包导出不另收费', 'Research exports included while your plan is active')}</p><button disabled={!canPay || busy || !!order} onClick={() => void start()} className="w-full mt-4 px-4 py-2 rounded-lg bg-blue-600 disabled:bg-slate-700 disabled:text-slate-400 text-sm font-bold">{busy ? t('正在创建订单…', 'Creating order…') : !canPay ? t('Pro 暂未开放购买', 'Pro purchases are not open yet') : account?.plan === 'pro' ? t('续费一个月', 'Add one month') : t('购买 Pro · ¥69', 'Buy Pro · ¥69')}</button></div>
-    </div>
-    {account?.plan === 'pro' && <p className="text-sm text-emerald-300">Pro {t('有效期至', 'active until')} {displayDate(account.proUntil)}</p>}
-    <div className="overflow-x-auto rounded-xl border border-slate-700"><table className="w-full min-w-[490px] text-sm text-left"><caption className="sr-only">Free / Pro</caption><thead className="bg-slate-800"><tr><th className="p-3">{t('权益', 'Features')}</th><th className="p-3">Free</th><th className="p-3 text-blue-300">Pro</th></tr></thead><tbody>{rows.map(([label, free, pro]) => <tr key={label} className="border-t border-slate-800"><th scope="row" className="p-3 font-normal text-slate-400">{label}</th><td className="p-3">{free}</td><td className="p-3">{pro}</td></tr>)}</tbody></table></div>
+  return <section className="text-slate-200 space-y-5" aria-label={t('充值与订单', 'Top-ups & orders')}>
+    <div><h2 className="text-2xl font-bold">{t('不用买套餐，按用量付费', 'No plans — pay for what you use')}</h2><p className="text-sm text-slate-400 mt-2 leading-6">{t('给钱包充值，再给想推进的项目拨一笔预算。AI 在项目里花钱（模型、服务广场、问卷）从项目钱包出，它接单赚的钱也进项目钱包——让它自己养活自己。', 'Top up your wallet and give each project a budget. The AI spends from the project wallet and earns into it by taking jobs in the marketplace.')}</p></div>
+    <WalletTopup />
+    {account?.plan === 'pro' && <p className="text-sm text-emerald-300">{t('你之前买的 Pro 有效期至', 'Your earlier Pro stays active until')} {displayDate(account.proUntil)}{t('，到期前成果包导出照常免费。', '; exports stay included until then.')}</p>}
     <div className="flex flex-wrap gap-4 text-xs">{['alipay', 'wechat'].map(id => <span key={id} className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${purchasesAvailable && catalog?.providers.find(p => p.id === id)?.ready ? 'bg-emerald-400' : 'bg-slate-600'}`} />{id === 'alipay' ? t('支付宝', 'Alipay') : t('微信支付', 'WeChat Pay')} · {purchasesAvailable && catalog?.providers.find(p => p.id === id)?.ready ? catalog.salesRestricted ? t('仅供验收', 'Verification only') : t('已开放', 'Available') : t('暂未开放', 'Not available yet')}</span>)}</div>
     {catalog?.salesRestricted && <p className="text-xs text-amber-200">{account?.purchaseAllowed ? t('支付正在进行小额验收，此账号可按正式价格购买成果包。', 'Payments are being verified. This account can purchase an export at its listed price.') : t('支付正在进行小额验收，当前账号暂不能购买。已有订单查询与已解锁成果下载不受影响。', 'Payments are being verified with selected accounts. This account cannot make new purchases. Existing orders and unlocked downloads remain available.')}</p>}
     <p className="text-xs text-slate-400 leading-relaxed">{t('Pro 当前包含会员有效期内的成果包导出，已解锁的同一版本到期后仍可下载。模型调用按实际额度或自有 API 计费，会员不额外赠送 Token；研究次数、问题数量和观察频率暂无套餐差异。', 'Pro includes research exports while active. Versions already unlocked remain downloadable after expiry. Model usage uses your allocated credits or your own API; membership does not add tokens. Research runs, question counts and observation schedules currently have no plan-specific differences.')}</p>

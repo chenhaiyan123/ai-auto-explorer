@@ -74,12 +74,12 @@ export default function PersonalCenter(p: Props) {
   const tile = (label: string, detail: string, fn: () => void) => <button onClick={action(fn)} className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 text-left hover:bg-slate-800 focus-visible:ring-2 focus-visible:ring-blue-400"><span className="block font-medium text-slate-100">{label}</span><span className="mt-1 block text-xs leading-5 text-slate-400">{detail}</span></button>;
   return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onClick={p.onClose}>
     <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={ui('个人中心', 'Personal center')} onClick={e => e.stopPropagation()} className="w-full max-w-xl max-h-[90dvh] overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6 shadow-2xl outline-none">
-      <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">{ui('个人中心', 'Personal center')}</h2><p className="mt-2 text-sm text-slate-200 break-all">{p.name} <span className="ml-2 rounded-full bg-blue-500/15 px-2 py-1 text-xs text-blue-300">{p.pro ? 'Pro' : 'Free'}</span></p><p className="mt-1 text-xs text-slate-400 break-all">{p.email}</p></div><button onClick={p.onClose} aria-label={ui('关闭', 'Close')} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800">✕</button></div>
+      <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">{ui('个人中心', 'Personal center')}</h2><p className="mt-2 text-sm text-slate-200 break-all">{p.name}</p><p className="mt-1 text-xs text-slate-400 break-all">{p.email}</p></div><button onClick={p.onClose} aria-label={ui('关闭', 'Close')} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800">✕</button></div>
       <div className="mt-5"><h3 className="mb-2 text-sm font-semibold text-slate-200">{ui('我的钱包', 'My wallet')}</h3><WalletTopup compact projectNames={p.projectNames} />
         <p className="mt-1.5 text-[11px] leading-5 text-slate-500">{ui('充值进用户钱包；在项目的「钱包」页把一部分放进项目钱包，那个项目的 AI 就用它自己决定怎么花、怎么赚，赚的也进项目钱包，随时能收回。', 'Top up here, then move money into a project wallet from the project page.')}</p></div>
       {p.email && hasPasswordLogin() && <PasswordSetting />}
       <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {tile(ui('套餐与订单', 'Plans & orders'), ui('查看 Free / Pro、支付订单与下载权益', 'View plans, payment orders and download access'), p.onBilling)}
+        {tile(ui('充值与订单', 'Top-ups & orders'), ui('充值记录、支付订单、已解锁的成果包', 'Top-ups, payment orders and unlocked exports'), p.onBilling)}
         {tile(ui('用量与额度', 'Usage & credits'), ui('查看各模型剩余额度与使用记录', 'Check model balances and usage history'), p.onUsage)}
         {p.onSync && tile(ui('项目同步', 'Project sync'), p.syncStatus || ui('同步网页与 iPhone 上的项目、笔记和事实', 'Sync web and iPhone projects, notes and facts'), p.onSync)}
       </div>

@@ -63,7 +63,7 @@ export class Billing {
     return this.env.BILLING_SALES_ENABLED === 'true' && (!allowed.size || allowed.has(owner));
   }
   catalog() {
-    return { ...PLANS, salesEnabled: this.env.BILLING_SALES_ENABLED === 'true', proSalesEnabled: this.env.BILLING_PRO_ENABLED === 'true',
+    return { ...PLANS, salesEnabled: this.env.BILLING_SALES_ENABLED === 'true', proSalesEnabled: this.env.BILLING_PRO_ENABLED === 'true' && this.env.BILLING_PRO_RETIRED === 'false',
       salesRestricted: this.allowedIdentities().size > 0,
       providers: [{ id: 'alipay', ready: !!this.providers.alipay }, { id: 'wechat', ready: !!this.providers.wechat }],
       topupEnabled: this.env.BILLING_TOPUP_ENABLED === 'true', topupAmounts: TOPUP_AMOUNTS,
@@ -221,6 +221,9 @@ export class Billing {
         if (previous.sku !== body.sku || previous.provider !== body.provider || previous.artifactId !== (body.artifactId || null) || (body.sku === 'topup' && previous.amount !== amount)) throw fail('订单请求标识已用于其他商品', 409);
         return orderView(previous);
       }
+      // 不再卖会员套餐：充值进钱包、给项目拨预算，AI 自己接单养活自己（已买的 Pro 到期前照常有效）。
+      // 要重新开卖得同时设 BILLING_PRO_ENABLED=true 和 BILLING_PRO_RETIRED=false
+      if (body.sku === 'pro_month' && this.env.BILLING_PRO_RETIRED !== 'false') throw fail('会员套餐已停止售卖：现在只需给钱包充值，按用量付费', 410);
       if (body.sku === 'pro_month' && this.env.BILLING_PRO_ENABLED !== 'true') throw fail('Pro 权益仍在接入，暂不收取会员费用', 503);
       if (body.sku === 'export') {
         if (!s.artifacts.some(a => a.id === body.artifactId && a.owner === owner)) throw fail('成果不存在', 404);

@@ -20,7 +20,7 @@ async function fixture(t, autoCleanup = true) {
   const platform = new X509Certificate(platformPem); const platformKey = await fs.readFile(path.join(dir, 'platform.key'));
   const key = randomBytes(16).toString('hex'); await fs.writeFile(path.join(dir, 'api.key'), key);
   const env = { WECHAT_MCH_ID: '1900000001', WECHAT_APP_ID: 'wx0000000000000000', WECHAT_CERT_SERIAL: merchant.serialNumber,
-    WECHAT_CERT_FILE: path.join(dir, 'merchant.pem'), WECHAT_PRIVATE_KEY_FILE: path.join(dir, 'merchant.key'), WECHAT_API_V3_KEY_FILE: path.join(dir, 'api.key'), WECHAT_PLATFORM_CERT_FILE: path.join(dir, 'platform.pem'), BILLING_PUBLIC_URL: 'https://billing.example.test', BILLING_SALES_ENABLED: 'true', BILLING_PRO_ENABLED: 'true' };
+    WECHAT_CERT_FILE: path.join(dir, 'merchant.pem'), WECHAT_PRIVATE_KEY_FILE: path.join(dir, 'merchant.key'), WECHAT_API_V3_KEY_FILE: path.join(dir, 'api.key'), WECHAT_PLATFORM_CERT_FILE: path.join(dir, 'platform.pem'), BILLING_PUBLIC_URL: 'https://billing.example.test', BILLING_SALES_ENABLED: 'true', BILLING_PRO_ENABLED: 'true', BILLING_PRO_RETIRED: 'false' };
   const encrypt = (text, associated_data) => {
     const nonce = randomBytes(6).toString('hex'); const cipher = createCipheriv('aes-256-gcm', Buffer.from(key), Buffer.from(nonce)); cipher.setAAD(Buffer.from(associated_data));
     return { algorithm: 'AEAD_AES_256_GCM', associated_data, nonce, ciphertext: Buffer.concat([cipher.update(text), cipher.final(), cipher.getAuthTag()]).toString('base64') };
