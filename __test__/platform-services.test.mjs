@@ -214,7 +214,9 @@ test('高德门店统计：按城市 / 地址周边数门店，按区分布；�
 test('umami: admin-only, not configured until key set, then proxies visitor stats', async t => {
   const { call } = await boot(t);
   assert.equal((await call('u@x.cn', '/admin/umami')).status, 403);
-  assert.deepEqual((await call('boss@x.cn', '/admin/umami')).body, { configured: false });
+  const snap = (await call('boss@x.cn', '/admin/umami?days=30')).body;
+  assert.equal(snap.snapshot, true); assert.equal(snap.total.visitors, 422); assert.equal(snap.months.length, 4);
+  assert.ok(snap.recent.visitors > 0 && snap.recent.summed);
   const cfg = (await call('boss@x.cn', '/admin/platform', 'PUT', { umamiKey: 'um-key' })).body;
   assert.equal(cfg.umami, true); assert.equal(cfg.umamiSite, 'be74bdcf-1923-4f20-9e43-7fafb0595554');
   assert.ok(!JSON.stringify(cfg).includes('um-key'), 'key never read back');

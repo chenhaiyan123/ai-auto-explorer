@@ -59,31 +59,33 @@ const Bars: React.FC<{ title: string; data: Daily[]; field: string; fmt?: (n: nu
 };
 
 /** 网站访客（Umami）：来过网站的人，不等于注册用户 */
-type Umami = { configured: boolean; since?: number; total?: { visitors: number; visits: number; pageviews: number; bounces: number; totaltime: number }; recent?: { days: number; visitors: number; visits: number; pageviews: number }; months?: { month: string; visitors: number; visits: number }[]; daily?: { day: string; visitors: number }[]; events?: { name: string; count: number }[]; countries?: { code: string; visitors: number }[] };
-const EVENT_CN: Record<string, string> = { trial_start: '开始免注册体验', login: '登录', funnel_project_created: '建了项目', validation_triggered: '跑了一次验证', signup: '注册', checkout_start: '点了充值' };
+type Umami = { configured: boolean; snapshot?: boolean; asOf?: number; devices?: { name: string; visitors: number }[]; referrers?: { name: string; visitors: number }[]; since?: number; total?: { visitors: number; visits: number; pageviews: number; bounces: number; totaltime: number }; recent?: { days: number; visitors: number; visits?: number; pageviews?: number; activeDays?: number; summed?: boolean }; months?: { month: string; visitors: number; visits: number }[]; daily?: { day: string; visitors: number }[]; events?: { name: string; count: number }[]; countries?: { code: string; visitors: number }[] };
+const EVENT_CN: Record<string, string> = { funnel_landed: '到达首页', trial_start: '开始免注册体验', funnel_tried_sim: '试了仿真示例', funnel_entered_app: '进入工作台', login: '登录', funnel_project_created: '建了项目', funnel_exploration_started: '开始探索', validation_triggered: 'AI 验证步骤', batch_start: 'AI 开工一轮', feed_answer: '回答 AI 的提问', trial_quota_exhausted: '体验额度用完', unattended_resume: '无人值守续跑', pm_market: '去服务广场', autonomy_granted: '授权 AI 自主运行', return_d1: '次日回访', return_d7: '7 天回访', return_d30: '30 天回访', signup: '注册', checkout_start: '点了充值' };
+const DEV_CN: Record<string, string> = { laptop: '笔记本', mobile: '手机', desktop: '台式机', tablet: '平板' };
 const Visitors: React.FC<{ days: number }> = ({ days }) => {
   const [d, setD] = useState<Umami | null>(null);
   const [err, setErr] = useState('');
   useEffect(() => { sharedRequest<Umami>(`/admin/umami?days=${days}`).then(x => { setD(x); setErr(''); }).catch(e => setErr(e instanceof Error ? e.message : String(e))); }, [days]);
-  const head = <div className="px-3 py-2 border-b border-slate-800 flex items-baseline gap-2 flex-wrap"><span className="text-[13px] font-semibold text-slate-300">网站访客（Umami）</span><span className="text-[11px] text-slate-500">来过网站的独立访客，含没注册的人；和上面的「用户」是两个口径</span></div>;
+  const head = <div className="px-3 py-2 border-b border-slate-800 flex items-baseline gap-2 flex-wrap"><span className="text-[13px] font-semibold text-slate-300">网站访客（Umami）</span><span className="text-[11px] text-slate-500">来过网站的独立访客，含没注册的人；和上面的「用户」是两个口径{d?.snapshot && d.asOf ? ` · Umami 导出快照，截至 ${new Date(d.asOf).toLocaleString()}，不自动更新` : ''}</span></div>;
   if (err) return <section className="rounded-xl border border-slate-700">{head}<p className="px-3 py-3 text-[12px] text-amber-300">读不到：{err}</p></section>;
   if (!d) return <section className="rounded-xl border border-slate-700">{head}<p className="px-3 py-3 text-[12px] text-slate-500">正在读取…</p></section>;
-  if (!d.configured) return <section className="rounded-xl border border-slate-700">{head}<p className="px-3 py-3 text-[12px] text-slate-400 leading-5">还没接上：到「平台服务」填 Umami API Key（cloud.umami.is → 右上角头像 → Settings → API keys → Create key），保存后这里显示 2026-07-27 以来的全部访客。</p></section>;
+  if (!d.configured) return <section className="rounded-xl border border-slate-700">{head}<p className="px-3 py-3 text-[12px] text-slate-400 leading-5">还没接上：Umami 付费版可以到「平台服务」填 API Key 自动同步（cloud.umami.is → 右上角头像 → Settings → API keys → Create key），保存后这里显示 2026-07-27 以来的全部访客。</p></section>;
   const t = d.total!, r = d.recent!, months = d.months || [], max = Math.max(1, ...months.map(x => x.visitors));
-  const ev = (d.events || []).filter(e => EVENT_CN[e.name]).sort((a, b) => b.count - a.count);
+  const ev = (d.events || []).filter(e => EVENT_CN[e.name]).sort((a, b) => b.count - a.count).slice(0, 14);
   return (
     <section className="rounded-xl border border-slate-700">
       {head}
       <div className="p-3 space-y-3">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Tile big label="累计访客" value={t.visitors} sub={`从 ${new Date(d.since!).toLocaleDateString()} 开始统计`} />
-          <Tile label={`近 ${r.days} 天访客`} value={r.visitors} sub={`访问 ${r.visits} 次 · 浏览 ${r.pageviews} 页`} />
+          <Tile label={r.summed ? `近 ${r.days} 天访客（按天累加）` : `近 ${r.days} 天访客`} value={r.visitors} sub={r.summed ? `${r.activeDays} 天有人来；同一人隔天再来算两次` : `访问 ${r.visits} 次 · 浏览 ${r.pageviews} 页`} />
           <Tile label="累计访问" value={t.visits} sub={`浏览 ${t.pageviews} 页`} />
           <Tile label="跳出率" value={t.visits ? `${Math.round(t.bounces / t.visits * 100)}%` : '—'} sub={t.visits ? `平均停留 ${Math.round(t.totaltime / t.visits / 60 * 10) / 10} 分钟` : ''} />
         </div>
+        {!!d.daily?.length && (() => { const dm = Math.max(1, ...d.daily!.map(x => x.visitors)); return <div><div className="text-[12px] text-slate-400 mb-1">每天访客</div><div className="flex items-end gap-px h-16" role="img" aria-label="每天访客柱状图">{d.daily!.map(x => <div key={x.day} title={`${x.day}：${x.visitors} 人`} className="flex-1 bg-sky-500/60 hover:bg-sky-400 rounded-t-sm" style={{ height: `${Math.max(4, x.visitors / dm * 100)}%` }} />)}</div><div className="flex justify-between text-[10px] text-slate-500 mt-0.5"><span>{d.daily![0].day}</span><span>{d.daily![d.daily!.length - 1].day}</span></div></div>; })()}
         <div className="grid sm:grid-cols-3 gap-3 text-[12px]">
           <div><div className="text-slate-400 mb-1">每月访客</div>{months.map(x => <div key={x.month} className="flex items-center gap-2 py-0.5"><span className="w-16 text-slate-500 tabular-nums">{x.month}</span><span className="h-2 rounded bg-sky-500/70" style={{ width: `${x.visitors / max * 60}%` }} /><span className="text-slate-300 tabular-nums">{x.visitors}</span></div>)}</div>
-          <div><div className="text-slate-400 mb-1">来自哪里</div>{(d.countries || []).map(c => <div key={c.code} className="flex justify-between py-0.5"><span className="text-slate-300">{c.code || '未知'}</span><span className="text-slate-400 tabular-nums">{c.visitors}</span></div>)}</div>
+          <div><div className="text-slate-400 mb-1">来自哪里</div>{(d.countries || []).map(c => <div key={c.code} className="flex justify-between py-0.5"><span className="text-slate-300">{c.code || '未知'}</span><span className="text-slate-400 tabular-nums">{c.visitors}</span></div>)}{!!d.devices?.length && <><div className="text-slate-400 mt-2 mb-1">设备</div>{d.devices.map(x => <div key={x.name} className="flex justify-between py-0.5"><span className="text-slate-300">{DEV_CN[x.name] || x.name}</span><span className="text-slate-400 tabular-nums">{x.visitors}</span></div>)}</>}</div>
           <div><div className="text-slate-400 mb-1">关键动作（次数）</div>{ev.length ? ev.map(e => <div key={e.name} className="flex justify-between py-0.5"><span className="text-slate-300">{EVENT_CN[e.name]}</span><span className="text-slate-400 tabular-nums">{e.count}</span></div>) : <span className="text-slate-500">还没有</span>}</div>
         </div>
       </div>

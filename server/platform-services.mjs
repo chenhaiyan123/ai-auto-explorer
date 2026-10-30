@@ -48,6 +48,20 @@ export const WB_INDICATORS = {
 /** 网站流量统计（Umami Cloud）：www.hiexplore.com 的网站 ID；统计从 2026-07-27 开始 */
 const DEFAULT_UMAMI_SITE = 'be74bdcf-1923-4f20-9e43-7fafb0595554';
 const UMAMI_SINCE = Date.parse('2026-07-27T00:00:00+08:00');
+/** Umami 免费版不给 API Key：管理员在 Umami 后台登录后，把数据导出成这份快照（真实数据，不自动更新；要更新就重新导一次） */
+const UMAMI_SNAPSHOT = {"asOf":1793330548345,"since":"2026-07-27","total":{"visitors":422,"visits":471,"pageviews":522,"bounces":323,"totaltime":18751},"months":[["2026-07",11,11,14],["2026-08",136,156,173],["2026-09",135,146,152],["2026-10",140,158,183]],"countries":[["CN",226],["US",96],["SC",22],["SG",10],["NL",7],["DE",7],["BR",6],["JP",5]],"devices":[["laptop",292],["mobile",102],["desktop",31]],"referrers":[["hiexplore.com",6],["baidu.com",2],["dmc.marketingforce.com",1],["google.com",1],["m.baidu.com",1]],"events":[["validation_triggered",2108],["batch_start",611],["batch_end",606],["feed_answer",165],["trial_quota_exhausted",136],["funnel_landed",113],["explore_halted",92],["unattended_resume",91],["login",73],["pulse_wake",59],["pm_market",25],["outline_proposed",16],["trial_start",15],["funnel_tried_sim",13],["outline_confirmed",11],["funnel_entered_app",9],["key_info",7],["autonomy_report",7],["write_this_one",6],["funnel_project_created",6],["feedback_open",6],["step_pause",5],["autonomy_granted",5],["funnel_exploration_started",4],["charter_set",4],["digest",4],["return_d1",3],["sim_to_trial",3],["return_d7",2],["return_d30",2],["project_created",2],["sim_generated",2]],"daily":[["2026-07-28",1],["2026-07-29",7],["2026-07-30",1],["2026-07-31",2],["2026-08-01",1],["2026-08-02",2],["2026-08-03",9],["2026-08-04",2],["2026-08-05",1],["2026-08-06",3],["2026-08-07",1],["2026-08-08",13],["2026-08-09",6],["2026-08-10",7],["2026-08-11",26],["2026-08-12",5],["2026-08-13",2],["2026-08-14",1],["2026-08-15",4],["2026-08-16",2],["2026-08-17",10],["2026-08-18",11],["2026-08-19",12],["2026-08-20",2],["2026-08-22",2],["2026-08-24",4],["2026-08-25",3],["2026-08-28",4],["2026-08-29",2],["2026-08-30",4],["2026-08-31",6],["2026-09-01",7],["2026-09-02",9],["2026-09-03",8],["2026-09-04",3],["2026-09-05",3],["2026-09-06",5],["2026-09-07",8],["2026-09-08",8],["2026-09-09",6],["2026-09-10",6],["2026-09-11",4],["2026-09-12",4],["2026-09-13",5],["2026-09-14",7],["2026-09-15",4],["2026-09-16",6],["2026-09-17",3],["2026-09-18",5],["2026-09-19",2],["2026-09-20",4],["2026-09-21",6],["2026-09-22",3],["2026-09-24",9],["2026-09-25",3],["2026-09-26",3],["2026-09-28",3],["2026-09-29",4],["2026-09-30",2],["2026-10-02",2],["2026-10-04",3],["2026-10-05",7],["2026-10-06",3],["2026-10-07",4],["2026-10-08",6],["2026-10-09",6],["2026-10-10",6],["2026-10-11",4],["2026-10-12",1],["2026-10-13",4],["2026-10-14",2],["2026-10-15",2],["2026-10-16",5],["2026-10-17",6],["2026-10-18",5],["2026-10-19",7],["2026-10-20",6],["2026-10-21",6],["2026-10-22",2],["2026-10-23",5],["2026-10-24",9],["2026-10-25",4],["2026-10-26",3],["2026-10-27",8],["2026-10-28",7],["2026-10-29",23],["2026-10-30",3]]};
+function umamiFromSnapshot(days) {
+  const S = UMAMI_SNAPSHOT, cut = new Date(S.asOf - days * 86400000 + 8 * 3600000).toISOString().slice(0, 10);
+  const recent = S.daily.filter(([d]) => d > cut);
+  return { configured: true, snapshot: true, asOf: S.asOf, since: UMAMI_SINCE, total: S.total,
+    recent: { days, visitors: recent.reduce((a, [, n]) => a + n, 0), activeDays: recent.length, summed: true },
+    months: S.months.map(([month, visitors, visits, pageviews]) => ({ month, visitors, visits, pageviews })),
+    daily: S.daily.map(([day, visitors]) => ({ day, visitors })),
+    events: S.events.map(([name, count]) => ({ name, count })),
+    countries: S.countries.map(([code, visitors]) => ({ code, visitors })),
+    devices: S.devices.map(([name, visitors]) => ({ name, visitors })),
+    referrers: S.referrers.map(([name, visitors]) => ({ name, visitors })) };
+}
 const QTYPES = { single: '单选', multi: '多选', text: '简答题', scale: '量表题', nps: 'NPS量表' };
 
 export class PlatformServices {
@@ -262,7 +276,7 @@ export class PlatformServices {
   // ===== 网站访客（Umami Cloud）：给运营数据页看真实访客，不和注册用户混在一起 =====
   async umami(days = 30) {
     const cfg = await this.tx(s => ({ key: s.config.umamiKey || this.env.UMAMI_API_KEY || '', site: s.config.umamiSite || this.env.UMAMI_WEBSITE_ID || DEFAULT_UMAMI_SITE }), false);
-    if (!cfg.key) return { configured: false };
+    if (!cfg.key) return umamiFromSnapshot(days);
     const ck = `${days}`;
     if (this.umamiCache?.k === ck && Date.now() - this.umamiCache.at < 10 * 60000) return this.umamiCache.v;
     const base = String(this.env.UMAMI_API_BASE || 'https://api.umami.is/v1').replace(/\/+$/, '');
