@@ -500,6 +500,10 @@ export async function createWakeServer(options = {}) {
         if (req.method === 'POST' && url.pathname === '/auth/password/set') { send(200, await passwords.setPassword(owner, (await readBody(req)).password)); return; }
         if (req.method === 'POST' && url.pathname === '/auth/logout') { send(200, await passwords.logout(String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''))); return; }
       }
+      if (req.method === 'GET' && url.pathname === '/admin/umami') {
+        if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
+        send(200, await platform.umami(Math.min(90, Math.max(7, Number(url.searchParams.get('days')) || 30)))); return;
+      }
       if (req.method === 'GET' && url.pathname === '/admin/questions') {
         if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
         const internal = new Set([...admins, ...String(env.METRICS_EXCLUDE || '').split(',').map(x => x.trim()).filter(Boolean)]);

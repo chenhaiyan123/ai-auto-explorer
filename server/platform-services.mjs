@@ -45,6 +45,9 @@ export const WB_INDICATORS = {
   'SE.TER.ENRR': '高等教育毛入学率（%）', 'SE.PRM.ENRL': '小学在校生人数', 'SE.SEC.ENRL': '中学在校生人数', 'GB.XPD.RSDV.GD.ZS': '研发支出占 GDP（%）',
   'IT.NET.USER.ZS': '互联网用户占比（%）', 'IT.CEL.SETS.P2': '手机签约数（每百人）', 'EG.ELC.RNEW.ZS': '可再生能源发电占比（%）', 'SH.XPD.CHEX.PC.CD': '人均医疗支出（美元）',
 };
+/** 网站流量统计（Umami Cloud）：www.hiexplore.com 的网站 ID；统计从 2026-07-27 开始 */
+const DEFAULT_UMAMI_SITE = 'be74bdcf-1923-4f20-9e43-7fafb0595554';
+const UMAMI_SINCE = Date.parse('2026-07-27T00:00:00+08:00');
 const QTYPES = { single: '单选', multi: '多选', text: '简答题', scale: '量表题', nps: 'NPS量表' };
 
 export class PlatformServices {
@@ -81,12 +84,14 @@ export class PlatformServices {
       if (typeof body.tycKey === 'string') s.config.tycKey = body.tycKey.trim().slice(0, 4000);
       if (typeof body.asrKey === 'string') s.config.asrKey = body.asrKey.trim().slice(0, 500);
       if (typeof body.amapKey === 'string') s.config.amapKey = body.amapKey.trim().slice(0, 200);
+      if (typeof body.umamiKey === 'string') { s.config.umamiKey = body.umamiKey.trim().slice(0, 300); this.umamiCache = null; }
+      if (typeof body.umamiSite === 'string' && /^[0-9a-f-]{36}$/.test(body.umamiSite.trim())) { s.config.umamiSite = body.umamiSite.trim(); this.umamiCache = null; }
       if (body.prices && typeof body.prices === 'object') {
         s.config.prices = { ...(s.config.prices || {}) };
         for (const [k, v] of Object.entries(body.prices)) if (k in DEFAULT_PRICES && Number.isSafeInteger(v) && v >= 0 && v <= 100000) s.config.prices[k] = v;
       }
       const k = this.keys(s);
-      return { wjx: !!k.wjxKey, tyc: !!k.tycKey, asr: !!k.asrKey, asrOwn: !!s.config.asrKey, amap: !!k.amapKey, prices: this.prices(s) };
+      return { wjx: !!k.wjxKey, tyc: !!k.tycKey, asr: !!k.asrKey, asrOwn: !!s.config.asrKey, amap: !!k.amapKey, umami: !!(s.config.umamiKey || this.env.UMAMI_API_KEY), umamiSite: s.config.umamiSite || this.env.UMAMI_WEBSITE_ID || DEFAULT_UMAMI_SITE, prices: this.prices(s) };
     });
   }
 
@@ -252,6 +257,46 @@ export class PlatformServices {
         values: rows.filter(x => x.value !== null).map(x => ({ year: Number(x.date), value: x.value })).slice(0, 10) });
     }
     return { source: '世界银行公开数据（World Bank Open Data）', results: out };
+  }
+
+  // ===== 网站访客（Umami Cloud）：给运营数据页看真实访客，不和注册用户混在一起 =====
+  async umami(days = 30) {
+    const cfg = await this.tx(s => ({ key: s.config.umamiKey || this.env.UMAMI_API_KEY || '', site: s.config.umamiSite || this.env.UMAMI_WEBSITE_ID || DEFAULT_UMAMI_SITE }), false);
+    if (!cfg.key) return { configured: false };
+    const ck = `${days}`;
+    if (this.umamiCache?.k === ck && Date.now() - this.umamiCache.at < 10 * 60000) return this.umamiCache.v;
+    const base = String(this.env.UMAMI_API_BASE || 'https://api.umami.is/v1').replace(/\/+$/, '');
+    const get = async p => {
+      const r = await this.fetch(`${base}/websites/${cfg.site}${p}`, { headers: { Authorization: `Bearer ${cfg.key}`, 'x-umami-api-key': cfg.key, Accept: 'application/json' }, signal: AbortSignal.timeout(20000), redirect: 'error' });
+      if (!r.ok) throw fail(`Umami 读不到（HTTP ${r.status}${r.status === 401 ? '，Key 不对或过期' : ''}）`, 502);
+      return r.json();
+    };
+    const now = Date.now(), from = now - days * 86400000;
+    const q = (a, b) => `startAt=${a}&endAt=${b}`;
+    const all = q(UMAMI_SINCE, now), range = q(from, now);
+    const [total, recent, events, countries, daily] = await Promise.all([
+      get(`/stats?${all}`), get(`/stats?${range}`),
+      get(`/metrics?${all}&type=event&limit=40`), get(`/metrics?${all}&type=country&limit=8`),
+      get(`/pageviews?${range}&unit=day&timezone=Asia/Shanghai`),
+    ]);
+    // 按月访客
+    const months = [];
+    for (let d = new Date(UMAMI_SINCE); d.getTime() < now;) {
+      const a = d.getTime(); const nx = new Date(d.getFullYear(), d.getMonth() + 1, 1); const b = Math.min(now, nx.getTime());
+      const st = await get(`/stats?${q(a, b)}`).catch(() => null);
+      months.push({ month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, visitors: Number(st?.visitors?.value ?? st?.visitors ?? 0), visits: Number(st?.visits?.value ?? st?.visits ?? 0), bounces: Number(st?.bounces?.value ?? st?.bounces ?? 0), totaltime: Number(st?.totaltime?.value ?? st?.totaltime ?? 0) });
+      d = nx;
+    }
+    const num = v => Number(v?.value ?? v ?? 0);
+    const sessionsDaily = (daily.sessions || []).map(x => ({ day: String(x.x || x.t).slice(0, 10), visitors: x.y }));
+    const v = { configured: true, since: UMAMI_SINCE,
+      total: { visitors: num(total.visitors), visits: num(total.visits), pageviews: num(total.pageviews), bounces: num(total.bounces), totaltime: num(total.totaltime) },
+      recent: { days, visitors: num(recent.visitors), visits: num(recent.visits), pageviews: num(recent.pageviews), bounces: num(recent.bounces), totaltime: num(recent.totaltime) },
+      months, daily: sessionsDaily,
+      events: (Array.isArray(events) ? events : []).map(e => ({ name: e.x, count: e.y })),
+      countries: (Array.isArray(countries) ? countries : []).map(c => ({ code: c.x, visitors: c.y })) };
+    this.umamiCache = { k: ck, at: Date.now(), v };
+    return v;
   }
 
   // ===== 天眼查 =====

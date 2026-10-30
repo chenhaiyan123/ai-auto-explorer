@@ -58,6 +58,39 @@ const Bars: React.FC<{ title: string; data: Daily[]; field: string; fmt?: (n: nu
   );
 };
 
+/** 网站访客（Umami）：来过网站的人，不等于注册用户 */
+type Umami = { configured: boolean; since?: number; total?: { visitors: number; visits: number; pageviews: number; bounces: number; totaltime: number }; recent?: { days: number; visitors: number; visits: number; pageviews: number }; months?: { month: string; visitors: number; visits: number }[]; daily?: { day: string; visitors: number }[]; events?: { name: string; count: number }[]; countries?: { code: string; visitors: number }[] };
+const EVENT_CN: Record<string, string> = { trial_start: '开始免注册体验', login: '登录', funnel_project_created: '建了项目', validation_triggered: '跑了一次验证', signup: '注册', checkout_start: '点了充值' };
+const Visitors: React.FC<{ days: number }> = ({ days }) => {
+  const [d, setD] = useState<Umami | null>(null);
+  const [err, setErr] = useState('');
+  useEffect(() => { sharedRequest<Umami>(`/admin/umami?days=${days}`).then(x => { setD(x); setErr(''); }).catch(e => setErr(e instanceof Error ? e.message : String(e))); }, [days]);
+  const head = <div className="px-3 py-2 border-b border-slate-800 flex items-baseline gap-2 flex-wrap"><span className="text-[13px] font-semibold text-slate-300">网站访客（Umami）</span><span className="text-[11px] text-slate-500">来过网站的独立访客，含没注册的人；和上面的「用户」是两个口径</span></div>;
+  if (err) return <section className="rounded-xl border border-slate-700">{head}<p className="px-3 py-3 text-[12px] text-amber-300">读不到：{err}</p></section>;
+  if (!d) return <section className="rounded-xl border border-slate-700">{head}<p className="px-3 py-3 text-[12px] text-slate-500">正在读取…</p></section>;
+  if (!d.configured) return <section className="rounded-xl border border-slate-700">{head}<p className="px-3 py-3 text-[12px] text-slate-400 leading-5">还没接上：到「平台服务」填 Umami API Key（cloud.umami.is → 右上角头像 → Settings → API keys → Create key），保存后这里显示 2026-07-27 以来的全部访客。</p></section>;
+  const t = d.total!, r = d.recent!, months = d.months || [], max = Math.max(1, ...months.map(x => x.visitors));
+  const ev = (d.events || []).filter(e => EVENT_CN[e.name]).sort((a, b) => b.count - a.count);
+  return (
+    <section className="rounded-xl border border-slate-700">
+      {head}
+      <div className="p-3 space-y-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Tile big label="累计访客" value={t.visitors} sub={`从 ${new Date(d.since!).toLocaleDateString()} 开始统计`} />
+          <Tile label={`近 ${r.days} 天访客`} value={r.visitors} sub={`访问 ${r.visits} 次 · 浏览 ${r.pageviews} 页`} />
+          <Tile label="累计访问" value={t.visits} sub={`浏览 ${t.pageviews} 页`} />
+          <Tile label="跳出率" value={t.visits ? `${Math.round(t.bounces / t.visits * 100)}%` : '—'} sub={t.visits ? `平均停留 ${Math.round(t.totaltime / t.visits / 60 * 10) / 10} 分钟` : ''} />
+        </div>
+        <div className="grid sm:grid-cols-3 gap-3 text-[12px]">
+          <div><div className="text-slate-400 mb-1">每月访客</div>{months.map(x => <div key={x.month} className="flex items-center gap-2 py-0.5"><span className="w-16 text-slate-500 tabular-nums">{x.month}</span><span className="h-2 rounded bg-sky-500/70" style={{ width: `${x.visitors / max * 60}%` }} /><span className="text-slate-300 tabular-nums">{x.visitors}</span></div>)}</div>
+          <div><div className="text-slate-400 mb-1">来自哪里</div>{(d.countries || []).map(c => <div key={c.code} className="flex justify-between py-0.5"><span className="text-slate-300">{c.code || '未知'}</span><span className="text-slate-400 tabular-nums">{c.visitors}</span></div>)}</div>
+          <div><div className="text-slate-400 mb-1">关键动作（次数）</div>{ev.length ? ev.map(e => <div key={e.name} className="flex justify-between py-0.5"><span className="text-slate-300">{EVENT_CN[e.name]}</span><span className="text-slate-400 tabular-nums">{e.count}</span></div>) : <span className="text-slate-500">还没有</span>}</div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
 /** 大家在研究什么：每个项目的问题（含免注册体验用户），最新的在前 */
 const Questions: React.FC<{ internal: boolean }> = ({ internal }) => {
   const [d, setD] = useState<{ total: number; people: number; guests: number; firstAt: number | null; items: { q: string; at: number; who: string; guest: boolean }[] } | null>(null);
@@ -127,8 +160,9 @@ export default function MetricsPanel({ mode }: { mode: 'users' | 'money' }) {
         <Bars title="每天新增用户" data={u.daily} field="newUsers" />
         <Bars title="每天活跃用户" data={u.daily} field="active" />
       </div>
+      <Visitors days={days} />
       <Questions internal={internal} />
-      <p className="text-[11px] text-slate-500 leading-5">口径：登录服务不存用户表，「用户」是用邮箱验证码登录后访问过后台的人。逐日活跃从 {u.trackedSince ? new Date(u.trackedSince).toLocaleDateString() : '这一版上线'} 开始记录；更早的用户由充值、模型调用、服务广场记录补上（只知道他们哪天用过，留存只按逐日记录的人算）。游客浏览量看 Umami。</p>
+      <p className="text-[11px] text-slate-500 leading-5">口径：登录服务不存用户表，「用户」是用邮箱验证码登录后访问过后台的人。逐日活跃从 {u.trackedSince ? new Date(u.trackedSince).toLocaleDateString() : '这一版上线'} 开始记录；更早的用户由充值、模型调用、服务广场记录补上（只知道他们哪天用过，留存只按逐日记录的人算）。网站访客（含没注册的）看上面 Umami 那一块。</p>
     </div>;
   }
 

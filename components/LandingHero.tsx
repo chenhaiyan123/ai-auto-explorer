@@ -3,7 +3,7 @@ import { t as ui } from '../services/language';
 
 /**
  * 落地页首屏：一眼看懂这是什么。
- * 一句话：为每一个值得的问题，养一个会自己成长的 AI 生命体——长期探索、自我迭代、连接真实世界做成闭环、替你省注意力。
+ * 一句话：为每个有价值的问题，养一个会自己成长的 AI 生命体——长期探索、自我迭代、连接真实世界做成闭环、替你省注意力。
  */
 const PILLARS = [
   { icon: '🌱', title: ['一个问题，一个生命体', 'One question, one living agent'], text: ['它有自己的目标、记忆和钱包，做得越久越懂这个领域，攒下别的 AI 没有的经验和数据', 'Its own goal, memory and wallet. The longer it works, the more it knows — experience and data no other AI has'] },
@@ -21,7 +21,7 @@ export default function LandingHero({ onTrial, onLogin, onMarket }: { onTrial?: 
       <div className="relative max-w-5xl mx-auto px-4 pt-12 pb-10 sm:pt-20 sm:pb-14">
         <p className="text-center text-[12px] tracking-[0.2em] text-blue-300/80">HIEXPLORE · {ui('海探', 'AI EXPLORER')}</p>
         <h1 id="hero-title" className="mt-4 text-center text-[28px] leading-[1.25] sm:text-5xl sm:leading-[1.15] font-bold text-white text-balance">
-          {ui('为每一个值得的问题，', 'For every question worth asking,')}<br />
+          {ui('为每个有价值的问题，', 'For every question worth asking,')}<br />
           <span className="bg-gradient-to-r from-blue-400 via-sky-300 to-emerald-300 bg-clip-text text-transparent"><span className="inline-block">{ui('养一个会自己成长的', 'raise an AI')}</span> <span className="inline-block">{ui('AI 生命体', 'that grows on its own')}</span></span>
         </h1>
         <p className="mt-5 max-w-2xl mx-auto text-center text-[14px] sm:text-[16px] leading-7 text-slate-300">

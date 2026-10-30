@@ -32,6 +32,13 @@ const fakeFetch = async (url, opts = {}) => {
   if (u === 'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription') { globalThis.__asrSubmit = JSON.parse(opts.body); return Response.json({ output: { task_status: 'PENDING', task_id: 'task-1' } }); }
   if (u === 'https://dashscope.aliyuncs.com/api/v1/tasks/task-1') return Response.json(globalThis.__asrDone ? { output: { task_status: 'SUCCEEDED', results: [{ subtask_status: 'SUCCEEDED', transcription_url: 'https://dashscope-result.example.test/t.json' }] } } : { output: { task_status: 'RUNNING' } });
   if (u === 'https://dashscope-result.example.test/t.json') return Response.json({ transcripts: [{ text: '你好 我想买', content_duration_in_milliseconds: 61000, sentences: [{ text: '你好，请问你会买吗？', speaker_id: 0 }, { text: '会，如果价格合适。', speaker_id: 1 }] }] });
+  if (u.startsWith('https://api.umami.is/v1/websites/be74bdcf-1923-4f20-9e43-7fafb0595554/')) {
+    if (opts.headers.Authorization !== 'Bearer um-key') return new Response('{}', { status: 401 });
+    const q = new URL(u); const p = q.pathname.split('/').pop();
+    if (p === 'stats') return Response.json({ visitors: { value: 398 }, visits: { value: 600 }, pageviews: { value: 2000 }, bounces: { value: 300 }, totaltime: { value: 36000 } });
+    if (p === 'metrics') return Response.json(q.searchParams.get('type') === 'event' ? [{ x: 'trial_start', y: 15 }, { x: 'login', y: 70 }, { x: 'weird', y: 1 }] : [{ x: 'CN', y: 216 }, { x: 'US', y: 89 }]);
+    if (p === 'pageviews') return Response.json({ pageviews: [], sessions: [{ x: '2026-10-01 00:00:00', y: 5 }] });
+  }
   throw new Error('unexpected ' + u);
 };
 
@@ -202,4 +209,21 @@ test('高德门店统计：按城市 / 地址周边数门店，按区分布；�
   assert.equal((await call('u@x.cn', '/billing/account')).body.wallet.balanceCents, 980, '每次 ¥0.1');
   const st = await call('u@x.cn', '/platform/stats', 'POST', { indicators: ['SP.POP.0014.TO'] });
   assert.equal(st.status, 200); assert.equal(st.body.results[0].name, '0–14 岁人口'); assert.deepEqual(st.body.results[0].values.map(v => v.year), [2024, 2022]);
+});
+
+test('umami: admin-only, not configured until key set, then proxies visitor stats', async t => {
+  const { call } = await boot(t);
+  assert.equal((await call('u@x.cn', '/admin/umami')).status, 403);
+  assert.deepEqual((await call('boss@x.cn', '/admin/umami')).body, { configured: false });
+  const cfg = (await call('boss@x.cn', '/admin/platform', 'PUT', { umamiKey: 'um-key' })).body;
+  assert.equal(cfg.umami, true); assert.equal(cfg.umamiSite, 'be74bdcf-1923-4f20-9e43-7fafb0595554');
+  assert.ok(!JSON.stringify(cfg).includes('um-key'), 'key never read back');
+  const r = (await call('boss@x.cn', '/admin/umami?days=30')).body;
+  assert.equal(r.configured, true); assert.equal(r.total.visitors, 398); assert.equal(r.recent.days, 30);
+  assert.ok(r.months.length >= 3 && r.months[0].month === '2026-07');
+  assert.deepEqual(r.countries[0], { code: 'CN', visitors: 216 });
+  assert.equal(r.events.find(e => e.name === 'login').count, 70);
+  await call('boss@x.cn', '/admin/platform', 'PUT', { umamiKey: 'wrong' });
+  const bad = await call('boss@x.cn', '/admin/umami');
+  assert.equal(bad.status, 502); assert.match(bad.body.error, /Key 不对/);
 });
