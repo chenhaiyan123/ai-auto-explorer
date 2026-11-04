@@ -5,7 +5,7 @@ import { SHARED_API } from './sharedModelsClient';
  * - 不占服务器、不花钱；跑满 60 秒自动掐断；
  * - 能用 numpy / pandas / matplotlib / scipy / statsmodels / scikit-learn / sympy / networkx / openpyxl；
  * - 用户上传的数据文件放在 /data/ 下；画的图自动收集成 PNG。
- * 下载：运行环境本体（约 12MB）从 npmmirror 取（国内很快），取不到再走我们的服务器；
+ * 下载：运行环境本体（约 10MB）从 npmmirror 取（国内很快；它的 .zip 不带跨域头，所以标准库仍走服务器），取不到再走我们的服务器；
  * numpy / pandas 这些包从我们服务器的镜像取（国内直连 jsdelivr 太慢）。都带版本号，浏览器下载一次就缓存住。
  */
 export const PYODIDE_VERSION = '0.27.7';
@@ -61,7 +61,7 @@ async function boot(base, cores) {
     for (const core of cores) {
       try {
         importScripts(core + 'pyodide.js');
-        return await loadPyodide({ indexURL: core, lockFileURL: lockFileURL || (core + 'pyodide-lock.json'), stdout: () => {}, stderr: () => {} });
+        return await loadPyodide({ indexURL: core, lockFileURL: lockFileURL || (core + 'pyodide-lock.json'), stdLibURL: base + 'python_stdlib.zip', stdout: () => {}, stderr: () => {} });
       } catch (e) { last = e; }
     }
     throw last;
