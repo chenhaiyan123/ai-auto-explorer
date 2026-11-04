@@ -160,6 +160,8 @@ export async function createWakeServer(options = {}) {
   /** 平台直连服务：问卷星、天眼查、预售页 */
   // 录音临时存放：给百炼一个一次性的公开地址去拉，转完就删，最多留 48 小时
   const audioDir = path.join(storage.dir, 'audio'); await fs.mkdir(audioDir, { recursive: true });
+  // Python 沙箱（Pyodide，在用户浏览器里跑）的文件镜像：国内访问 jsdelivr 很慢，由服务器取一次、存盘、之后直接给
+  const pyMirror = createPyMirror(path.join(storage.dir, 'py-cache'), externalFetch, env.PYODIDE_UPSTREAM);
   const AUDIO_EXT = { 'audio/mpeg': 'mp3', 'audio/mp3': 'mp3', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/m4a': 'm4a', 'audio/aac': 'aac', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav', 'audio/amr': 'amr', 'audio/ogg': 'ogg', 'audio/opus': 'opus', 'audio/webm': 'webm', 'video/mp4': 'mp4', 'audio/flac': 'flac' };
   const removeAudio = async name => { if (/^[a-f0-9]{32}\.[a-z0-9]{2,5}$/.test(name)) await fs.unlink(path.join(audioDir, name)).catch(() => {}); };
   const sweepAudio = async () => { for (const f of await fs.readdir(audioDir).catch(() => [])) { const st = await fs.stat(path.join(audioDir, f)).catch(() => null); if (st && Date.now() - st.mtimeMs > 48 * 3600000) await removeAudio(f); } };
@@ -309,6 +311,8 @@ export async function createWakeServer(options = {}) {
       }
       return;
     }
+    const pyMatch = new URL(req.url, 'http://wake').pathname.match(/^\/py\/v(\d+\.\d+\.\d+)\/([A-Za-z0-9._+-]{3,120})$/);
+    if (pyMatch && (req.method === 'GET' || req.method === 'HEAD')) { await pyMirror.serve(req, res, pyMatch[1], pyMatch[2]); return; }
     // 录音临时公开地址：只给百炼拉取用（随机文件名、48 小时内有效）
     const audioMatch = new URL(req.url, 'http://wake').pathname.match(/^\/a\/([a-f0-9]{32}\.[a-z0-9]{2,5})$/);
     if (audioMatch && req.method === 'GET') {
@@ -723,4 +727,53 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const app = await createWakeServer(); const port = Number(process.env.PORT || 8790); const host = process.env.WAKE_HOST || '127.0.0.1';
   app.server.listen(port, host, () => console.log(`HiExplore wake service listening on ${host}:${port}`));
   const stop = () => app.close().then(() => process.exit(0)); process.on('SIGTERM', stop); process.on('SIGINT', stop);
+}
+
+/**
+ * Pyodide 文件镜像：只放「数据分析常用包」和它们的依赖（按官方 lock 文件算闭包），别的包一律 404，磁盘占用有上限。
+ * 文件名都带版本号、内容不变，所以浏览器可以永久缓存。
+ */
+export const PYODIDE_VERSION = '0.27.7';
+const PY_CORE = ['pyodide.js', 'pyodide.mjs', 'pyodide.asm.js', 'pyodide.asm.wasm', 'python_stdlib.zip', 'pyodide-lock.json'];
+const PY_PKGS = ['numpy', 'pandas', 'matplotlib', 'scipy', 'openpyxl', 'statsmodels', 'scikit-learn', 'sympy', 'networkx', 'micropip'];
+const PY_TYPES = { '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm', '.json': 'application/json; charset=utf-8', '.zip': 'application/zip' };
+export function pyAllowed(lock, pkgs = PY_PKGS) {
+  const all = lock?.packages || {}, out = new Set(PY_CORE), seen = new Set();
+  const walk = n => { const k = String(n).toLowerCase(); if (seen.has(k) || !all[k]) return; seen.add(k); if (all[k].file_name) out.add(all[k].file_name); (all[k].depends || []).forEach(walk); };
+  pkgs.forEach(walk);
+  return out;
+}
+function createPyMirror(dir, fetchImpl, upstream) {
+  const base = v => `${String(upstream || 'https://cdn.jsdelivr.net/pyodide').replace(/\/+$/, '')}/v${v}/full/`;
+  const inflight = new Map(); let allowed = null;
+  const get = async (v, name) => {
+    const file = path.join(dir, `v${v}`, name);
+    const st = await fs.stat(file).catch(() => null);
+    if (st) return { file, size: st.size };
+    const key = `${v}/${name}`;
+    if (!inflight.has(key)) inflight.set(key, (async () => {
+      const r = await fetchImpl(base(v) + name, { signal: AbortSignal.timeout(120000), redirect: 'follow' });
+      if (!r.ok) throw Object.assign(new Error(`上游 ${r.status}`), { status: r.status === 404 ? 404 : 502 });
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length > 80 * 1024 * 1024) throw Object.assign(new Error('文件太大'), { status: 502 });
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      const tmp = `${file}.${randomUUID()}.tmp`; await fs.writeFile(tmp, buf); await fs.rename(tmp, file);
+      return { file, size: buf.length };
+    })().finally(() => inflight.delete(key)));
+    return inflight.get(key);
+  };
+  return {
+    async serve(req, res, v, name) {
+      res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin'); res.setHeader('X-Content-Type-Options', 'nosniff');
+      try {
+        if (v !== PYODIDE_VERSION || name.includes('..')) throw Object.assign(new Error('不提供'), { status: 404 });
+        if (!allowed) { const lk = await get(v, 'pyodide-lock.json'); allowed = pyAllowed(JSON.parse(await fs.readFile(lk.file, 'utf8'))); }
+        if (!allowed.has(name)) throw Object.assign(new Error('不提供'), { status: 404 });
+        const { file, size } = await get(v, name);
+        res.writeHead(200, { 'Content-Type': PY_TYPES[path.extname(name)] || 'application/octet-stream', 'Content-Length': size, 'Cache-Control': 'public, max-age=31536000, immutable' });
+        if (req.method === 'HEAD') { res.end(); return; }
+        (await import('node:fs')).createReadStream(file).pipe(res);
+      } catch (e) { if (!res.headersSent) { res.writeHead(e.status || 502, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(e.status === 404 ? 'not found' : 'upstream error'); } }
+    },
+  };
 }

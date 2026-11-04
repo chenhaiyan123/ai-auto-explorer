@@ -427,7 +427,10 @@ export interface ChatMessage {
   text: string;
   /** 发送时间：用来和对话流（FeedItem）按时间排在一起；老记录没有这个字段 */
   ts?: number;
+  /** AI 在 Python 沙箱里真实跑过的代码和结果（图是 PNG data URL，最多 3 张） */
+  run?: ChatRun;
 }
+export interface ChatRun { code: string; ok: boolean; stdout: string; error?: string; images: string[]; ms: number; files?: string[] }
 
 // ========== 对话流（Agent Feed）==========
 // 像 Codex 一样：AI 在干什么、需要人拍板的地方，都以一行字 / 一张问题卡出现在右侧聊天记录里。

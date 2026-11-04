@@ -1,6 +1,7 @@
 import { t as ui } from '../services/language';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Project, ProblemNode, ChatMessage, NodeStatus, FeedItem } from '../types';
+import { Project, ProblemNode, ChatMessage, ChatRun, NodeStatus, FeedItem } from '../types';
+import { runPython, buildCodeMessages, extractPython, wantsCompute, sandboxWarm, safeName, type PyFile } from '../services/pySandbox';
 import { callGemini, factMessages } from '../services/geminiService';
 import { keyInfoContext } from '../services/keyInfo';
 import { INQUIRY_ROLES, questionFactContext } from '../services/inquiry';
@@ -15,12 +16,12 @@ import FeedCard from './FeedCard';
  * - 一键补充到笔记：任何一条 AI 发言都能追加进某篇笔记。
  */
 
-interface ChatMsg { role: 'user' | 'model'; text: string; agent?: string; ts?: number }
+interface ChatMsg { role: 'user' | 'model'; text: string; agent?: string; ts?: number; run?: ChatRun }
 
-const serialize = (m: ChatMsg): ChatMessage => ({ role: m.role, text: m.role === 'model' && m.agent ? `【${m.agent}】${m.text}` : m.text, ...(m.ts ? { ts: m.ts } : {}) } as ChatMessage);
+const serialize = (m: ChatMsg): ChatMessage => ({ role: m.role, text: m.role === 'model' && m.agent ? `【${m.agent}】${m.text}` : m.text, ...(m.ts ? { ts: m.ts } : {}), ...(m.run ? { run: m.run } : {}) } as ChatMessage);
 const parse = (cm: ChatMessage): ChatMsg => {
-  if (cm.role === 'model') { const mt = cm.text.match(/^【(.+?)】([\s\S]*)$/); if (mt) return { role: 'model', agent: mt[1], text: mt[2], ts: cm.ts }; }
-  return { role: cm.role as 'user' | 'model', text: cm.text, ts: cm.ts };
+  if (cm.role === 'model') { const mt = cm.text.match(/^【(.+?)】([\s\S]*)$/); if (mt) return { role: 'model', agent: mt[1], text: mt[2], ts: cm.ts, run: cm.run }; }
+  return { role: cm.role as 'user' | 'model', text: cm.text, ts: cm.ts, run: cm.run };
 };
 
 const avatarFor = (name: string) => {
@@ -63,6 +64,19 @@ const TeamChat: React.FC<{
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [picker, setPicker] = useState<null | { mode: 'mention' | 'append'; forMsg?: number }>(null);
+  /** 上传给 Python 沙箱分析的数据文件（只在这次打开的页面里，不存进项目） */
+  const [files, setFiles] = useState<PyFile[]>([]);
+  const [stage, setStage] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
+  const addFiles = async (list: FileList | null) => {
+    const picked: PyFile[] = [];
+    for (const f of Array.from(list || []).slice(0, 3)) {
+      if (f.size > 5 * 1024 * 1024) { setMsgs(prev => [...prev, { role: 'model', agent: lead, text: `「${f.name}」超过 5MB，先拆小一点或只留需要的列再传。`, ts: Date.now() }]); continue; }
+      picked.push({ name: safeName(f.name), bytes: new Uint8Array(await f.arrayBuffer()) });
+    }
+    setFiles(prev => [...prev.filter(x => !picked.some(p => p.name === x.name)), ...picked].slice(-3));
+    if (fileRef.current) fileRef.current.value = '';
+  };
   const endRef = useRef<HTMLDivElement>(null);
 
   // 群成员：总协调（项目总览的负责人）+ 各节点被指派的 Agent（去重）
@@ -141,11 +155,38 @@ const TeamChat: React.FC<{
       // 「发问卷 / 做预售页 / 查企业」：平台直连服务，系统直接设计好方案放确认卡（不用去服务广场找人代发）
       const kind = /问卷|调研|调查/.test(text) ? 'survey' : /预售|落地页|报名页|定金|意向金/.test(text) ? 'page' : /企业|工商|公司信息|天眼查/.test(text) ? 'company' : /多少家|门店|选址|周边|附近|竞品店/.test(text) ? 'poi' : /人口|GDP|统计数据|宏观|出生率|入学率/.test(text) ? 'stats' : null;
       const real = !mentioned && onReality && kind && /发|做|搞|开始|来|吧|查|看|数|统计|放钱了|充值了|多少/.test(text) ? await onReality(kind, text).catch((e: any) => `没做成：${e?.message || e}`) : '';
-      const reply = await speak(responder, text, base, [earn, real].filter(Boolean).join('\n'));
-      setMsgs(prev => [...prev, { role: 'model', agent: responder, text: reply, ts: Date.now() }]);
+      // 「算一下 / 分析这份数据 / 画个图」：AI 写 Python，在浏览器沙箱里真的跑，按真实输出回答
+      let run: ChatRun | undefined; let ran = '';
+      if (!mentioned && !earn && !real && wantsCompute(text, files.length > 0)) {
+        run = await compute(text);
+        ran = `系统按用户的要求真实写了一段 Python，在沙箱里运行${run.ok ? '成功' : '失败'}（用户在消息下面能看到代码、输出和图）。
+运行输出：
+${run.stdout.slice(0, 3000) || '（没有打印输出）'}${run.error ? `\n报错：${run.error.slice(0, 800)}` : ''}${run.images.length ? `\n画了 ${run.images.length} 张图。` : ''}
+只根据这份输出回答：解读结果、说明局限（如果是按假设参数算的要讲清楚，不能当实测证据），再说下一步。不要编输出里没有的数字，不要再贴代码。`;
+      }
+      setStage('');
+      const reply = await speak(responder, text, base, [earn, real, ran].filter(Boolean).join('\n'));
+      setMsgs(prev => [...prev, { role: 'model', agent: responder, text: reply, ts: Date.now(), ...(run ? { run } : {}) }]);
     } catch (e: any) {
       setMsgs(prev => [...prev, { role: 'model', agent: lead, text: '（出错了：' + (e?.message || e) + '）请检查右上角模型设置。', ts: Date.now() }]);
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setStage(''); }
+  };
+
+  const compute = async (ask: string): Promise<ChatRun> => {
+    const goal = project ? `${project.name}：${project.metaProblem || ''}` : '';
+    const context = refNotesContext(ask);
+    setStage('正在写代码…');
+    let code = extractPython(await callGemini(buildCodeMessages({ goal, ask, context, files }) as any));
+    if (!code) return { code: '', ok: false, stdout: '', error: '模型没有给出代码', images: [], ms: 0 };
+    setStage(sandboxWarm() ? '正在运行…' : '正在运行（第一次要下载运行环境，约半分钟到一两分钟）…');
+    let r = await runPython(code, files);
+    if (!r.ok && r.error && !/超过 \d+ 秒|沙箱启动失败|不支持/.test(r.error)) {
+      setStage('报错了，正在修改代码再跑一次…');
+      const fixed = extractPython(await callGemini(buildCodeMessages({ goal, ask, context, files, previous: { code, error: r.error } }) as any));
+      if (fixed) { code = fixed; r = await runPython(code, files); }
+    }
+    setStage('正在解读结果…');
+    return { code, ok: r.ok, stdout: r.stdout, error: r.error, images: r.images.slice(0, 3), ms: r.ms, files: r.files };
   };
 
   // 让团队讨论：每位成员（最多 4 位）就当前话题各给一段简短看法
@@ -217,6 +258,7 @@ const TeamChat: React.FC<{
               <div className={`px-3 py-2 rounded-2xl text-[14px] shadow-sm ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none whitespace-pre-wrap' : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-none'}`}>
                 {m.role === 'user' ? m.text : <MarkdownView className="chat-md !text-[14px] leading-7" source={m.text} onWikiLink={(t) => { const n = resolveNodeByTitle(nodes, t); if (n) onOpenNode(n.id); }} linkResolver={(t) => !!resolveNodeByTitle(nodes, t)} />}
               </div>
+              {m.run && <RunBlock run={m.run} />}
               {m.role === 'model' && (
                 <button onClick={() => setPicker({ mode: 'append', forMsg: i })} className="mt-1 text-[11px] text-slate-500 hover:text-emerald-400 transition-colors">➕ 补充到笔记</button>
               )}
@@ -224,7 +266,7 @@ const TeamChat: React.FC<{
           </div>
           );
         })}
-        {busy && <div className="text-[12px] text-blue-400 animate-pulse">团队成员正在思考…</div>}
+        {busy && <div className="text-[12px] text-blue-400 animate-pulse">{stage || '团队成员正在思考…'}</div>}
         <div ref={endRef} />
       </div>
       </div>
@@ -235,6 +277,9 @@ const TeamChat: React.FC<{
         <div className="flex gap-1.5">
           <button onClick={() => setPicker({ mode: 'mention' })} className="text-[12px] px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md transition-colors" title="引用一篇笔记 [[..]]">@笔记</button>
           <button onClick={teamDiscuss} disabled={busy} className="text-[12px] px-2 py-1 bg-violet-600/80 hover:bg-violet-500 text-white rounded-md transition-colors disabled:opacity-50">🗣️ 让团队讨论</button>
+          <button onClick={() => fileRef.current?.click()} className="text-[12px] px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md transition-colors" title="上传 CSV / Excel，让 AI 用 Python 分析">📎 数据</button>
+          <input ref={fileRef} type="file" multiple accept=".csv,.tsv,.txt,.json,.xlsx,.xls" className="hidden" aria-label="上传数据文件" onChange={e => void addFiles(e.target.files)} />
+          {files.map(f => <span key={f.name} className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-emerald-900/40 text-emerald-300 border border-emerald-800/60">📄 {f.name}<button onClick={() => setFiles(prev => prev.filter(x => x.name !== f.name))} aria-label={`移除 ${f.name}`} className="text-emerald-400 hover:text-white">×</button></span>)}
         </div>
         <form onSubmit={e => { e.preventDefault(); send(); }} className="flex gap-2">
           <input value={input} onChange={e => setInput(e.target.value)} placeholder="对团队说… @成员 / [[笔记]]" className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-3 py-2.5 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" />
@@ -263,5 +308,20 @@ const TeamChat: React.FC<{
     </div>
   );
 };
+
+/** 沙箱运行记录：图直接显示，代码和完整输出收起来 */
+const RunBlock: React.FC<{ run: ChatRun }> = ({ run }) => (
+  <div className="mt-1.5 rounded-xl border border-slate-700 bg-slate-900/60 text-[12px]">
+    {run.images.map((src, k) => <img key={k} src={src} alt={`运行结果图 ${k + 1}`} className="block max-w-full rounded-t-xl bg-white" />)}
+    <details>
+      <summary className="cursor-pointer px-3 py-1.5 text-slate-400">🐍 {run.ok ? '在沙箱里跑了一段 Python' : '跑了一段 Python，没跑通'} · {(run.ms / 1000).toFixed(1)} 秒 · 看代码和输出</summary>
+      <div className="px-3 pb-2 space-y-1.5">
+        <pre className="whitespace-pre-wrap break-all bg-slate-950 rounded-lg p-2 text-slate-300 max-h-64 overflow-auto">{run.code}</pre>
+        {run.stdout && <pre className="whitespace-pre-wrap break-all bg-slate-950 rounded-lg p-2 text-emerald-200 max-h-64 overflow-auto">{run.stdout}</pre>}
+        {run.error && <pre className="whitespace-pre-wrap break-all bg-slate-950 rounded-lg p-2 text-amber-300 max-h-40 overflow-auto">{run.error}</pre>}
+      </div>
+    </details>
+  </div>
+);
 
 export default TeamChat;

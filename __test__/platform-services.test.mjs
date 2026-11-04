@@ -39,6 +39,14 @@ const fakeFetch = async (url, opts = {}) => {
     if (p === 'metrics') return Response.json(q.searchParams.get('type') === 'event' ? [{ x: 'trial_start', y: 15 }, { x: 'login', y: 70 }, { x: 'weird', y: 1 }] : [{ x: 'CN', y: 216 }, { x: 'US', y: 89 }]);
     if (p === 'pageviews') return Response.json({ pageviews: [], sessions: [{ x: '2026-10-01 00:00:00', y: 5 }] });
   }
+  if (u.startsWith('https://cdn.jsdelivr.net/pyodide/v0.27.7/full/')) {
+    globalThis.__pyHits = (globalThis.__pyHits || 0) + 1;
+    const name = u.split('/').pop();
+    if (name === 'pyodide-lock.json') return Response.json({ packages: { numpy: { file_name: 'numpy-2.whl', depends: [] }, pandas: { file_name: 'pandas-2.whl', depends: ['numpy', 'pytz'] }, pytz: { file_name: 'pytz-1.whl', depends: [] }, torch: { file_name: 'torch-9.whl', depends: [] } } });
+    if (name === 'pyodide.asm.wasm') return new Response(new Uint8Array([0, 97, 115, 109]));
+    if (name.endsWith('.whl')) return new Response('wheel:' + name);
+    return new Response('nope', { status: 404 });
+  }
   throw new Error('unexpected ' + u);
 };
 
@@ -228,4 +236,21 @@ test('umami: admin-only, not configured until key set, then proxies visitor stat
   await call('boss@x.cn', '/admin/platform', 'PUT', { umamiKey: 'wrong' });
   const bad = await call('boss@x.cn', '/admin/umami');
   assert.equal(bad.status, 502); assert.match(bad.body.error, /Key 不对/);
+});
+
+test('pyodide mirror: serves core + analysis packages (with deps) from cache, refuses others', async t => {
+  const { base } = await boot(t);
+  globalThis.__pyHits = 0;
+  const w = await fetch(base + '/py/v0.27.7/pyodide.asm.wasm');
+  assert.equal(w.status, 200); assert.equal(w.headers.get('content-type'), 'application/wasm');
+  assert.equal(w.headers.get('access-control-allow-origin'), '*'); assert.match(w.headers.get('cache-control'), /immutable/);
+  assert.deepEqual([...new Uint8Array(await w.arrayBuffer())], [0, 97, 115, 109]);
+  assert.equal(await (await fetch(base + '/py/v0.27.7/pytz-1.whl')).text(), 'wheel:pytz-1.whl', 'dependency of pandas allowed');
+  const hits = globalThis.__pyHits;
+  assert.equal((await fetch(base + '/py/v0.27.7/pytz-1.whl')).status, 200);
+  assert.equal(globalThis.__pyHits, hits, 'second time from disk cache');
+  assert.equal((await fetch(base + '/py/v0.27.7/torch-9.whl')).status, 404, 'not in allowlist');
+  assert.equal((await fetch(base + '/py/v0.26.0/numpy-2.whl')).status, 404, 'other versions refused');
+  assert.notEqual((await fetch(base + '/py/v0.27.7/..%2Fsecret')).status, 200);
+  assert.equal((await fetch(base + '/py/v0.27.7/numpy-2.whl', { headers: { Origin: 'https://evil.example' } })).status, 200, 'public static files, any origin');
 });

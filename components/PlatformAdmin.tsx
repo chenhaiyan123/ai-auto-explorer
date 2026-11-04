@@ -14,6 +14,12 @@ export const CONCIERGE = [
   { title: '3D 打印代下单（嘉立创）', category: 'printing', priceCents: 8000, deliveryDays: 7, unit: '件', automation: 'assisted', availability: 'always',
     description: '上传 3D 模型，平台在嘉立创 3D 打印（树脂 / 尼龙 / 金属可选）代下单，寄到你手上。价格适合 10cm 以内的光敏树脂小件；大件或金属先报价。',
     inputs: 'STL / STEP 模型文件、材料和颜色、数量、收货地址', deliverables: '打印件寄到你手上 + 订单截图和快递单号', limits: '不负责模型设计和结构强度；超出尺寸或特殊材料先报价，取消不收费' },
+  { title: '元器件 / BOM 代采购（立创商城）', category: 'printing', priceCents: 3000, deliveryDays: 5, unit: '次', automation: 'assisted', availability: 'always',
+    description: '把物料清单（BOM）交给我们，平台在立创商城代下单采购元器件，顺丰寄到你手上；也可以和 PCB 打样一起做贴片。这个价格是代办服务费，元器件货款按立创商城实时价另付，下单前先报总价给你确认。',
+    inputs: 'BOM 表（型号 / 封装 / 数量，Excel 或 CSV）、收货地址和电话；AI 可以先帮你从电路方案整理出 BOM', deliverables: '元器件寄到你手上 + 立创订单截图、实付清单和快递单号', limits: '货款另付；缺货或停产的型号会给替代建议、你确认后再买；不做选型的电气审核' },
+  { title: '付费样本问卷（找真人填答）', category: 'research', priceCents: 5000, deliveryDays: 5, unit: '次', automation: 'assisted', availability: 'always',
+    description: '自己的问卷发不出去、没人填时用：平台把问卷放到问卷星样本服务 / Credamo 见数等样本平台，按你要的人群（年龄、地区、职业、学生等）找真人填答，回收后把数据交给你。这个价格是代办服务费，样本费按平台报价另付（通常每份几元到几十元，看人群难度），下单前先报总价给你确认。',
+    inputs: '问卷（问卷星链接或题目文字）、目标人群条件、需要的样本数、截止时间', deliverables: '有效答卷数据（Excel）+ 样本平台的订单记录', limits: '样本费另付；平台会剔除明显乱填的答卷，但不对样本代表性作担保；违规或诱导性题目不发' },
   { title: '顺丰代寄 / 代收样品', category: 'other', priceCents: 3000, deliveryDays: 3, unit: '次', automation: 'assisted', availability: 'always',
     description: '寄样品给检测机构、打样厂或合作方，平台叫顺丰上门取件、全程跟踪单号。价格含 1kg 以内国内顺丰标快；更重或加急另报。',
     inputs: '寄件地址和联系人、收件地址和联系人、物品和重量', deliverables: '顺丰单号和签收记录', limits: '不寄违禁品、易燃易爆、液体和锂电池单独寄送需提前说明' },
@@ -39,7 +45,7 @@ function ConciergeSetup() {
   };
   return <div className="rounded-xl border border-slate-700 p-3 space-y-2">
     <div className="font-semibold">平台代办服务（实物类，人工办理）</div>
-    <p className="text-xs text-slate-400 leading-5">嘉立创、顺丰的开放接口要申请权限，科学指南针没有公开接口。先用管理员账号在服务广场挂 {CONCIERGE.length} 个代办服务：PCB 打样、3D 打印、顺丰寄样品、检测预约。AI 遇到这类事会直接下单（钱包担保），你收到订单后去对应平台办好、在订单里交付；用户验收后钱进你的钱包。</p>
+    <p className="text-xs text-slate-400 leading-5">嘉立创、顺丰的开放接口要申请权限，科学指南针没有公开接口。先用管理员账号在服务广场挂 {CONCIERGE.length} 个代办服务：PCB 打样、3D 打印、元器件代采购、付费样本问卷、顺丰寄样品、检测预约（已经挂过的不会重复挂，新加的点一下就补上）。AI 遇到这类事会直接下单（钱包担保），你收到订单后去对应平台办好、在订单里交付；用户验收后钱进你的钱包。</p>
     <button disabled={busy} onClick={() => void go()} className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-40">{busy ? '正在挂…' : '一键挂出代办服务'}</button>
     {msg && <p className="text-xs text-emerald-300">{msg}</p>}
   </div>;

@@ -62,7 +62,7 @@ export function buildActionMessages(project: Project, node: ProblemNode, ready: 
     ready.company && `company：查企业工商信息（每次 ¥${((prices.company_info || 0) / 100).toFixed(2)}；适合核实竞品、合作方、供应商是否存在、规模和风险）`,
     ready.poi && `poi：用高德地图数门店 / 兴趣点（每次 ¥${((prices.poi_search || 0) / 100).toFixed(2)}；适合「某城市 / 某地址周边有多少家同类店、分布在哪」的选址和竞争判断）`,
     ready.stats && `stats：查宏观统计数据（世界银行公开数据，免费；可用指标：${Object.entries(STAT_INDICATORS).map(([k, v]) => `${k}=${v}`).join('，')}）`,
-    'market：去服务广场找真人 / 机构做（访谈、实验、测量、检测、PCB 打样、3D 打印、寄样品、拿真实数据）',
+    'market：去服务广场找真人 / 机构做（访谈、实验、测量、检测、PCB 打样、元器件采购、3D 打印、付费样本问卷（找真人填）、寄样品、拿真实数据）',
   ].filter(Boolean).join('\n');
   return [
     { role: 'system', content: '你是项目的 AI 负责人。这一步需要到现实里验证。选一种最便宜、最快、最能拿到真实证据的办法，并把它设计好。只返回 JSON。' },
