@@ -5,13 +5,20 @@ import { SHARED_API } from './sharedModelsClient';
  * - 不占服务器、不花钱；跑满 60 秒自动掐断；
  * - 能用 numpy / pandas / matplotlib / scipy / statsmodels / scikit-learn / sympy / networkx / openpyxl；
  * - 用户上传的数据文件放在 /data/ 下；画的图自动收集成 PNG。
- * Pyodide 文件从我们自己的服务器镜像取（国内直连 jsdelivr 太慢）。
+ * 下载：运行环境本体（约 12MB）从 npmmirror 取（国内很快），取不到再走我们的服务器；
+ * numpy / pandas 这些包从我们服务器的镜像取（国内直连 jsdelivr 太慢）。都带版本号，浏览器下载一次就缓存住。
  */
 export const PYODIDE_VERSION = '0.27.7';
 export const pyBase = () => {
   const env = (import.meta as any).env?.VITE_PYODIDE_URL as string | undefined;
   if (env) return env.endsWith('/') ? env : env + '/';
   return SHARED_API ? `${SHARED_API.replace(/\/+$/, '')}/py/v${PYODIDE_VERSION}/` : `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+};
+
+/** 运行环境本体的候选地址，按顺序试 */
+export const pyCores = () => {
+  if ((import.meta as any).env?.VITE_PYODIDE_URL) return [pyBase()];
+  return [`https://registry.npmmirror.com/pyodide/${PYODIDE_VERSION}/files/`, pyBase()];
 };
 
 export interface PyFile { name: string; bytes: Uint8Array }
@@ -40,14 +47,25 @@ export function codeProblem(code: string): string {
 // Worker 源码：放在字符串里，用 Blob 启动，不用额外的构建配置
 const WORKER = `
 let py = null, loading = null;
-async function boot(base) {
+async function boot(base, cores) {
   if (py) return py;
   if (!loading) loading = (async () => {
-    importScripts(base + 'pyodide.js');
-    const p = await loadPyodide({ indexURL: base, stdout: () => {}, stderr: () => {} });
-    await p.loadPackage(['micropip']).catch(() => {});
-    return p;
-  })();
+    // 包清单从我们服务器取，把每个包的下载地址改成绝对地址（指向服务器镜像），本体则从更快的地址加载
+    let lockFileURL;
+    try {
+      const lock = await (await fetch(base + 'pyodide-lock.json')).json();
+      for (const k in lock.packages) { const f = lock.packages[k].file_name; if (f && !/^https?:/.test(f)) lock.packages[k].file_name = base + f; }
+      lockFileURL = URL.createObjectURL(new Blob([JSON.stringify(lock)], { type: 'application/json' }));
+    } catch (e) { lockFileURL = undefined; }
+    let last;
+    for (const core of cores) {
+      try {
+        importScripts(core + 'pyodide.js');
+        return await loadPyodide({ indexURL: core, lockFileURL: lockFileURL || (core + 'pyodide-lock.json'), stdout: () => {}, stderr: () => {} });
+      } catch (e) { last = e; }
+    }
+    throw last;
+  })().catch(e => { loading = null; throw e; });
   py = await loading; return py;
 }
 const PRE = \`
@@ -85,10 +103,10 @@ except Exception:
     pass
 \`;
 self.onmessage = async (ev) => {
-  const { id, base, code, files } = ev.data;
+  const { id, base, cores, code, files } = ev.data;
   const t0 = Date.now();
   try {
-    const p = await boot(base);
+    const p = await boot(base, cores);
     for (const f of files || []) { try { p.FS.mkdirTree('/data'); } catch (e) {} p.FS.writeFile('/data/' + f.name, f.bytes); }
     await p.loadPackagesFromImports(code);
     await p.runPythonAsync(PRE);
@@ -132,7 +150,7 @@ export function runPython(code: string, files: PyFile[] = [], timeoutMs = 60000)
   return new Promise(resolve => {
     const timer = setTimeout(() => { if (pending.has(id)) { pending.delete(id); kill(); resolve({ ok: false, stdout: '', error: `超过 ${Math.round(limit / 1000)} 秒没跑完，已经掐断（可能是死循环或计算量太大）`, images: [], ms: limit }); } }, limit);
     pending.set(id, r => { clearTimeout(timer); resolve({ ...r, stdout: clipOut(r.stdout || '') }); });
-    getWorker().postMessage({ id, base: pyBase(), code, files: files.map(f => ({ name: safeName(f.name), bytes: f.bytes })) });
+    getWorker().postMessage({ id, base: pyBase(), cores: pyCores(), code, files: files.map(f => ({ name: safeName(f.name), bytes: f.bytes })) });
   });
 }
 
