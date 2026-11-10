@@ -10,7 +10,7 @@ export interface Metrics {
   generatedAt: number; includeInternal: boolean;
   users: { total: number; new7: number; new30: number; dau: number; wau: number; mau: number; usedAI: number; market: number; payers: number; repeatPayers: number;
     retentionD1: { base: number; back: number } | null; retentionD7: { base: number; back: number } | null; trackedSince: number | null; daily: Daily[] };
-  money: { paidOrders: number; paidCents: number; topupCount: number; topupCents: number; subscriptionCount: number; subscriptionCents: number; arppuCents: number; walletSpendCents: number; walletBalanceCents: number | null;
+  money: { paidOrders: number; paidCents: number; topupCount: number; topupCents: number; subscriptionCount: number; subscriptionCents: number; arppuCents: number; walletSpendCents: number; walletBalanceCents: number | null; grantCents?: number; grantPeople?: number;
     market: { services: number; demands: number; bids: number; orders: number; ordersAll: number; completed: number; gmvCents: number; completedCents: number; walletPaidOrders: number; byAIBuyer: number; byAISeller: number; feeCents: number };
     daily: Daily[]; recent: { at: number; kind: string; cents: number; who: string; via?: string; title?: string }[] };
 }
@@ -174,7 +174,7 @@ export default function MetricsPanel({ mode }: { mode: 'users' | 'money' }) {
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
       <Tile big label="用户实付" value={yuan(x.paidCents)} sub={`${x.paidOrders} 笔支付成功的订单`} />
       <Tile label="AI 钱包充值" value={yuan(x.topupCents)} sub={`${x.topupCount} 笔 · 人均 ${yuan(x.arppuCents)}`} />
-      <Tile label="AI 已消耗" value={yuan(x.walletSpendCents)} sub={x.walletBalanceCents != null ? `钱包里还剩 ${yuan(x.walletBalanceCents)}（全站）` : '模型调用实际扣的钱'} />
+      <Tile label="AI 已消耗" value={yuan(x.walletSpendCents)} sub={`${x.walletBalanceCents != null ? `钱包里还剩 ${yuan(x.walletBalanceCents)}（全站）` : '模型调用实际扣的钱'}${x.grantCents ? `；其中发出体验金 ${yuan(x.grantCents)}（${x.grantPeople} 人，不算收入）` : ''}`} />
       <Tile label="会员 / 导出" value={yuan(x.subscriptionCents)} sub={`${x.subscriptionCount} 笔`} />
     </div>
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

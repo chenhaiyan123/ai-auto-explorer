@@ -41,7 +41,7 @@ import NodeDetails from './components/NodeDetails';
 import DecisionModal from './components/DecisionModal';
 import { exploreNode, chatWithNode, generateProjectSummary, callGemini, identifyNodeTask, synthesizeOverview } from './services/geminiService';
 import { monitor } from './services/monitoringService';
-import { auth, hasPasswordLogin, hasAuthBackend } from './services/authService';
+import { auth, hasPasswordLogin, hasAuthBackend, wechatKind, isWeChatBrowser, isPseudoEmail, type LoginMethods } from './services/authService';
 import { GEMINI_MODEL } from './constants';
 import { analyzeIntentWithAutoConfirm, IntentAnalysis, ExplorationMode } from './services/intentService';
 import IntentConfirmModal from './components/IntentConfirmModal';
@@ -885,6 +885,21 @@ const App: React.FC = () => {
   useEffect(() => { if (!user) { try { setPwMode(localStorage.getItem('hx-login-mode') === 'password'); } catch { /* ignore */ } } }, [user, landingLogin]);
   // 记住登录：验证码登录的令牌快过期时悄悄续上
   useEffect(() => { if (user?.email) void auth.refreshIfNeeded(); }, [user?.email]);
+  // 微信 / 手机号登录：后台开了哪些；在微信里打开时默认选「微信」
+  const [loginMethods, setLoginMethods] = useState<LoginMethods | null>(null);
+  const [phoneBusy, setPhoneBusy] = useState(false);
+  const [bindNotice, setBindNotice] = useState('');
+  useEffect(() => {
+    if (!hasPasswordLogin()) return;
+    void auth.loginMethods().then(m => { setLoginMethods(m); if (isWeChatBrowser() && wechatKind(m)) setLoginMethod('wechat'); });
+    // 从微信授权页回来：接着登录 / 绑定
+    void auth.finishWechat().then(r => {
+      if (!r) return;
+      if (r.mode === 'login') { setUser(r.user); trackEvent('login', { via: 'wechat' }); }
+      else { setBindNotice('微信已绑定到这个账号，以后可以直接用微信登录'); setShowUserMenu(true); }
+    }).catch((e: any) => alert(e?.message || '微信登录没成功'));
+  }, []);
+  const hostedExtra = hasAuthBackend() && !!loginMethods && (!!wechatKind(loginMethods) || loginMethods.phone);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [showMetaModal, setShowMetaModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
@@ -1240,7 +1255,7 @@ const App: React.FC = () => {
   }, [user?.username]);
   useEffect(() => { if (user) { markMilestone('funnel_entered_app'); monitor.incrementSession(); const i = setInterval(() => monitor.updateHeartbeat(), 10000); return () => clearInterval(i); } }, [user]);
   // 登录后：把用户身份同步给聊天挂件 + 记一次登录事件（未配置统计/聊天时均为空操作）
-  useEffect(() => { if (user) { identifyChatUser(user.username, user.email); trackEvent('login'); } }, [user?.username]);
+  useEffect(() => { if (user) { identifyChatUser(user.displayName || user.username, isPseudoEmail(user.email) ? undefined : user.email); trackEvent('login'); } }, [user?.username]);
 
   const currentProject = useMemo(() => projects.find(p => p.id === currentProjectId) || null, [projects, currentProjectId]);
   // 项目视图：当前项目用实时 nodes，其它项目用各自保存的 nodes（供左侧项目树使用）
@@ -3765,7 +3780,7 @@ ${plan.lead.duty}
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-600 to-emerald-600"></div>
         <div className="text-center mb-6">
           <div className="w-14 h-14 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-2xl font-bold text-white mb-4 shadow-xl">🧭</div>
-          <h2 className="text-xl sm:text-2xl font-bold">{landingLogin ? ui('邮箱登录 / 注册', 'Email login / sign up') : 'HiExplore'}</h2>
+          <h2 className="text-xl sm:text-2xl font-bold">{landingLogin ? (hostedExtra ? ui('登录 / 注册', 'Log in / sign up') : ui('邮箱登录 / 注册', 'Email login / sign up')) : 'HiExplore'}</h2>
           {isLoginAsAdmin ? (
             <p className="text-slate-500 text-xs sm:text-sm mt-2">{ui("管理员验证")}</p>
           ) : (
@@ -3813,22 +3828,22 @@ ${plan.lead.duty}
             {isLoginAsAdmin && <p className="text-sm text-slate-400">{ui("使用管理员邮箱接收验证码。登录后由后台确认权限，可管理模型 Key、用户额度、统计和留言。")}</p>}
             {/* 登录方式切换。托管版只有邮箱是真登录，此时这个切换条只剩一个「邮箱」按钮，
                 纯属噪音，直接整条隐藏（loginMethod 默认就是 email）。 */}
-            {!isOtpSent && !hasAuthBackend() && (
+            {!isOtpSent && !isLoginAsAdmin && (!hasAuthBackend() || hostedExtra) && (
               <div className="flex gap-2 p-1 bg-slate-800 rounded-xl">
                 {/* 托管版当前只有邮箱是真登录，微信/短信暂隐藏（需后端+资质） */}
-                {!hasAuthBackend() && (
+                {(!hasAuthBackend() || !!wechatKind(loginMethods)) && (
                 <button
                   onClick={() => setLoginMethod('wechat')}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'wechat' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 0 1 .598.082l1.584.926a.272.272 0 0 0 .14.047c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1-.023-.156.49.49 0 0 1 .201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-6.656-6.088V8.89c-.135-.01-.27-.027-.407-.03zm-2.53 3.274c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 0 1-.969.983.976.976 0 0 1-.969-.983c0-.542.434-.982.969-.982z"/></svg>{ui("微信")}</button>
                 )}
-                {!hasAuthBackend() && (
+                {(!hasAuthBackend() || !!loginMethods?.phone) && (
                 <button
                   onClick={() => setLoginMethod('phone')}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'phone' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>{ui("短信")}</button>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>{ui("手机号")}</button>
                 )}
                 <button
                   onClick={() => setLoginMethod('email')}
@@ -3839,7 +3854,15 @@ ${plan.lead.duty}
             )}
             
             {/* 微信扫码登录 */}
-            {loginMethod === 'wechat' && !isOtpSent && (
+            {loginMethod === 'wechat' && !isOtpSent && hasAuthBackend() && (
+              <div className="text-center py-4 space-y-3">
+                <button onClick={() => auth.startWechat('login').catch((e: any) => alert(e.message))} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-4 rounded-xl">
+                  {isWeChatBrowser() ? ui('微信一键登录', 'Sign in with WeChat') : ui('微信扫码登录', 'Scan with WeChat')}</button>
+                <p className="text-[11px] text-slate-500 leading-5">{isWeChatBrowser() ? ui('会跳到微信授权页，点「允许」就回来了', 'You will be asked to allow access in WeChat') : ui('会打开微信的扫码页，用手机微信扫一下就登录了', 'Opens a QR code page — scan it with WeChat on your phone')}</p>
+                <p className="text-[11px] text-slate-500 leading-5">{ui('已经有邮箱账号？先用邮箱登录，再到「个人中心」绑定微信，两种方式就是同一个账号', 'Have an email account? Sign in with email, then link WeChat in Personal center')}</p>
+              </div>
+            )}
+            {loginMethod === 'wechat' && !isOtpSent && !hasAuthBackend() && (
               <div className="text-center py-6">
                 <div className="w-48 h-48 mx-auto bg-white rounded-2xl p-3 mb-4">
                   <div className="w-full h-full bg-slate-100 rounded-xl flex items-center justify-center">
@@ -3858,14 +3881,16 @@ ${plan.lead.duty}
             {loginMethod === 'phone' && !isOtpSent && (
               <>
                 <div className="flex gap-2">
-                  <select className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-3.5 text-sm text-white outline-none">
-                    <option>+86</option>
-                    <option>+1</option>
-                    <option>+852</option>
-                  </select>
-                  <input type="tel" placeholder={ui("手机号码")} value={loginPhone} onChange={e => setLoginPhone(e.target.value)} className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
+                  <span className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-3.5 text-sm text-slate-300">+86</span>
+                  <input type="tel" inputMode="numeric" autoComplete="tel-national" aria-label={ui("手机号码")} placeholder={ui("手机号码")} value={loginPhone} onChange={e => setLoginPhone(e.target.value.replace(/[^\d]/g, '').slice(0, 11))} className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-sm text-white outline-none" />
                 </div>
-                <button onClick={() => { if (loginPhone.length >= 11) { setIsOtpSent(true); setOtpCode('123456'); } }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl">{ui("获取短信验证码")}</button>
+                <button disabled={phoneBusy || !/^1[3-9]\d{9}$/.test(loginPhone)} onClick={async () => {
+                  if (!hasAuthBackend()) { setIsOtpSent(true); setOtpCode('123456'); return; }
+                  setPhoneBusy(true);
+                  try { const d = await auth.sendPhoneCode(loginPhone); setIsOtpSent(true); setOtpCode(''); if (d.devCode) alert('开发模式验证码：' + d.devCode); }
+                  catch (e: any) { alert(e.message || '发送失败'); } finally { setPhoneBusy(false); }
+                }} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-4 rounded-xl">{phoneBusy ? ui('正在发送…', 'Sending…') : ui("获取短信验证码")}</button>
+                {hasAuthBackend() && <p className="text-center text-[11px] text-slate-500 leading-5">{ui('第一次用手机号登录会自动建账号。已经有邮箱账号？先用邮箱登录，再到「个人中心」绑定手机号', 'First phone sign-in creates an account. Have an email account? Link your phone in Personal center')}</p>}
               </>
             )}
             
@@ -3920,6 +3945,11 @@ ${plan.lead.duty}
                 </div>
                 <input type="text" placeholder={ui("输入验证码")} value={otpCode} onChange={e => setOtpCode(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-4 text-center text-xl tracking-[0.5em] font-mono text-white outline-none" />
                 <button onClick={async () => {
+                  if (hasAuthBackend() && loginMethod === 'phone') {
+                    try { setUser(await auth.loginWithPhone(loginPhone, otpCode)); trackEvent('login', { via: 'phone' }); setIsOtpSent(false); setOtpCode(''); }
+                    catch (e: any) { alert(e.message || '验证失败'); }
+                    return;
+                  }
                   if (hasAuthBackend() && loginMethod === 'email') {
                     try {
                       const loggedIn = await auth.verifyEmailCode(loginEmail, otpCode);
@@ -4052,7 +4082,7 @@ ${plan.lead.duty}
               <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-[10px] font-bold text-white">
                 {user.username?.charAt(0).toUpperCase() || 'U'}
               </div>
-              <span className="text-xs text-slate-300 hidden sm:inline max-w-[80px] truncate">{user.username || user.email?.split('@')[0]}</span>
+              <span className="text-xs text-slate-300 hidden sm:inline max-w-[80px] truncate">{user.displayName || user.username || user.email?.split('@')[0]}</span>
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`text-slate-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`}><path d="m6 9 6 6 6-6"/></svg>
             </button>
             
@@ -4309,7 +4339,7 @@ ${plan.lead.duty}
       )}
 
       {/* 设置：模型接入 / IoT 设备 */}
-      {showUserMenu && user && <PersonalCenter name={user.username || ui('用户', 'User')} email={user.email} pro={isPremiumUser} model={activeModel} trial={trialQuota} projectNames={Object.fromEntries(projects.map(p => [p.id, p.name]))}
+      {showUserMenu && user && <PersonalCenter name={user.displayName || user.username || ui('用户', 'User')} email={user.email} bindNotice={bindNotice} pro={isPremiumUser} model={activeModel} trial={trialQuota} projectNames={Object.fromEntries(projects.map(p => [p.id, p.name]))}
         onSync={user.email ? () => setShowProjectSync(true) : undefined} syncStatus={projectSyncStatus}
         onClose={() => setShowUserMenu(false)} onBilling={() => setShowPremiumModal(true)} onUsage={() => setShowSharedModels(true)} onSettings={() => setShowSettingsModal(true)}
         onProjects={() => setShowProjectManager(true)} onHelp={() => setShowHelpModal(true)} onFeedback={() => { setShowFeedback(true); trackEvent('feedback_open'); }}

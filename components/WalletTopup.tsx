@@ -9,10 +9,10 @@ import { Checkout } from './BillingPanel';
  * 用自己 API Key 的调用不碰钱包。金额、到账都以服务器为准，前端只负责选档位、拉起支付、刷新状态。
  */
 const yuan = (cents: number) => `¥${(cents / 100).toFixed(2)}`;
-const TX_LABEL: Record<string, string> = { topup: '充值', spend: '兑换模型额度', refund: '退回', escrow: '服务广场下单（担保冻结）', income: '接单收入', allocate: '放进项目钱包', release: '从项目钱包收回' };
-const TX_ICON: Record<string, string> = { topup: '💳', spend: '🧠', refund: '↩️', escrow: '🔒', income: '💰', allocate: '➡️', release: '⬅️' };
+const TX_LABEL: Record<string, string> = { topup: '充值', spend: '兑换模型额度', refund: '退回', escrow: '服务广场下单（担保冻结）', income: '接单收入', allocate: '放进项目钱包', release: '从项目钱包收回', grant: '体验金', grantback: '体验金收回' };
+const TX_ICON: Record<string, string> = { topup: '💳', spend: '🧠', refund: '↩️', escrow: '🔒', income: '💰', allocate: '➡️', release: '⬅️', grant: '🎁', grantback: '↩️' };
 /** 站在「用户钱包」看：放进项目是出，收回是进 */
-const isOut = (type: string) => type === 'spend' || type === 'escrow' || type === 'allocate';
+const isOut = (type: string) => type === 'spend' || type === 'escrow' || type === 'allocate' || type === 'grantback';
 
 export function useAIWallet() {
   const [catalog, setCatalog] = useState<BillingCatalog | null>(null);

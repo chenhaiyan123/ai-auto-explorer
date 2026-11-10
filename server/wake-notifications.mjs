@@ -3,7 +3,8 @@ import { judgmentSupported } from './.wake-build/runner.mjs';
 const hash = v => createHash('sha256').update(v).digest('hex');
 const STORE = hash('hiexplore-wake-notifications-v1');
 const HOUR = 3600000;
-const emailOK = value => typeof value === 'string' && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value) && value.length <= 254;
+// 微信 / 手机号账号的内部地址（@wx.hiexplore.com、@phone.hiexplore.com）不是真邮箱，不发信
+const emailOK = value => typeof value === 'string' && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value) && value.length <= 254 && !/@(wx|phone)\.hiexplore\.com$/i.test(value);
 const httpsBase = value => { try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash ? u.origin : ''; } catch { return ''; } };
 
 // No research body, user token or credential is sent to an analytics service.

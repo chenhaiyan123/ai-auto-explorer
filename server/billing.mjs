@@ -33,7 +33,7 @@ const pushWalletTx = (s, owner, type, cents, ref, note, now, projectId) => {
   // 某个项目的 AI 接单赚的钱：这个项目还没有钱包就顺手建一个，钱记在它名下
   if (type === 'income' && projectIdOk(projectId) && !hasPot(a, projectId)) (a.projects ||= {})[projectId] = 0;
   const pot = hasPot(a, projectId) ? projectId : null;
-  const delta = type === 'spend' || type === 'escrow' ? -cents : cents;
+  const delta = type === 'spend' || type === 'escrow' || type === 'grantback' ? -cents : cents;
   if (pot) a.projects[pot] += delta; else a.walletCents += delta;
   const tx = { id: `${type}:${ref}`, owner, type, cents, ref, note, balanceAfter: pot ? a.projects[pot] : a.walletCents, at: now, ...(pot ? { projectId: pot } : {}) };
   (s.walletTx ||= []).push(tx);
@@ -165,6 +165,68 @@ export class Billing {
       const tx = pushWalletTx(s, held.owner, 'refund', held.cents, ref, '订单取消 / 被拒，担保款退回', this.now(), held.projectId);
       tx.id = `escrowback:${ref}`;
       return walletTxView(tx);
+    });
+  }
+  /**
+   * 管理员发体验金：直接加到对方的用户钱包（不进项目钱包），可一次发给多个邮箱。
+   * - requestId 幂等：同一批重复提交只发一次；
+   * - 单笔上限 GRANT_MAX_CENTS（默认 ¥500），全站每天上限 GRANT_DAILY_CENTS（默认 ¥3000），防手滑；
+   * - 体验金和充值一样只能在平台里花，不能提现；运营数据里单独统计，不算收入、不算活跃用户。
+   */
+  async grantWallet(admin, body) {
+    const cents = Number(body?.cents);
+    const max = Number(this.env.GRANT_MAX_CENTS || 50000), daily = Number(this.env.GRANT_DAILY_CENTS || 300000);
+    if (!Number.isSafeInteger(cents) || cents < 100 || cents > max) throw fail(`每人金额要在 ¥1 – ¥${(max / 100).toFixed(0)} 之间`);
+    const note = String(body?.note || '').trim().slice(0, 100);
+    if (!note) throw fail('写一句发放原因（会显示在对方的钱包流水里）');
+    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(body?.requestId || '')) throw fail('操作标识无效');
+    const raw = Array.isArray(body?.emails) ? body.emails : String(body?.emails || '').split(/[\s,，;；]+/);
+    const emails = [...new Set(raw.map(e => String(e).trim().toLowerCase()).filter(Boolean))];
+    if (!emails.length) throw fail('填至少一个邮箱');
+    if (emails.length > 50) throw fail('一次最多发 50 个人');
+    const bad = emails.filter(e => !/^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/.test(e) || e.length > 200);
+    if (bad.length) throw fail(`这些邮箱格式不对：${bad.slice(0, 5).join('、')}`);
+    return this.transaction(s => {
+      const now = this.now(), dayStart = now - ((now + 8 * 3600000) % 86400000);
+      const fresh = emails.filter(e => !(s.walletTx || []).some(t => t.id === `grant:${body.requestId}:${e}`));
+      const today = (s.walletTx || []).filter(t => t.type === 'grant' && t.at >= dayStart).reduce((n, t) => n + t.cents, 0);
+      if (today + fresh.length * cents > daily) throw fail(`超过今天的体验金总额度：今天已发 ¥${(today / 100).toFixed(2)}，上限 ¥${(daily / 100).toFixed(0)}`, 429);
+      const done = [];
+      for (const e of emails) {
+        const id = `grant:${body.requestId}:${e}`;
+        let tx = (s.walletTx || []).find(t => t.id === id);
+        if (!tx) { tx = pushWalletTx(s, e, 'grant', cents, `${body.requestId}:${e}`, `体验金：${note}`, now); tx.id = id; tx.admin = admin; }
+        done.push({ email: e, txId: tx.id, cents: tx.cents, balanceAfter: account(s, e).walletCents });
+      }
+      return { granted: done, totalCents: fresh.length * cents };
+    });
+  }
+  /** 收回一笔体验金：最多收回对方钱包里还剩的部分（已经花掉的收不回），幂等 */
+  async revokeGrant(admin, txId) {
+    if (typeof txId !== 'string' || !txId.startsWith('grant:') || txId.length > 300) throw fail('体验金记录无效');
+    return this.transaction(s => {
+      const g = (s.walletTx || []).find(t => t.id === txId && t.type === 'grant');
+      if (!g) throw fail('找不到这笔体验金', 404);
+      const prev = (s.walletTx || []).find(t => t.id === `grantback:${txId}`);
+      if (prev) return { txId, revokedCents: prev.cents, duplicate: true };
+      const back = Math.min(g.cents, account(s, g.owner).walletCents);
+      if (back <= 0) throw fail('对方钱包里已经没有余额了（体验金已经花掉），收不回');
+      const tx = pushWalletTx(s, g.owner, 'grantback', back, txId, back < g.cents ? `体验金收回（已花掉的 ¥${((g.cents - back) / 100).toFixed(2)} 不收回）` : '体验金收回', this.now());
+      tx.id = `grantback:${txId}`; tx.admin = admin;
+      return { txId, revokedCents: back };
+    });
+  }
+  /** 后台看体验金发放记录 */
+  async grantsView() {
+    return this.transaction(s => {
+      const all = (s.walletTx || []).filter(t => t.type === 'grant');
+      const back = new Map((s.walletTx || []).filter(t => t.type === 'grantback').map(t => [t.ref, t.cents]));
+      const now = this.now(), dayStart = now - ((now + 8 * 3600000) % 86400000);
+      return {
+        limits: { maxCents: Number(this.env.GRANT_MAX_CENTS || 50000), dailyCents: Number(this.env.GRANT_DAILY_CENTS || 300000), todayCents: all.filter(t => t.at >= dayStart).reduce((n, t) => n + t.cents, 0) },
+        totalCents: all.reduce((n, t) => n + t.cents, 0), revokedCents: [...back.values()].reduce((n, c) => n + c, 0), people: new Set(all.map(t => t.owner)).size,
+        items: all.slice(-200).reverse().map(t => ({ txId: t.id, email: t.owner, cents: t.cents, note: String(t.note || '').replace(/^体验金：/, ''), at: t.at, admin: t.admin || '', revokedCents: back.get(t.id) || 0, balanceCents: account(s, t.owner).walletCents })),
+      };
     });
   }
   /** 兑换没成功：把这笔扣款退回钱包（幂等，没扣过就什么都不做） */

@@ -582,6 +582,10 @@ export interface User {
   username: string;
   role: 'admin' | 'user';
   email?: string;
+  /** 显示用的名字：微信昵称 / 打码的手机号（微信、手机号账号的 email 是内部地址，不给人看） */
+  displayName?: string;
+  /** 怎么注册的：邮箱 / 微信 / 手机号 */
+  kind?: 'email' | 'wechat' | 'phone';
 }
 
 export interface UserStats {

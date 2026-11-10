@@ -39,6 +39,17 @@ async function authPost(path: string, body: unknown, retried = false): Promise<{
   }
 }
 
+/** 微信 / 手机号账号的内部地址（不是真邮箱） */
+export const isPseudoEmail = (e?: string) => /@(wx|phone)\.hiexplore\.com$/i.test(e || '');
+export const isWeChatBrowser = () => typeof navigator !== 'undefined' && /MicroMessenger/i.test(navigator.userAgent);
+export interface LoginMethods { wechatWeb: string | null; wechatMp: string | null; phone: boolean }
+export interface Identities { owner: string; emailAccount: boolean; wechat: boolean; phone: string | null; nick: string; methods: LoginMethods }
+type SessionReply = { token: string; user: { email: string; username: string; displayName?: string; kind?: 'email' | 'wechat' | 'phone' } };
+const WX_STATE = 'hx-wx-state';
+let methodsCache: Promise<LoginMethods> | null = null;
+/** 现在这个环境能用哪种微信登录：微信里打开用服务号授权，电脑浏览器用扫码 */
+export const wechatKind = (m: LoginMethods | null): 'mp' | 'web' | null => !m ? null : isWeChatBrowser() ? (m.wechatMp ? 'mp' : null) : (m.wechatWeb ? 'web' : null);
+
 class AuthService {
   private currentUser: User | null = null;
 
@@ -79,6 +90,47 @@ class AuthService {
     this.save();
     try { localStorage.setItem(TOKEN_KEY, d.token); } catch {}
     return this.currentUser;
+  }
+
+  private takeSession(d: SessionReply): User {
+    this.currentUser = { username: d.user.username, role: 'user', email: d.user.email, ...(d.user.displayName ? { displayName: d.user.displayName } : {}), ...(d.user.kind ? { kind: d.user.kind } : {}) };
+    this.save();
+    try { localStorage.setItem(TOKEN_KEY, d.token); } catch {}
+    return this.currentUser;
+  }
+  // ===== 微信 / 手机号登录（在自己的后台） =====
+  public loginMethods(): Promise<LoginMethods> {
+    if (!WAKE) return Promise.resolve({ wechatWeb: null, wechatMp: null, phone: false });
+    methodsCache ||= wakeCall<LoginMethods>('/auth/methods').catch(() => { methodsCache = null; return { wechatWeb: null, wechatMp: null, phone: false }; });
+    return methodsCache;
+  }
+  public sendPhoneCode(phone: string, bind = false) { return wakeCall<{ ok: boolean; devCode?: string }>(bind ? '/auth/bind/phone/code' : '/auth/phone/code', 'POST', { phone }); }
+  public async loginWithPhone(phone: string, code: string): Promise<User> { return this.takeSession(await wakeCall<SessionReply>('/auth/phone/login', 'POST', { phone, code: code.trim() })); }
+  public bindPhone(phone: string, code: string) { return wakeCall<Identities>('/auth/bind/phone', 'POST', { phone, code: code.trim() }); }
+  public identities() { return wakeCall<Identities>('/auth/identities'); }
+  /** 跳去微信授权（扫码页 / 微信里的授权页），回来时由 finishWechat 接着处理 */
+  public async startWechat(mode: 'login' | 'bind'): Promise<void> {
+    const m = await this.loginMethods(); const kind = wechatKind(m);
+    if (!kind) throw new Error(isWeChatBrowser() ? '微信里登录还没开通，先用手机号或邮箱登录' : '微信扫码登录还没开通，先用手机号或邮箱登录');
+    const state = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join('');
+    try { sessionStorage.setItem(WX_STATE, JSON.stringify({ state, kind, mode, at: Date.now() })); } catch { /* 隐私模式 */ }
+    const redirect = encodeURIComponent(location.origin + location.pathname);
+    const appid = encodeURIComponent((kind === 'mp' ? m.wechatMp : m.wechatWeb) as string);
+    location.href = kind === 'mp'
+      ? `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appid}&redirect_uri=${redirect}&response_type=code&scope=snsapi_userinfo&state=${state}#wechat_redirect`
+      : `https://open.weixin.qq.com/connect/qrconnect?appid=${appid}&redirect_uri=${redirect}&response_type=code&scope=snsapi_login&state=${state}#wechat_redirect`;
+  }
+  /** 从微信授权页回来：地址栏带着 code 和 state。核对 state（防伪造）后去后台换登录 / 绑定 */
+  public async finishWechat(): Promise<{ mode: 'login'; user: User } | { mode: 'bind'; identities: Identities } | null> {
+    const q = new URLSearchParams(location.search); const code = q.get('code'), state = q.get('state');
+    if (!code || !state) return null;
+    let saved: { state: string; kind: 'web' | 'mp'; mode: 'login' | 'bind'; at: number } | null = null;
+    try { saved = JSON.parse(sessionStorage.getItem(WX_STATE) || 'null'); sessionStorage.removeItem(WX_STATE); } catch { /* 隐私模式 */ }
+    // 先把地址栏清干净，刷新时不会拿同一个 code 再试一次
+    q.delete('code'); q.delete('state'); history.replaceState(null, '', location.pathname + (q.toString() ? `?${q}` : '') + (location.hash === '#wechat_redirect' ? '' : location.hash));
+    if (!saved || saved.state !== state || Date.now() - saved.at > 15 * 60000) throw new Error('微信登录没完成（页面过期或被打断），再点一次「微信登录」');
+    if (saved.mode === 'bind') return { mode: 'bind', identities: await wakeCall<Identities>('/auth/bind/wechat', 'POST', { kind: saved.kind, code }) };
+    return { mode: 'login', user: this.takeSession(await wakeCall<SessionReply>('/auth/wechat/login', 'POST', { kind: saved.kind, code })) };
   }
 
   /** 邮箱 + 密码登录（密码要先用验证码登录后在个人中心设置） */

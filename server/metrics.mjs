@@ -69,7 +69,8 @@ export function computeMetrics(raw, { internal = new Set(), includeInternal = fa
   };
   for (const [owner, u] of Object.entries(raw.users || {})) touch(owner, u.first, true, u.days), touch(owner, u.last, true, []);
   for (const o of billing.orders || []) touch(o.owner, o.createdAt);
-  for (const t of billing.walletTx || []) touch(t.owner, t.at);
+  // 体验金是管理员发的，收到不代表这个人来过，不算活跃
+  for (const t of billing.walletTx || []) if (t.type !== 'grant' && t.type !== 'grantback') touch(t.owner, t.at);
   for (const c of shared.calls || []) touch(c.owner, c.at);
   for (const s of market.services || []) touch(s.owner, s.createdAt || s.updatedAt);
   for (const d of market.demands || []) touch(d.owner, d.createdAt);
@@ -129,6 +130,9 @@ export function computeMetrics(raw, { internal = new Set(), includeInternal = fa
     arppuCents: payers.size ? Math.round(sum(paidOrders, o => o.amount) / payers.size) : 0,
     walletSpendCents: sum(tx.filter(t => t.type === 'spend'), t => t.cents) - sum(tx.filter(t => t.type === 'refund' && String(t.id).startsWith('refund:')), t => t.cents),
     walletBalanceCents: raw.walletBalanceCents ?? null,
+    /** 管理员发的体验金（减去收回的）：不是收入，单独列 */
+    grantCents: sum(tx.filter(t => t.type === 'grant'), t => t.cents) - sum(tx.filter(t => t.type === 'grantback'), t => t.cents),
+    grantPeople: new Set(tx.filter(t => t.type === 'grant').map(t => t.owner)).size,
     market: {
       services: (market.services || []).filter(s => s.published && keep(s.owner)).length,
       demands: demands.length,

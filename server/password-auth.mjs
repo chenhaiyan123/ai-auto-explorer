@@ -37,7 +37,7 @@ export class PasswordAuth {
   }
   async status(owner) { const s = await this.state(); const u = s.users[String(owner).toLowerCase()]; return { hasPassword: !!u, setAt: u?.setAt || null }; }
   async setPassword(owner, password) {
-    if (!isEmail(owner)) throw fail('只有邮箱账号可以设置密码');
+    if (!isEmail(owner) || /@(wx|phone)\.hiexplore\.com$/i.test(owner)) throw fail('只有邮箱账号可以设置密码（微信 / 手机号账号直接用微信或验证码登录）');
     if (typeof password !== 'string' || password.length < 8 || password.length > 72) throw fail('密码要 8–72 位');
     if (/^\d+$/.test(password) || new Set(password).size < 4) throw fail('密码太简单了：至少混用字母和数字');
     const hash = await PasswordAuth.hash(password);
@@ -64,13 +64,18 @@ export class PasswordAuth {
       throw fail(s.users[email] ? '邮箱或密码不对' : '邮箱或密码不对（还没设过密码的话，先用验证码登录，再到「个人中心」设密码）', 401);
     }
     this.fails.delete(email);
+    const { token, expiresAt } = await this.issue(email);
+    return { token, user: { email, username: email.split('@')[0], role: 'user' }, expiresAt };
+  }
+  /** 签发一张会话令牌（密码、微信、手机号登录都用这个） */
+  async issue(owner) {
     const token = 'hxs_' + randomBytes(32).toString('base64url');
     await this.tx(st => {
       const now = this.now();
       for (const [k, v] of Object.entries(st.sessions)) if (v.exp < now) delete st.sessions[k];
-      st.sessions[sha(token)] = { owner: email, at: now, exp: now + SESSION_DAYS * DAY };
+      st.sessions[sha(token)] = { owner, at: now, exp: now + SESSION_DAYS * DAY };
     });
-    return { token, user: { email, username: email.split('@')[0], role: 'user' }, expiresAt: this.now() + SESSION_DAYS * DAY };
+    return { token, expiresAt: this.now() + SESSION_DAYS * DAY };
   }
   /** 会话令牌 → 邮箱；快过期的自动续到 90 天 */
   async verify(token) {

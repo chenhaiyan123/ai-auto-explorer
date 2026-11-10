@@ -11,6 +11,7 @@ import { SharedModels } from './shared-models.mjs';
 import { createBilling, PLANS } from './billing.mjs';
 import { UserRegistry, QuestionLog, computeMetrics } from './metrics.mjs';
 import { PasswordAuth } from './password-auth.mjs';
+import { IdentityLogin } from './identity-login.mjs';
 import { PlatformServices, renderPage } from './platform-services.mjs';
 const PLANS_TOPUP_MIN = PLANS.topup?.minConvertCents || 100;
 import { WakeStorage, scopeKey } from './wake-storage.mjs';
@@ -157,6 +158,7 @@ export async function createWakeServer(options = {}) {
   const registry = new UserRegistry(storage);
   const questions = new QuestionLog(storage);
   const passwords = new PasswordAuth(storage);
+  const identities = new IdentityLogin(storage, passwords, env, externalFetch);
   /** 平台直连服务：问卷星、天眼查、预售页 */
   // 录音临时存放：给百炼一个一次性的公开地址去拉，转完就删，最多留 48 小时
   const audioDir = path.join(storage.dir, 'audio'); await fs.mkdir(audioDir, { recursive: true });
@@ -385,6 +387,19 @@ export async function createWakeServer(options = {}) {
       } catch { send(400, { code: 'FAIL', message: '通知未通过核验，请重试' }); }
       return;
     }
+    // 微信 / 手机号登录（公开接口；登录后签发 hxs_ 会话令牌）
+    if (url.pathname === '/auth/methods' && req.method === 'GET') { send(200, identities.methods()); return; }
+    if (req.method === 'POST' && ['/auth/phone/code', '/auth/phone/login', '/auth/wechat/login'].includes(url.pathname)) {
+      try {
+        const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
+        if (url.pathname !== '/auth/phone/code' && questions.limited(`id:${ip}`)) { send(429, { error: '尝试太频繁，过一会儿再试' }); return; }
+        const body = await readBody(req);
+        if (url.pathname === '/auth/phone/code') send(200, await identities.sendPhoneCode(body.phone, ip, 'login'));
+        else if (url.pathname === '/auth/phone/login') send(200, await identities.loginPhone(body.phone, body.code));
+        else send(200, await identities.loginWechat(body.kind, body.code));
+      } catch (e) { send(e.status || 400, { error: e instanceof SyntaxError ? '格式错误' : e.message }); }
+      return;
+    }
     // 邮箱 + 密码登录（密码是用户登录后自己设的）
     if (req.method === 'POST' && url.pathname === '/auth/password/login') {
       try {
@@ -502,6 +517,10 @@ export async function createWakeServer(options = {}) {
       if (url.pathname.startsWith('/auth/')) {
         if (req.method === 'GET' && url.pathname === '/auth/password/status') { send(200, await passwords.status(owner)); return; }
         if (req.method === 'POST' && url.pathname === '/auth/password/set') { send(200, await passwords.setPassword(owner, (await readBody(req)).password)); return; }
+        if (req.method === 'GET' && url.pathname === '/auth/identities') { send(200, await identities.identities(owner)); return; }
+        if (req.method === 'POST' && url.pathname === '/auth/bind/phone/code') { const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || ''; send(200, await identities.sendPhoneCode((await readBody(req)).phone, ip, 'bind')); return; }
+        if (req.method === 'POST' && url.pathname === '/auth/bind/phone') { const b = await readBody(req); send(200, await identities.bindPhone(owner, b.phone, b.code)); return; }
+        if (req.method === 'POST' && url.pathname === '/auth/bind/wechat') { const b = await readBody(req); send(200, await identities.bindWechat(owner, b.kind, b.code)); return; }
         if (req.method === 'POST' && url.pathname === '/auth/logout') { send(200, await passwords.logout(String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''))); return; }
       }
       if (req.method === 'GET' && url.pathname === '/admin/umami') {
@@ -527,10 +546,18 @@ export async function createWakeServer(options = {}) {
         if (req.method === 'PUT') { send(200, await projectSync.write(owner, await readWorkspaceBody(req))); return; }
         send(405, { error: '方法不支持' }); return;
       }
-      if (url.pathname.startsWith('/billing/') || url.pathname === '/admin/billing') {
+      if (url.pathname.startsWith('/billing/') || url.pathname === '/admin/billing' || url.pathname.startsWith('/admin/billing/')) {
         if (url.pathname === '/admin/billing') {
           if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
           if (req.method === 'GET') { send(200, await billing.adminView()); return; }
+        }
+        // 管理员发体验金 / 收回 / 看记录
+        if (url.pathname.startsWith('/admin/billing/grants')) {
+          if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
+          if (req.method === 'GET' && url.pathname === '/admin/billing/grants') { send(200, await billing.grantsView()); return; }
+          if (req.method === 'POST' && url.pathname === '/admin/billing/grants') { send(200, await billing.grantWallet(owner, await readBody(req))); return; }
+          if (req.method === 'POST' && url.pathname === '/admin/billing/grants/revoke') { send(200, await billing.revokeGrant(owner, (await readBody(req)).txId)); return; }
+          send(405, { error: '方法不支持' }); return;
         }
         if (req.method === 'GET' && url.pathname === '/billing/account') { send(200, await billing.view(owner)); return; }
         const orderMatch = url.pathname.match(/^\/billing\/orders\/(HE[a-f0-9]{30})$/);

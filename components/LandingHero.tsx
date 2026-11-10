@@ -30,7 +30,7 @@ export default function LandingHero({ onTrial, onLogin, onMarket }: { onTrial?: 
         </p>
         <div className="mt-8 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3">
           {onTrial && <button onClick={onTrial} className="px-7 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-lg shadow-blue-600/30 transition-colors">{ui('🎁 免注册，直接开始', '🎁 Start free, no sign-up')}</button>}
-          <button onClick={onLogin} className="px-6 py-3.5 rounded-xl border border-slate-600 hover:bg-slate-800 text-slate-100 font-semibold">{ui('邮箱登录，长期保存', 'Log in to keep your work')}</button>
+          <button onClick={onLogin} className="px-6 py-3.5 rounded-xl border border-slate-600 hover:bg-slate-800 text-slate-100 font-semibold">{ui('登录，长期保存', 'Log in to keep your work')}</button>
           <button onClick={onMarket} className="px-4 py-3 text-[14px] text-sky-300 hover:text-sky-200">{ui('逛逛服务广场 →', 'Browse the marketplace →')}</button>
         </div>
 

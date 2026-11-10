@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { auth, hasPasswordLogin } from '../services/authService';
+import { auth, hasPasswordLogin, isPseudoEmail, wechatKind, type Identities } from '../services/authService';
 import { t as ui } from '../services/language';
 import WalletTopup from './WalletTopup';
 
@@ -13,6 +13,43 @@ interface Props {
   onSync?: () => void; syncStatus?: string;
   /** 项目 id → 名字（显示每个项目钱包里有多少钱） */
   projectNames?: Record<string, string>;
+  /** 刚从微信授权页回来、绑定成功时的提示 */
+  bindNotice?: string;
+}
+
+/** 账号绑定：邮箱账号绑微信 / 手机号以后，三种方式登录都是同一个账号（钱包、项目都在） */
+function AccountLinks({ email, notice }: { email?: string; notice?: string }) {
+  const [id, setId] = useState<Identities | null>(null);
+  const [phone, setPhone] = useState(''), [code, setCode] = useState('');
+  const [sent, setSent] = useState(false), [busy, setBusy] = useState(false), [open, setOpen] = useState(false);
+  const [msg, setMsg] = useState(notice || '');
+  useEffect(() => { auth.identities().then(setId).catch(() => setId(null)); }, []);
+  if (!id) return null;
+  const wx = wechatKind(id.methods);
+  const pseudo = isPseudoEmail(email);
+  const run = async (fn: () => Promise<void>) => { setBusy(true); setMsg(''); try { await fn(); } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
+  return <div className="mt-4 rounded-xl border border-slate-700 bg-slate-800/40 px-4 py-3 space-y-2 text-sm">
+    <div className="flex items-center gap-2 flex-wrap"><span className="font-medium text-slate-100">{ui('登录方式', 'Sign-in methods')}</span>
+      {!pseudo && <span className="text-xs px-2 py-0.5 rounded-full bg-slate-700 text-slate-200">{ui('邮箱', 'Email')} ✓</span>}
+      {id.wechat && <span className="text-xs px-2 py-0.5 rounded-full bg-green-900/60 text-green-300">{ui('微信', 'WeChat')} ✓</span>}
+      {id.phone && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-900/60 text-blue-300">{ui('手机', 'Phone')} {id.phone} ✓</span>}
+    </div>
+    {pseudo && <p className="text-[11px] leading-5 text-slate-500">{ui('账号 ID（管理员发体验金、客服查问题时用）：', 'Account ID: ')}<span className="font-mono text-slate-300 break-all">{email}</span>{ui('。这是内部地址，不会收到邮件。', ' (internal, receives no email)')}</p>}
+    <div className="flex gap-3 flex-wrap text-xs">
+      {!id.wechat && wx && <button disabled={busy} onClick={() => run(() => auth.startWechat('bind'))} className="text-green-300 hover:underline disabled:opacity-40">{ui('绑定微信', 'Link WeChat')}</button>}
+      {!id.phone && id.methods.phone && !open && <button onClick={() => setOpen(true)} className="text-blue-300 hover:underline">{ui('绑定手机号', 'Link phone')}</button>}
+      {id.phone && id.methods.phone && !open && <button onClick={() => setOpen(true)} className="text-slate-400 hover:underline">{ui('换绑手机号', 'Change phone')}</button>}
+    </div>
+    {open && <div className="flex gap-2 flex-wrap items-center">
+      <input type="tel" inputMode="numeric" aria-label={ui('手机号', 'Phone')} placeholder={ui('手机号', 'Phone')} value={phone} onChange={e => setPhone(e.target.value.replace(/[^\d]/g, '').slice(0, 11))} className="w-36 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-sm" />
+      {!sent ? <button disabled={busy || !/^1[3-9]\d{9}$/.test(phone)} onClick={() => run(async () => { const d = await auth.sendPhoneCode(phone, true); setSent(true); if (d.devCode) setMsg('开发模式验证码：' + d.devCode); })} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-40">{ui('发验证码', 'Send code')}</button>
+        : <><input inputMode="numeric" aria-label={ui('验证码', 'Code')} placeholder={ui('验证码', 'Code')} value={code} onChange={e => setCode(e.target.value.replace(/[^\d]/g, '').slice(0, 6))} className="w-24 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-sm" />
+          <button disabled={busy || code.length !== 6} onClick={() => run(async () => { setId(await auth.bindPhone(phone, code)); setOpen(false); setSent(false); setCode(''); setMsg(ui('手机号绑好了，以后可以用手机号登录这个账号', 'Phone linked')); })} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs disabled:opacity-40">{ui('绑定', 'Link')}</button></>}
+      <button onClick={() => { setOpen(false); setSent(false); }} className="text-xs text-slate-500">{ui('取消', 'Cancel')}</button>
+    </div>}
+    {msg && <p role="status" className="text-xs text-emerald-300">{msg}</p>}
+    {pseudo && <p className="text-[11px] leading-5 text-slate-500">{ui('想收邮件提醒、或者用邮箱登录：目前要用邮箱新建账号，暂时不能把这个账号并到邮箱账号上。', 'Email sign-in currently needs a separate account.')}</p>}
+  </div>;
 }
 
 /** 登录密码：设了以后用「邮箱 + 密码」直接登录，不用每次收验证码 */
@@ -74,10 +111,11 @@ export default function PersonalCenter(p: Props) {
   const tile = (label: string, detail: string, fn: () => void) => <button onClick={action(fn)} className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 text-left hover:bg-slate-800 focus-visible:ring-2 focus-visible:ring-blue-400"><span className="block font-medium text-slate-100">{label}</span><span className="mt-1 block text-xs leading-5 text-slate-400">{detail}</span></button>;
   return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onClick={p.onClose}>
     <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={ui('个人中心', 'Personal center')} onClick={e => e.stopPropagation()} className="w-full max-w-xl max-h-[90dvh] overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-5 sm:p-6 shadow-2xl outline-none">
-      <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">{ui('个人中心', 'Personal center')}</h2><p className="mt-2 text-sm text-slate-200 break-all">{p.name}</p><p className="mt-1 text-xs text-slate-400 break-all">{p.email}</p></div><button onClick={p.onClose} aria-label={ui('关闭', 'Close')} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800">✕</button></div>
+      <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">{ui('个人中心', 'Personal center')}</h2><p className="mt-2 text-sm text-slate-200 break-all">{p.name}</p>{!isPseudoEmail(p.email) && <p className="mt-1 text-xs text-slate-400 break-all">{p.email}</p>}</div><button onClick={p.onClose} aria-label={ui('关闭', 'Close')} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800">✕</button></div>
       <div className="mt-5"><h3 className="mb-2 text-sm font-semibold text-slate-200">{ui('我的钱包', 'My wallet')}</h3><WalletTopup compact projectNames={p.projectNames} />
         <p className="mt-1.5 text-[11px] leading-5 text-slate-500">{ui('充值进用户钱包；在项目的「钱包」页把一部分放进项目钱包，那个项目的 AI 就用它自己决定怎么花、怎么赚，赚的也进项目钱包，随时能收回。', 'Top up here, then move money into a project wallet from the project page.')}</p></div>
-      {p.email && hasPasswordLogin() && <PasswordSetting />}
+      {p.email && hasPasswordLogin() && !isPseudoEmail(p.email) && <PasswordSetting />}
+      {p.email && hasPasswordLogin() && <AccountLinks email={p.email} notice={p.bindNotice} />}
       <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
         {tile(ui('充值与订单', 'Top-ups & orders'), ui('充值记录、支付订单、导出过的成果包', 'Top-ups, payment orders and exports'), p.onBilling)}
         {tile(ui('用量与额度', 'Usage & credits'), ui('查看各模型剩余额度与使用记录', 'Check model balances and usage history'), p.onUsage)}
