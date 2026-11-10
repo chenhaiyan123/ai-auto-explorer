@@ -160,6 +160,51 @@ export function computeMetrics(raw, { internal = new Set(), includeInternal = fa
   return { generatedAt: now, includeInternal, users, money };
 }
 
+/**
+ * 后台「用户列表」：每个账号一行（邮箱 / 微信 / 手机号账号），带上他问过的问题；
+ * 免注册体验的人按设备合成一行（没有邮箱）。只给管理员看。
+ * raw: { users, billing, shared, market, questions: 原始问题记录, names: { owner: 昵称 / 打码手机号 } }
+ */
+export function listUsers(raw, { internal = new Set(), includeInternal = false } = {}) {
+  const keep = owner => !!owner && !String(owner).startsWith('page:') && !String(owner).startsWith('anonymous:') && (includeInternal || !internalTest(owner, internal));
+  const rows = new Map();
+  const row = owner => {
+    let r = rows.get(owner);
+    if (!r) { r = { owner, first: Infinity, last: 0, days: new Set(), aiCalls: 0, paidCents: 0, paidOrders: 0, grantCents: 0, walletCents: null, walletAt: 0, market: 0, questions: [] }; rows.set(owner, r); }
+    return r;
+  };
+  const seen = (owner, at) => { if (!keep(owner) || !Number.isFinite(at)) return null; const r = row(owner); r.first = Math.min(r.first, at); r.last = Math.max(r.last, at); return r; };
+  for (const [owner, u] of Object.entries(raw.users || {})) { const r = seen(owner, u.first); if (r) { seen(owner, u.last); (u.days || []).forEach(d => r.days.add(d)); } }
+  for (const c of raw.shared?.calls || []) { const r = seen(c.owner, c.at); if (r && c.status !== 'failed') r.aiCalls++; }
+  for (const o of raw.billing?.orders || []) { if (o.sku === 'deposit') continue; const r = seen(o.owner, o.createdAt); if (r && o.status === 'paid') { r.paidCents += o.amount || 0; r.paidOrders++; } }
+  for (const t of raw.billing?.walletTx || []) {
+    if (!keep(t.owner)) continue;
+    const r = (t.type === 'grant' || t.type === 'grantback') ? row(t.owner) : seen(t.owner, t.at);
+    if (t.type === 'grant') r.grantCents += t.cents; else if (t.type === 'grantback') r.grantCents -= t.cents;
+    if (!t.projectId && typeof t.balanceAfter === 'number' && t.at >= r.walletAt) { r.walletCents = t.balanceAfter; r.walletAt = t.at; }
+  }
+  const mk = raw.market || {};
+  for (const x of [...(mk.services || []).map(v => [v.owner, v.createdAt || v.updatedAt]), ...(mk.demands || []).map(d => [d.owner, d.createdAt]), ...(mk.orders || []).flatMap(o => [[o.buyer, o.createdAt], [o.seller, o.createdAt]])]) { const r = seen(x[0], x[1]); if (r) r.market++; }
+  const guests = new Map();
+  for (const q of raw.questions || []) {
+    if (q.guest || String(q.who).startsWith('guest:')) {
+      const g = guests.get(q.who) || { owner: q.who, guest: true, first: q.at, last: q.at, questions: [] };
+      g.first = Math.min(g.first, q.at); g.last = Math.max(g.last, q.updatedAt || q.at); g.questions.push({ q: q.q, at: q.at }); guests.set(q.who, g);
+      continue;
+    }
+    const r = seen(q.who, q.at); if (r) { seen(q.who, q.updatedAt || q.at); r.questions.push({ q: q.q, at: q.at }); }
+  }
+  const kindOf = o => /@wx\.hiexplore\.com$/i.test(o) ? 'wechat' : /@phone\.hiexplore\.com$/i.test(o) ? 'phone' : 'email';
+  const people = [...rows.values()].filter(r => r.first !== Infinity || r.grantCents).map(r => ({
+    owner: r.owner, kind: kindOf(r.owner), name: (raw.names || {})[r.owner] || '',
+    first: r.first === Infinity ? null : r.first, last: r.last || null, activeDays: r.days.size,
+    aiCalls: r.aiCalls, paidCents: r.paidCents, paidOrders: r.paidOrders, grantCents: r.grantCents, walletCents: r.walletCents, market: r.market,
+    questions: r.questions.sort((a, b) => b.at - a.at).slice(0, 50),
+  })).sort((a, b) => (b.last || 0) - (a.last || 0));
+  const guestRows = [...guests.values()].map(g => ({ owner: g.owner, kind: 'guest', name: `体验用户 ${g.owner.slice(6, 12)}`, first: g.first, last: g.last, questions: g.questions.sort((a, b) => b.at - a.at).slice(0, 50) })).sort((a, b) => b.last - a.last);
+  return { generatedAt: Date.now(), includeInternal, total: people.length, guests: guestRows.length, people, guestRows };
+}
+
 /** 邮箱打码：a***@qq.com（投资人看也不泄露用户信息） */
 export const mask = owner => {
   if (typeof owner !== 'string') return '—';
@@ -197,6 +242,8 @@ export class QuestionLog {
     await this.queue;
     return { ok: true };
   }
+  /** 原始记录（只给管理员的用户列表用） */
+  async rawItems() { await this.queue.catch(() => {}); return (((await this.storage.credentials(QUESTIONS)) || {}).items || []); }
   async list({ limit = 200, internal = new Set(), includeInternal = false } = {}) {
     await this.queue.catch(() => {});
     const items = (((await this.storage.credentials(QUESTIONS)) || {}).items || []).filter(x => includeInternal || !internalTest(x.who, internal));

@@ -175,6 +175,8 @@ export class IdentityLogin {
     const has = p => Object.entries(s.links).some(([k, v]) => v.owner === owner && k.startsWith(p));
     return { owner, emailAccount: !isPseudoOwner(owner), wechat: has('wx:'), phone: has('phone:') ? (a.phone || '已绑定') : null, nick: a.nick || '', methods: this.methods() };
   }
+  /** 后台用户列表用：微信 / 手机号账号显示昵称或打码手机号 */
+  async displayNames() { const s = await this.state(); const out = {}; for (const [o, a] of Object.entries(s.accounts)) { const n = a.nick || a.phone; if (n) out[o] = n; } return out; }
   async session(owner) {
     const s = await this.state(); const a = s.accounts[owner] || {};
     const display = a.nick || a.phone || (isPseudoOwner(owner) ? (owner.startsWith('wx_') ? '微信用户' : '手机用户') : owner.split('@')[0]);

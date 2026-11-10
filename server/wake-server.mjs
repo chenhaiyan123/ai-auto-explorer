@@ -9,7 +9,7 @@ import { mandateError } from './project-mandates.mjs';
 import { ServiceMarket } from './service-market.mjs';
 import { SharedModels } from './shared-models.mjs';
 import { createBilling, PLANS } from './billing.mjs';
-import { UserRegistry, QuestionLog, computeMetrics } from './metrics.mjs';
+import { UserRegistry, QuestionLog, computeMetrics, listUsers } from './metrics.mjs';
 import { PasswordAuth } from './password-auth.mjs';
 import { IdentityLogin } from './identity-login.mjs';
 import { PlatformServices, renderPage } from './platform-services.mjs';
@@ -531,6 +531,13 @@ export async function createWakeServer(options = {}) {
         if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
         const internal = new Set([...admins, ...String(env.METRICS_EXCLUDE || '').split(',').map(x => x.trim()).filter(Boolean)]);
         send(200, await questions.list({ limit: Number(url.searchParams.get('limit')) || 200, internal, includeInternal: url.searchParams.get('internal') === '1' }));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/admin/users') {
+        if (!admins.has(owner)) { send(403, { error: '需要后台授权的管理员身份' }); return; }
+        const [users, b, sh, mk, qs, names] = await Promise.all([registry.read(), billing.raw(), shared.raw(), market.raw(), questions.rawItems(), identities.displayNames()]);
+        const internal = new Set([...admins, ...String(env.METRICS_EXCLUDE || '').split(',').map(x => x.trim()).filter(Boolean)]);
+        send(200, listUsers({ users, billing: b, shared: sh, market: mk, questions: qs, names }, { internal, includeInternal: url.searchParams.get('internal') === '1' }));
         return;
       }
       if (req.method === 'GET' && url.pathname === '/admin/metrics') {

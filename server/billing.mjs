@@ -84,7 +84,7 @@ export class Billing {
   /** 运营数据用：原始订单和钱包流水（只读） */
   async raw() {
     return this.transaction(s => ({ orders: s.orders.map(o => ({ owner: o.owner, sku: o.sku, amount: o.amount, status: o.status, provider: o.provider, createdAt: o.createdAt, paidAt: o.paidAt })),
-      walletTx: (s.walletTx || []).map(t => ({ id: t.id, owner: t.owner, type: t.type, cents: t.cents, ref: t.ref, at: t.at })),
+      walletTx: (s.walletTx || []).map(t => ({ id: t.id, owner: t.owner, type: t.type, cents: t.cents, ref: t.ref, at: t.at, balanceAfter: t.balanceAfter, ...(t.projectId ? { projectId: t.projectId } : {}) })),
       walletBalanceCents: Object.values(s.accounts).reduce((n, a) => n + (a.walletCents || 0) + Object.values(a.projects || {}).reduce((m, v) => m + v, 0), 0) }));
   }
   /** 当前 AI 钱包余额（分） */

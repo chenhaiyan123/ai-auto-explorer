@@ -93,6 +93,62 @@ const Visitors: React.FC<{ days: number }> = ({ days }) => {
   );
 };
 
+/** 用户列表：每个人一行（邮箱 / 微信 / 手机号），点开看他问过的问题。只有管理员能看到；给别人看时可以打码 */
+type UserRow = { owner: string; kind: 'email' | 'wechat' | 'phone' | 'guest'; name: string; first: number | null; last: number | null; activeDays?: number; aiCalls?: number; paidCents?: number; paidOrders?: number; grantCents?: number; walletCents?: number | null; market?: number; questions: { q: string; at: number }[] };
+const KIND: Record<string, string> = { email: '邮箱', wechat: '微信', phone: '手机', guest: '免注册' };
+const maskEmail = (e: string) => { const [n, h] = e.split('@'); return h ? `${n.slice(0, 1)}***@${h}` : e; };
+const UserList: React.FC<{ internal: boolean }> = ({ internal }) => {
+  const [d, setD] = useState<{ total: number; guests: number; people: UserRow[]; guestRows: UserRow[] } | null>(null);
+  const [err, setErr] = useState('');
+  const [q, setQ] = useState('');
+  const [masked, setMasked] = useState(false);
+  const [showGuests, setShowGuests] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+  const [n, setN] = useState(50);
+  useEffect(() => { sharedRequest<any>(`/admin/users${internal ? '?internal=1' : ''}`).then(x => { setD(x); setErr(''); }).catch(e => setErr(e instanceof Error ? e.message : String(e))); }, [internal]);
+  const day = (t: number | null) => (t ? new Date(t).toLocaleDateString() : '—');
+  const label = (r: UserRow) => r.kind === 'email' ? (masked ? maskEmail(r.owner) : r.owner) : r.kind === 'guest' ? r.name : `${r.name || (r.kind === 'wechat' ? '微信用户' : '手机用户')}${masked ? '' : ` · ${r.owner}`}`;
+  const list = (d ? [...d.people, ...(showGuests ? d.guestRows : [])] : []).filter(r => !q.trim() || `${r.owner} ${r.name} ${r.questions.map(x => x.q).join(' ')}`.toLowerCase().includes(q.trim().toLowerCase()));
+  const csv = () => {
+    const rows = [['用户', '方式', '首次', '最近', '活跃天数', 'AI 调用', '付费(元)', '体验金(元)', '钱包(元)', '问题']].concat(list.map(r => [label(r), KIND[r.kind], day(r.first), day(r.last), String(r.activeDays ?? ''), String(r.aiCalls ?? ''), r.paidCents != null ? (r.paidCents / 100).toFixed(2) : '', r.grantCents ? (r.grantCents / 100).toFixed(2) : '', r.walletCents != null ? (r.walletCents / 100).toFixed(2) : '', r.questions.map(x => x.q).join(' | ')]));
+    const blob = new Blob(['﻿' + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `hiexplore-users-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  return (
+    <section className="rounded-xl border border-slate-700" aria-label="用户列表">
+      <div className="px-3 py-2 border-b border-slate-800 flex items-center gap-2 flex-wrap">
+        <span className="text-[13px] font-semibold text-slate-300">用户列表</span>
+        {d && <span className="text-[11px] text-slate-500">{d.total} 个账号 · {d.guests} 个免注册体验设备</span>}
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="搜邮箱 / 昵称 / 问题" aria-label="搜索用户" className="ml-auto w-44 bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-[12px]" />
+        <label className="inline-flex items-center gap-1 text-[11px] text-slate-400"><input type="checkbox" checked={showGuests} onChange={e => setShowGuests(e.target.checked)} />含免注册</label>
+        <label className="inline-flex items-center gap-1 text-[11px] text-slate-400"><input type="checkbox" checked={masked} onChange={e => setMasked(e.target.checked)} />打码（给别人看时）</label>
+        <button onClick={csv} disabled={!list.length} className="text-[11px] px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40">导出 CSV</button>
+      </div>
+      {err ? <p className="px-3 py-3 text-[12px] text-amber-300">读不到：{err}</p> : !d ? <p className="px-3 py-3 text-[12px] text-slate-500">正在读取…</p> : !list.length ? <p className="px-3 py-3 text-[12px] text-slate-500">没有符合的用户。</p> :
+        <div className="overflow-x-auto"><table className="w-full text-[12px]">
+          <thead><tr className="text-slate-500 text-left">{['用户', '方式', '首次 / 最近', '活跃', 'AI 调用', '付费', '钱包', '问题'].map(h => <th key={h} className="px-3 py-1.5 font-normal whitespace-nowrap">{h}</th>)}</tr></thead>
+          <tbody>{list.slice(0, n).map(r => <React.Fragment key={r.owner}>
+            <tr className="border-t border-slate-800/70 hover:bg-slate-800/40 cursor-pointer" onClick={() => setOpen(o => (o === r.owner ? null : r.owner))}>
+              <td className="px-3 py-1.5 text-slate-200 break-all">{label(r)}</td>
+              <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{KIND[r.kind]}</td>
+              <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap tabular-nums">{day(r.first)} / {day(r.last)}</td>
+              <td className="px-3 py-1.5 text-slate-400 tabular-nums">{r.activeDays != null ? `${r.activeDays} 天` : '—'}</td>
+              <td className="px-3 py-1.5 text-slate-400 tabular-nums">{r.aiCalls ?? '—'}</td>
+              <td className="px-3 py-1.5 tabular-nums">{r.paidCents ? <span className="text-emerald-300">{yuan(r.paidCents)}</span> : <span className="text-slate-600">—</span>}</td>
+              <td className="px-3 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">{r.walletCents != null ? yuan(r.walletCents) : '—'}{r.grantCents ? <span className="block text-[10px] text-purple-300">含体验金 {yuan(r.grantCents)}</span> : null}</td>
+              <td className="px-3 py-1.5 text-slate-300">{r.questions.length ? <span>{r.questions.length} 个 <span className="text-slate-500">▸ {r.questions[0].q.slice(0, 18)}{r.questions[0].q.length > 18 ? '…' : ''}</span></span> : <span className="text-slate-600">—</span>}</td>
+            </tr>
+            {open === r.owner && <tr className="bg-slate-900/60"><td colSpan={8} className="px-4 py-2">
+              {r.questions.length ? <ul className="space-y-1">{r.questions.map((x, i) => <li key={i} className="flex gap-3"><span className="text-slate-500 tabular-nums shrink-0">{new Date(x.at).toLocaleDateString()}</span><span className="text-slate-200">{x.q}</span></li>)}</ul> : <p className="text-slate-500">这个人还没留下问题记录（问题从 11 月初开始记录）。</p>}
+            </td></tr>}
+          </React.Fragment>)}</tbody>
+        </table>
+        {list.length > n && <button onClick={() => setN(v => v + 100)} className="w-full py-2 text-[11px] text-slate-400 hover:text-slate-200 border-t border-slate-800">再看 {Math.min(100, list.length - n)} 个</button>}
+        </div>}
+    </section>
+  );
+};
+
 /** 大家在研究什么：每个项目的问题（含免注册体验用户），最新的在前 */
 const Questions: React.FC<{ internal: boolean }> = ({ internal }) => {
   const [d, setD] = useState<{ total: number; people: number; guests: number; firstAt: number | null; items: { q: string; at: number; who: string; guest: boolean }[] } | null>(null);
@@ -162,6 +218,7 @@ export default function MetricsPanel({ mode }: { mode: 'users' | 'money' }) {
         <Bars title="每天新增用户" data={u.daily} field="newUsers" />
         <Bars title="每天活跃用户" data={u.daily} field="active" />
       </div>
+      <UserList internal={internal} />
       <Visitors days={days} />
       <Questions internal={internal} />
       <p className="text-[11px] text-slate-500 leading-5">口径：登录服务不存用户表，「用户」是用邮箱验证码登录后访问过后台的人。逐日活跃从 {u.trackedSince ? new Date(u.trackedSince).toLocaleDateString() : '这一版上线'} 开始记录；更早的用户由充值、模型调用、服务广场记录补上（只知道他们哪天用过，留存只按逐日记录的人算）。网站访客（含没注册的）看上面 Umami 那一块。</p>

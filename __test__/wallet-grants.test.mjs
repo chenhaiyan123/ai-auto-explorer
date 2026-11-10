@@ -81,3 +81,12 @@ test('运营数据：体验金不算收入、不让收到的人变成「活跃�
   const u = m.users;
   assert.ok(!(u.total >= 3), `收到体验金的人不算用户（total=${u.total}）`);
 });
+
+test('后台用户列表：只有管理员能看；列出邮箱和钱包', async t => {
+  const { call } = await boot(t);
+  await call(ADMIN, '/admin/billing/grants', 'POST', { emails: 'stu@school.cn', cents: 1000, note: '体验', requestId: 'req-00000009' });
+  assert.equal((await call('stu@school.cn', '/admin/users')).status, 403);
+  const r = (await call(ADMIN, '/admin/users')).body;
+  const s = r.people.find(p => p.owner === 'stu@school.cn');
+  assert.equal(s.walletCents, 1000); assert.equal(s.grantCents, 1000); assert.equal(s.kind, 'email');
+});

@@ -110,3 +110,23 @@ test('大家在研究什么：体验用户和登录用户的问题都记下，�
   assert.ok(d.items.some(x => x.q === '怎么做一台高效的太阳能无人机' && x.who === '体验用户'));
   assert.ok(d.items.some(x => x.who === 'a***@qq.com'));
 });
+
+test('用户列表：每个账号一行，带邮箱和问过的问题；体验用户按设备合并；内部账号默认剔除；收到体验金也列出', async () => {
+  const { listUsers } = await import('../server/metrics.mjs');
+  const now = Date.now();
+  const r = listUsers({
+    users: { 'a@qq.com': { first: now - 5 * 864e5, last: now - 864e5, days: ['2026-11-01', '2026-11-02'] }, 'boss@x.cn': { first: now, last: now, days: [] } },
+    shared: { calls: [{ owner: 'a@qq.com', status: 'ok', at: now - 2 * 864e5 }, { owner: 'a@qq.com', status: 'failed', at: now }] },
+    billing: { orders: [{ owner: 'a@qq.com', sku: 'topup', amount: 3000, status: 'paid', createdAt: now - 3 * 864e5 }], walletTx: [{ owner: 'a@qq.com', type: 'topup', cents: 3000, at: now - 3 * 864e5, balanceAfter: 3000 }, { owner: 'g@163.com', type: 'grant', cents: 10000, at: now, balanceAfter: 10000 }] },
+    market: {},
+    questions: [{ q: '怎么提高续费率', who: 'a@qq.com', at: now - 4 * 864e5 }, { q: '毕设选题', who: 'guest:abcdef123456', guest: true, at: now - 864e5 }, { q: '内部测试', who: 'boss@x.cn', at: now }, { q: '用微信来的', who: 'wx_1234567890@wx.hiexplore.com', at: now }],
+    names: { 'wx_1234567890@wx.hiexplore.com': '小艾' },
+  }, { internal: new Set(['boss@x.cn']) });
+  const a = r.people.find(p => p.owner === 'a@qq.com');
+  assert.equal(a.aiCalls, 1); assert.equal(a.paidCents, 3000); assert.equal(a.walletCents, 3000); assert.equal(a.activeDays, 2);
+  assert.deepEqual(a.questions.map(q => q.q), ['怎么提高续费率']);
+  assert.ok(!r.people.some(p => p.owner === 'boss@x.cn'), '内部账号剔除');
+  const w = r.people.find(p => p.kind === 'wechat'); assert.equal(w.name, '小艾');
+  assert.equal(r.people.find(p => p.owner === 'g@163.com').grantCents, 10000);
+  assert.equal(r.guestRows.length, 1); assert.equal(r.guestRows[0].questions[0].q, '毕设选题');
+});
