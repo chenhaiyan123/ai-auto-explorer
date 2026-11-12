@@ -13,7 +13,7 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 
  *       两个都绑在同一个开放平台账号下时有 unionid，扫码和微信里登录是同一个账号。
  * 手机：阿里云短信（ALIYUN_SMS_ACCESS_KEY_ID / SECRET / SIGN_NAME / TEMPLATE_CODE，模板里用 ${code}）。
  *       防刷：同一号码 60 秒一条、每天 10 条；同一 IP 每小时 10 条、每天 30 条；全站每天 SMS_DAILY_CAP（默认 500）条。
- *       验证码 5 分钟有效，输错 5 次作废。
+ *       验证码 15 分钟有效（和短信模板里写的一致），输错 5 次作废。
  */
 const KEY = createHash('sha256').update('hiexplore-identities-v1').digest('hex');
 const DAY = 86400000;
@@ -75,7 +75,7 @@ export class IdentityLogin {
     if (!this.count('global', Number(this.env.SMS_DAILY_CAP || 500), DAY)) throw fail('今天的短信发送量到上限了，请先用邮箱登录', 429);
     const code = String(randomInt(0, 1000000)).padStart(6, '0');
     if (this.env.SMS_DEV_LOG === 'true' && !this.env.ALIYUN_SMS_ACCESS_KEY_ID) {
-      this.codes.set(phone, { hash: sha(code), exp: now + 5 * 60000, tries: 0, sentAt: now, purpose });
+      this.codes.set(phone, { hash: sha(code), exp: now + 15 * 60000, tries: 0, sentAt: now, purpose });
       return { ok: true, devCode: code };
     }
     const e = this.env;
@@ -92,7 +92,7 @@ export class IdentityLogin {
       console.error('[sms] send failed', body?.Code, body?.Message);
       throw fail(why, 502);
     }
-    this.codes.set(phone, { hash: sha(code), exp: now + 5 * 60000, tries: 0, sentAt: now, purpose });
+    this.codes.set(phone, { hash: sha(code), exp: now + 15 * 60000, tries: 0, sentAt: now, purpose });
     return { ok: true };
   }
   checkPhoneCode(rawPhone, code, purpose = 'login') {
